@@ -12,8 +12,8 @@ femforge is a Python package plus an Elmer solver that runs beside it. The packa
 
 | | Command | Installed size | Pick it for |
 | --- | --- | --- | --- |
-| **Recommended** | `uv add "femforge[workbench]"` | about 1.2 GB | solves, field plots and the browser [workbench](../user-guide/workbench.md) |
-| Headless | `uv add femforge` | about 0.8 GB | servers, CI and pipelines that need solves and typed results only |
+| **Recommended** | `uv add "femforge[workbench]"` | about 1.2&nbsp;GB | solves, field plots and the browser [workbench](../user-guide/workbench.md) |
+| Headless | `uv add femforge` | about 0.8&nbsp;GB | servers, CI and pipelines that need solves and typed results only |
 
 With pip, `pip install "femforge[workbench]"` or `pip install femforge`. The `workbench` extra installs `femforge-workbench` at the same version, which brings the `viz` extra, trame and plotly. The `viz` extra alone adds pyvista, vtk, matplotlib, meshio and magpylib for field rendering ([`femforge.viz`](../reference/viz.md)) and the analytic cross-check ([`femforge.validation`](../reference/validation.md)) without the browser workbench, which costs only 20 MB more.
 

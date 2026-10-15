@@ -93,3 +93,9 @@
 .md-typeset :is(.admonition, details):is(.quote, .cite) { --ff-tone: var(--ff-muted-foreground); }
 .md-typeset :is(.admonition, details) > :is(.admonition-title, summary) { background-color: color-mix(in oklch, var(--ff-tone) 10%, transparent); }
 .md-typeset :is(.admonition, details) > :is(.admonition-title, summary)::before { background-color: var(--ff-tone); }
+
+.md-grid { max-width: 72rem; }
+.md-nav--primary .md-nav__link--active { position: relative; box-shadow: none; }
+.md-nav--primary .md-nav__link--active::before { content: ""; position: absolute; inset: 0 auto 0 -0.6rem; width: 2px; background: var(--ff-primary); }
+.md-typeset table:not([class]) th { white-space: nowrap; }
+.md-typeset table:not([class]) td > code { white-space: nowrap; }
