@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  SERVE_DIR: packages/femforge-workbench/src/femforge_workbench/widgets/serve
+
+jobs:
+  client:
+    if: github.repository == 'femforge-io/femforge'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/femforge-workbench/js
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: client-dist
+          path: ${{ env.SERVE_DIR }}
+          if-no-files-found: error
+
+  build:
+    needs: client
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: false
+      - name: Check the tag against main, both versions, the changelog and the citation
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main."; exit 1; }
+          for package in femforge femforge-workbench; do
+            actual=$(uv version --short --frozen --package "$package")
+            [ "$actual" = "$version" ] || { echo "::error::$package is $actual; the tag says $version."; exit 1; }
+          done
+          grep -qF "## [$version]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no [$version] section."; exit 1; }
+          grep -qx "version: $version" CITATION.cff || { echo "::error::CITATION.cff is not at $version."; exit 1; }
+      - uses: actions/download-artifact@v8
+        with:
+          name: client-dist
+          path: ${{ env.SERVE_DIR }}
+      - run: uv build --all-packages --no-sources --out-dir dist
+      - run: uvx twine check --strict dist/*
+      - name: Install the wheels into a clean environment
+        run: |
+          uv venv "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" dist/*.whl
+          "$RUNNER_TEMP/smoke/bin/python" -c "import femforge, femforge_workbench; assert femforge.__version__ == '${GITHUB_REF_NAME#v}'"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist
+          if-no-files-found: error
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/femforge/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Create the GitHub release with the wheels and sdists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" 'index($0, "## [" v "]") == 1 {on = 1; next} on && /^## \[/ {exit} on {print}' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          flags=()
+          case "$version" in *[a-z]*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "femforge $version" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"

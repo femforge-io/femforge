@@ -1,0 +1,144 @@
+Header
+  CHECK KEYWORDS "Warn"
+  Mesh DB "." "."
+End
+
+Simulation
+  Coordinate System = "Axi Symmetric"
+  Simulation Type = "Steady state"
+  Steady State Max Iterations = 1
+End
+
+Constants
+  Stefan Boltzmann = 5.6704e-08
+  Permeability of Vacuum = 1.25663706212e-06
+End
+
+! Main Equation
+Equation 1
+  Active Solvers(3) = 1 2 3   ! WhitneyAVSolver, CalcFields, SaveScalars, 
+  Name = "Main Equation"
+End
+
+! Field Equation
+Equation 2
+  Active Solvers(1) = 2   ! CalcFields, 
+  Name = "Field Equation"
+End
+
+
+! WhitneyAVSolver
+Solver 1
+  Equation = "MGDynamics"
+  Procedure = "MagnetoDynamics" "WhitneyAVSolver"
+  Fix Input Current Density = True
+End
+
+! CalcFields
+Solver 2
+  Equation = "MGDynamicsCalc"
+  Procedure = "MagnetoDynamics" "MagnetoDynamicsCalcFields"
+End
+
+! SaveScalars
+Solver 3
+  Exec Solver = "after timestep"
+End
+
+
+! Air
+Material 1
+  Relative Permeability = 1.0
+End
+
+! Steel1080
+Material 2
+  Electric Conductivity = 0.0
+End
+
+! N52_MAG_N
+Material 3
+  Relative Permeability = 1.05
+  Magnetization 2 = 1113001.2
+End
+
+
+! AIR
+Body 1
+  Target Bodies(1) = 1
+  Equation = 1  ! Main Equation
+  Material = 1  ! Air
+  Name = "AIR"
+End
+
+! SPACER
+Body 2
+  Target Bodies(1) = 2
+  Equation = 2  ! Field Equation
+  Material = 2  ! Steel1080
+  Body Force = 1  ! SPACER_body_force
+  Name = "SPACER"
+End
+
+! ROD
+Body 3
+  Target Bodies(1) = 3
+  Equation = 2  ! Field Equation
+  Material = 2  ! Steel1080
+  Name = "ROD"
+End
+
+! N52_MAG_N
+Body 4
+  Target Bodies(1) = 4
+  Equation = 1  ! Main Equation
+  Material = 3  ! N52_MAG_N
+  Name = "N52_MAG_N"
+End
+
+! BARE
+Body 5
+  Target Bodies(2) = 5 6
+End
+
+
+! AIR__EXT_far_field
+Boundary Condition 1
+  Target Boundaries(1) = 7
+  AV {e} = Real 0
+End
+
+! ROD__EXT
+Boundary Condition 2
+  Target Boundaries(2) = 8 9
+End
+
+
+! SPACER_body_force
+Body Force 1
+  Joule Heat = Logical True
+End
+
+
+! PhaseA_coil
+Component 1
+  Name = PhaseA_coil
+  Master Bodies(2) = 2 3  ! SPACER, ROD,
+  Coil Type = "Stranded"
+  Desired Current Density = 1000.0
+End
+
+! flux_probe
+Component 2
+  Name = flux_probe
+  Master Boundaries(1) = 1  ! AIR__EXT_far_field,
+  Calculate Magnetic Force = Logical True
+End
+
+! bare_component
+Component 3
+  Name = bare_component
+  Component Comment = 1
+End
+
+

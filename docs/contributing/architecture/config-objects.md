@@ -1,0 +1,178 @@
+# Config objects
+
+One typed model, [SimulationConfig][femforge.config.SimulationConfig], describes a whole run. It composes one area model per concern, and each pipeline stage reads only the area it needs. This page explains how the areas fit together, how tags carry conditions from the CAD model to the solver input, how the run identity is derived from the config, and which rules keep the config cheap to import.
+
+## The composition root
+
+`src/femforge/config.py` is the composition root: the only module that imports the geometry, mesh, domain and physics areas together (`src/femforge/config.py:7-14`). Every area inherits [ConfigArea][femforge.common.ConfigArea], a leaf base that imports only pydantic, so any package can inherit it without an import cycle (`src/femforge/common/config.py:2-10`).
+
+- [SimulationConfig][femforge.config.SimulationConfig] (`src/femforge/config.py:37-61`)
+    - `geometry`: a [GeometryArea][femforge.geometry.GeometryArea] or None (`src/femforge/geometry/config.py`), read by the driver's geometry stage
+    - `frame`: [Solid][femforge.common.frame.Solid] or [Axisymmetric][femforge.common.frame.Axisymmetric] (`src/femforge/common/frame.py`), read by the geometry stage, the mesher and the sif writer
+    - `mesh`: [MeshConfig][femforge.meshing.MeshConfig] (`src/femforge/meshing/config.py`), read by the mesher
+    - `domain`: [DomainConfig][femforge.physical.DomainConfig] with materials and [EntityTag][femforge.physical.EntityTag] overrides (`src/femforge/physical/domain.py`), read by the mesher and, through the mesh groups, by the sif writer
+    - `physics`: [PhysicsSelection][femforge.elmer.config.PhysicsSelection] (`src/femforge/elmer/config/common/selection.py`), resolved into a [PhysicsConfig][femforge.elmer.config.PhysicsConfig] solver stack
+    - `meta`: [RunMeta][femforge.config.RunMeta] (`src/femforge/config.py:20-34`), recorded on the manifest and never hashed
+
+Each area constructs and validates on its own, which is why the JSON schema export lists every area as a model of its own (`src/femforge/schemas.py:47-54`).
+
+`SimulationConfig` turns on `validate_assignment` (`src/femforge/config.py:40-41`), and three field validators cross-check the frame against the domain and the physics selection (`src/femforge/config.py:63-98`). Pydantic validates fields in declaration order, so at construction `domain_fits_frame` and `physics_fits_frame` see the frame declared above them. On reassignment `frame_fits_inputs` sees the other two. `validate_default=True` on `domain` and `physics` runs the check on their defaults as well (`src/femforge/config.py:54-57`).
+
+## Backends read a slice
+
+A backend reads a Protocol slice or plain data, never `SimulationConfig`, so the composition root depends on the backends and no backend depends on it. [Principles](../principles.md#configuration) states the rule; the table shows where it holds.
+
+| Consumer | Reads | Where |
+|---|---|---|
+| `Mesher` | [SupportsMeshing][femforge.meshing.SupportsMeshing]: `frame`, `mesh`, `domain` | `src/femforge/meshing/config.py:37-47`, `src/femforge/meshing/mesher.py:77-79` |
+| `MeshEntity` | the bare `DomainConfig` | `src/femforge/meshing/mesh_entity.py:16-27` |
+| [MeshBackend][femforge.meshing.MeshBackend] | a [MeshJob][femforge.meshing.MeshJob]: the mesh spec and the STEP path | `src/femforge/meshing/backend.py:65-103` |
+| `Sim` | the mesh groups, a physics, a solver stack and a frame | `src/femforge/elmer/sim.py:65-72` |
+| [ExecutionBackend][femforge.elmer.ExecutionBackend] | directories | `src/femforge/elmer/runtime/backend.py:14-35` |
+
+`SupportsMeshing` is structural, so `SimulationConfig` satisfies it without inheriting anything, and the mesh backend never imports the composition root. The mesh worker goes one step further: [mesh_inputs][femforge.meshing.mesh_inputs] rebuilds a `SupportsMeshing` from the job alone, with bare materials named by their tags and tag selectors without conditions (`src/femforge/meshing/backend.py:120-133`). The mesher therefore cannot read a condition or a material property, which is what lets a cached mesh serve every config that groups the bodies the same way.
+
+Two comments guard the same direction inside the core: `physical/conditions.py` must not import `meshing.config` or `elmer.sim` (`src/femforge/physical/conditions.py:2`), and `physics_config.py` must not import `elmer.sim` (`src/femforge/elmer/config/common/physics_config.py:2`).
+
+## The geometry seam
+
+A [GeometryArea][femforge.geometry.GeometryArea] is a parametric geometry with one method, `build_step(path)`, which writes the model as a STEP in the authored frame (`src/femforge/geometry/config.py:12-20`). [Build123dGeometry][femforge.geometry.Build123dGeometry] implements it for a build123d assembly: a subclass returns its tagged assembly from `model()`, and `build_step` exports it (`src/femforge/geometry/build123d_geometry.py:16-26`).
+
+```python
+import build123d as b3d
+
+import femforge as ff
+
+
+class MagnetInAir(ff.Build123dGeometry):
+    """A cubic magnet at the centre of an air box."""
+
+    magnet_size: float = 10.0
+    """`a` `[mm]`: Edge length of the magnet."""
+
+    def model(self) -> ff.TaggedCompound:
+        air = ff.TaggedPart(b3d.Box(40, 40, 40), tags={ff.TagKey.MATERIAL: ff.materials.Air().tag})
+        size = self.magnet_size
+        magnet = ff.TaggedPart(b3d.Box(size, size, size), tags={ff.TagKey.MATERIAL: ff.materials.N42().tag, ff.TagKey.MAGNETIZATION: "N"})
+        return ff.TaggedCompound(children=[air, magnet])
+
+
+small = ff.SimulationConfig(geometry=MagnetInAir(magnet_size=10.0))
+large = ff.SimulationConfig(geometry=MagnetInAir(magnet_size=12.0))
+assert ff.run.step_key(small) != ff.run.step_key(large)
+```
+
+The seam has three rules:
+
+- **The parameters are the identity.** The STEP spec hashes the geometry model itself, so two configs with equal parameters and an equal frame share one STEP, and a changed parameter makes a new one (`src/femforge/run/kinds.py:97-100`). The STEP file is derived output.
+- **Subclass fields survive a round trip.** The `geometry` field is `SerializeAsAny[GeometryArea]`, so a dump carries the subclass's fields (`src/femforge/config.py:43`), and `GeometryArea` sets `extra="allow"`, so a manifest loaded back as the base class keeps them readable (`src/femforge/geometry/config.py:15-16`).
+- **The geometry builds in the authored frame.** The driver calls `build_step` into the run directory, converts the result with [apply_frame][femforge.geometry.frame.apply_frame], and repoints `mesh.step` at the solve-frame STEP (`src/femforge/run/driver.py:71-92`). The repointed path uses forward slashes, because ElmerGrid on Windows fails on backslashes in its mesh path (`src/femforge/run/driver.py:65-68`).
+
+`import femforge.geometry` stays light: `build123d_geometry.py` imports `TaggedCompound`, and with it build123d, only under `TYPE_CHECKING` (`src/femforge/geometry/build123d_geometry.py:12-13`).
+
+## The frame area
+
+The frame is a discriminated union on `kind` (`src/femforge/common/frame.py:131`). Both members are frozen, and each states the mesh dimension it solves on.
+
+| Frame | `model_dim` | The STEP the solve meshes | `MAGNETOSTATICS` solves as |
+|---|---|---|---|
+| `Solid()` | 3 | the authored STEP itself | `MAGNETOSTATICS` |
+| `Axisymmetric(axis, radial)` | 2 | the r–z section [apply_frame][femforge.geometry.frame.apply_frame] writes | `MAGNETOSTATICS_2D` |
+
+`src/femforge/common/frame.py:63-128` defines both, and `src/femforge/geometry/frame.py:47-65` converts the STEP. An unset `radial` is left out of every dump, so it adds nothing to the run identity (`src/femforge/common/frame.py:93-94`).
+
+The frame decides what the physics selection solves as, in four places:
+
+| Check | Effect | Where |
+|---|---|---|
+| `Physics.in_frame` | maps `MAGNETOSTATICS` to `MAGNETOSTATICS_2D` and keeps `THERMAL` under `Axisymmetric`; raises for a physics with no axisymmetric form | `src/femforge/elmer/physics.py:37-49` |
+| `solved_stack` | builds the preset of the mapped physics and sets the `Axi Symmetric` coordinate system under `Axisymmetric` | `src/femforge/elmer/config/common/presets.py:24-31` |
+| `PhysicsSelection.selected` | rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum | `src/femforge/elmer/config/common/selection.py:15-36` |
+| `PhysicsConfig.check_frame` | rejects authored overrides whose coordinate system is per radian when the frame is solid, or the reverse | `src/femforge/elmer/config/common/physics_config.py:71-79` |
+
+Each condition also checks the frame (`src/femforge/physical/conditions.py:105-106`), and `Sim` repeats the check for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:98-102`). [Frames](../../user-guide/frames.md) covers the frames from the user side.
+
+## How conditions and tags bind
+
+A condition reaches the solver input through tags, never through a body id. The chain runs from the STEP part names to the sif blocks:
+
+1. **The STEP names carry tags.** `MeshEntity` parses each gmsh entity's name into `key=value` tags (`src/femforge/meshing/mesh_entity.py:29-30`). It matches the material whose `tag` equals the entity's `Material` tag, ignoring case (`src/femforge/meshing/mesh_entity.py:54-61`), and every [EntityTag][femforge.physical.EntityTag] whose selector the entity's tags contain, in domain order (`src/femforge/meshing/mesh_entity.py:63-66`). It writes the name back in canonical form, and that rewrite must parse to the same tags again, because the mesher resolves entities both before and after the conformal fragment (`src/femforge/meshing/mesh_entity.py:34-37`).
+2. **The mesher groups and names them.** Entities that share a material, an authored `Name` and a set of matched tags form one physical group (`src/femforge/meshing/mesher.py:193-209`). `compose_group_name` names it: the authored `Name` tag when there is one, else the material tag followed by the tag names (`src/femforge/meshing/naming.py:19-32`). The mesher, which writes the names, and the bundle readers, which require them, share this one grammar (`src/femforge/meshing/naming.py:1`). Elmer reads names into 128-character buffers and a boundary name joins two body names, so the function warns above 60 characters (`src/femforge/meshing/naming.py:9-11`).
+3. **The group carries the tag objects.** A `PhysicalGroup` keeps the `EntityTag` instances it matched, conditions included (`src/femforge/meshing/groups.py:48-49`). A cached mesh rebinds its groups to the current domain by selector, so today's conditions ride along on yesterday's mesh (`src/femforge/run/artifacts.py:48-56`).
+4. **The sif writer collects them per physics.** [conditions_for][femforge.physical.conditions_for] returns the conditions on a group's tags that belong to the active physics and attach to the requested target (`src/femforge/physical/domain.py:17-31`). `condition_physics` widens the active set for a coupled preset, so one set of tags drives the standalone and the coupled solves (`src/femforge/elmer/physics.py:52-66`).
+
+Each condition is self-describing. It pins its `physics` and its body or boundary `target`, carries a `kind` discriminator for the `ConditionUnion` (`src/femforge/physical/conditions.py:422-425`), and emits its own sif keywords. The base `to_elmer` reflects each field's `ElmerKeyword` metadata, which pairs the sif keyword with the SI unit the quantity is stripped to (`src/femforge/physical/conditions.py:64-103`). A condition with `external_only` set lands only on a body's external shell, never on an interface (`src/femforge/physical/conditions.py:85-87`). [Solver objects](solver-objects.md#bodies-boundaries-and-components) covers where each kind of condition lands in the sif.
+
+## The run identity
+
+[cache_key][femforge.run.cache_key] is the SHA-256 of one canonical JSON payload: the bundle kind name, `RUN_PRODUCER_VERSION`, and the run spec (`src/femforge/run/kinds.py:145-147`). The run spec has three parts (`src/femforge/run/kinds.py:135-142`):
+
+| Part | Holds | Leaves out |
+|---|---|---|
+| `config` | the config dump | `physics.overrides`, `meta`, `mesh.step`, every `HashExclude()` field at any depth |
+| `step_key` | the STEP artifact key: the geometry model's parameters, or the authored STEP's content digest, plus the frame | the authored file's path |
+| `physics_config` | the resolved solver stack | |
+
+The pieces each have one job:
+
+- **One serialization.** Every key in the codebase hashes `json.dumps(payload, sort_keys=True)` (`src/femforge/artifacts/keys.py:49-51`).
+- **`HashExclude()` marks a field the hash skips.** `spec_payload` merges the marked fields at any depth into the exclude spec before dumping (`src/femforge/artifacts/keys.py:91-94`). The walk starts from the instance, so a polymorphic subclass contributes its own marked fields (`src/femforge/common/pydantic.py:57-72`). The gmsh `terminal_output` and `num_threads` options carry it (`src/femforge/meshing/gmsh_options.py:82`, `src/femforge/meshing/gmsh_options.py:108`).
+- **An authored STEP keys on its content.** `step_digest` hashes the file with its `FILE_NAME` header masked, because that header carries the export timestamp (`src/femforge/run/kinds.py:32-42`), and `AuthoredStep.path` is `HashExclude()` (`src/femforge/run/kinds.py:45-54`).
+- **The identity comes from the authored config.** The driver builds the manifest from the config it was given, before the geometry stage repoints `mesh.step` at the derived STEP, which would otherwise digest the STEP bytes (`src/femforge/run/driver.py:290-297`).
+- **Producer versions invalidate.** Bump `RUN_PRODUCER_VERSION`, `MESH_PRODUCER_VERSION` or `STEP_PRODUCER_VERSION` when a pipeline change alters what the same spec yields (`src/femforge/run/kinds.py:23-30`).
+
+The run id is `bundle_name(cache_key)`: an adjective and a noun picked by hash bits, then the first 8 hex characters (`src/femforge/common/names.py:1044-1054`). The word lists are frozen, because any edit renames every existing bundle, and together they give 50 bits (`src/femforge/common/names.py:8-10`). The driver raises when a directory with the same name holds a different `cache_key` (`src/femforge/run/driver.py:280-286`). [mesh_key][femforge.run.mesh_key] and the other artifact keys follow the same scheme; [Artifacts and retention](artifacts.md#identity-and-names) covers them.
+
+## customize_physics and the resolved stack
+
+[SimulationConfig.resolved_stack][femforge.config.SimulationConfig.resolved_stack] returns `physics.overrides` when it is set, else the preset that `solved_stack` builds for the selection in the frame (`src/femforge/config.py:104-109`). [SimulationConfig.customize_physics][femforge.config.SimulationConfig.customize_physics] writes that preset into `physics.overrides` once and returns it for typed editing (`src/femforge/config.py:111-116`).
+
+The identity hashes the resolved stack and drops the authored overrides, so customizing without an edit leaves the key where it was (`src/femforge/run/kinds.py:138-141`):
+
+```python
+import femforge as ff
+from femforge.elmer.config import MagnetoDynamicsSolver
+
+config = ff.SimulationConfig()
+before = ff.run.cache_key(config)
+
+stack = config.customize_physics()
+assert ff.run.cache_key(config) == before
+
+stack.solver(MagnetoDynamicsSolver).linear_system_max_iterations = 2000
+assert ff.run.cache_key(config) != before
+```
+
+An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:651-655`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
+
+## The JSON schema export
+
+`SCHEMA_MODELS` lists every model with a published schema: the composition root and its areas, the solver tree, the run, retention and artifact records, the convergence targets, the display state and the doctor report (`src/femforge/schemas.py:46-95`). `python -m femforge.schemas --out DIR` writes one `<Name>.json` per model, with LF line endings (`src/femforge/schemas.py:111-121`). The docs build runs it before the site build (`.github/workflows/docs.yml:26`); the output is generated, never committed, and [JSON schemas](../../reference/schemas.md) lists it.
+
+Each field description in a schema is the field's attribute docstring, because the models turn on `use_attribute_docstrings`. Two fields need help to export cleanly:
+
+- `PhysicsSelection.selected` declares its schema enum by hand, so the internal `MAGNETOSTATICS_2D` stays out of it (`src/femforge/elmer/config/common/selection.py:22`).
+- `OperatingPoint.temperature` uses a `default_factory`, because pydantic cannot encode a bare pint quantity as a schema default (`src/femforge/elmer/config/common/operating_point.py:18-20`).
+
+A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that the export covers every registered model and writes valid JSON.
+
+## Import cost
+
+`import femforge` loads almost nothing. The root module attaches its stub with `lazy_loader` (`src/femforge/__init__.py:3-8`), and `src/femforge/__init__.pyi` lists every root name with the submodule it comes from. Six packages are lazy this way (`tests/test_public_api.py:76-79`). lazy_loader accepts only one-dot relative imports in a stub and reads it in the locale encoding, so a stub holds `from .module import Name as Name` lines in ASCII.
+
+`tests/test_import_time.py` measures each step in fresh interpreters and compares the fastest of five runs against a budget:
+
+| Step | Budget | Must not load | Where |
+|---|---|---|---|
+| `import femforge` | 60 ms | pydantic, pint, numpy, loguru, rich, any `femforge.*` submodule | `tests/test_import_time.py:77-93` |
+| the first `ff.SimulationConfig` | 500 ms | gmsh, build123d, polars, pyvista, vtk, trame, loguru, `femforge.elmer.runtime`, `femforge.execution`, `femforge.run`, `femforge.telemetry`, `femforge_workbench` | `tests/test_import_time.py:81-82`, `tests/test_import_time.py:96-115` |
+
+`FEMFORGE_IMPORT_BUDGET_SCALE` multiplies every budget on a slow machine (`tests/test_import_time.py:21`). New code that `SimulationConfig` imports counts against the 500 ms budget. These rules keep the heavy stacks off the config path:
+
+| Rule | Where |
+|---|---|
+| `Mesher` and `MeshEntity` stay submodule imports, because both import gmsh at module level; `femforge.meshing` re-exports neither | `src/femforge/meshing/mesher.py:8`, `src/femforge/meshing/mesh_entity.py:3`, `src/femforge/meshing/__init__.py:5-13` |
+| Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:137`, `src/femforge/meshing/gmsh_options.py:58` |
+| The geometry seam names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
+| `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
+| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:365-374`, `src/femforge/common/log.py:205-210` |

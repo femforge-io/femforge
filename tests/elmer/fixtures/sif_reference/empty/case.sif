@@ -1,0 +1,19 @@
+Header
+  CHECK KEYWORDS "Warn"
+  Mesh DB "." "."
+End
+
+Simulation
+End
+
+Constants
+  Stefan Boltzmann = 5.6704e-08
+End
+
+
+
+
+
+
+
+

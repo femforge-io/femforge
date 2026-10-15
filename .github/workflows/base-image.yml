@@ -1,0 +1,52 @@
+name: Elmer image base
+
+on:
+  schedule:
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    if: github.repository == 'femforge-io/femforge'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: uv sync --locked --no-default-groups
+      - name: Compare the pinned base with the current ubuntu:24.04
+        id: base
+        run: |
+          pinned=$(uv run --no-sync python -c "from femforge.elmer.runtime.docker_image import BASE_IMAGE; print(BASE_IMAGE.split('@', 1)[1])")
+          current=$(docker buildx imagetools inspect ubuntu:24.04 | awk '/^Digest:/ && !found {print $2; found = 1}')
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "branch=base-image/${current#sha256:}" >> "$GITHUB_OUTPUT"
+          echo "ubuntu:24.04 is $current; the recipe pins $pinned." >> "$GITHUB_STEP_SUMMARY"
+      - name: Propose the current base
+        if: steps.base.outputs.current != '' && steps.base.outputs.current != steps.base.outputs.pinned
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.base.outputs.pinned }}
+          CURRENT: ${{ steps.base.outputs.current }}
+          BRANCH: ${{ steps.base.outputs.branch }}
+        run: |
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            echo "$BRANCH already proposes $CURRENT." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          sed -i "s/$PINNED/$CURRENT/" src/femforge/elmer/runtime/docker_image.py
+          uv run --no-sync femforge image bump --part patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "Rebase the Elmer image on the current ubuntu:24.04"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "Rebase the Elmer image on the current ubuntu:24.04" \
+            --body "ubuntu:24.04 moved from $PINNED to $CURRENT, which carries its security updates. This pins the new digest and bumps the image version, so the image workflow publishes it once this merges. A pull request opened by this workflow starts no checks: close and reopen it to run them."

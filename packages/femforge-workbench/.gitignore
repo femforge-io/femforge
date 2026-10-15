@@ -1,0 +1,5 @@
+js/node_modules/
+js/dist/
+src/femforge_workbench/widgets/serve/
+__pycache__/
+.coverage

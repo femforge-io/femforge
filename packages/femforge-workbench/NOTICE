@@ -1,0 +1,29 @@
+femforge
+Copyright 2026 Nathan Woodward
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+femforge.elmer.sif follows the public API shape of pyelmer (GPL-3.0,
+https://github.com/nemocrys/pyelmer); it is an independent implementation.
+The golden files in tests/elmer/fixtures/sif_reference were written by pyelmer.
+
+femforge imports gmsh (GPL-2.0-or-later, https://gmsh.info) at run time. gmsh is
+installed separately from PyPI and is not part of this product; software that
+combines femforge with gmsh is subject to gmsh's license.
+
+femforge runs Elmer FEM (GPL-2.0-or-later; the ElmerSolver library is
+LGPL-2.1-or-later; https://github.com/ElmerCSC/elmerfem) as a separate program.
+The femforge-elmer container image redistributes Elmer and Ubuntu packages under
+their own licenses. Their license texts are in /usr/share/elmersolver/license_texts
+(Elmer) and /usr/share/doc (Ubuntu packages) inside the image;
+https://docs.femforge.io/user-guide/elmer/#image-licenses lists their sources.
+
+femforge-workbench bundles a JavaScript client built from packages under the
+MIT, BSD-3-Clause, ISC, Apache-2.0, Zlib and 0BSD licenses, and the Inter and
+JetBrains Mono fonts under the SIL Open Font License 1.1.
+femforge_workbench/widgets/serve/THIRD_PARTY_LICENSES.txt and
+femforge_workbench/widgets/serve/fonts/ hold their license texts and notices.
+
+femforge-workbench resolves colormaps through colorcet, whose colormaps are
+licensed under CC-BY-4.0: Peter Kovesi, "Good Colour Maps: How to Design Them",
+arXiv:1509.03700 (2015), https://colorcet.holoviz.org.

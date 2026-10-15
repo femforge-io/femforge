@@ -1,0 +1,68 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docs:
+    name: docs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-default-groups --group docs --extra workbench
+      - run: uv run --no-sync python -m femforge.schemas --out docs/schema
+      - run: uv run --no-sync zensical build --strict
+      - uses: actions/upload-artifact@v7
+        with:
+          name: site
+          path: site
+          if-no-files-found: error
+          retention-days: 7
+
+  fallback:
+    name: mkdocs-material fallback
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: uv run --no-default-groups --group docs --extra workbench python -m femforge.schemas --out docs/schema
+      - run: uv run --no-default-groups --group docs --extra workbench --with mkdocs-material --with mkdocs-llmstxt mkdocs build --strict --site-dir site-fallback
+
+  deploy:
+    name: deploy
+    needs: docs
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'femforge-io/femforge'
+    runs-on: ubuntu-24.04
+    environment:
+      name: docs
+      url: https://docs.femforge.io
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: wrangler.jsonc
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: site
+          path: site
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npx --yes wrangler@4 deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

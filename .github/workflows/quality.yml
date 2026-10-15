@@ -1,0 +1,115 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  SERVE_DIR: packages/femforge-workbench/src/femforge_workbench/widgets/serve
+
+jobs:
+  client:
+    name: client
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/femforge-workbench/js
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/femforge-workbench/js/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run format:check
+      - run: npm run build
+      - run: npm run check-dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: client-dist
+          path: ${{ env.SERVE_DIR }}
+          if-no-files-found: error
+          retention-days: 7
+
+  checks:
+    name: checks (${{ matrix.python }})
+    needs: client
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    env:
+      PYTHONFAULTHANDLER: "1"
+      FEMFORGE_IMPORT_BUDGET_SCALE: "2"
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1 xvfb xauth
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: client-dist
+          path: ${{ env.SERVE_DIR }}
+      - run: uv sync --locked --python ${{ matrix.python }}
+      - run: uv run --no-sync basedpyright --warnings
+      - run: uv run --no-sync ruff check src packages scripts examples
+      - run: uv run --no-sync ruff format --check src packages scripts examples
+      - run: xvfb-run -a uv run --no-sync pytest
+
+  docker-e2e:
+    name: docker-e2e
+    runs-on: ubuntu-24.04
+    env:
+      PYTHONFAULTHANDLER: "1"
+      FEMFORGE_DOCKER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Check that no native Elmer is installed
+        run: |
+          if command -v ElmerSolver || command -v ElmerGrid; then echo "::error::The runner has a native Elmer; the job must prove Docker alone."; exit 1; fi
+      - run: uv run --no-sync pytest --no-cov tests/elmer/test_docker_integration.py
+
+  package:
+    name: package
+    needs: client
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: client-dist
+          path: ${{ env.SERVE_DIR }}
+      - run: uv build --all-packages --no-sources --out-dir dist
+      - run: uvx twine check --strict dist/*
+      - name: Check what the distributions carry
+        run: |
+          cmp LICENSE packages/femforge-workbench/LICENSE
+          cmp NOTICE packages/femforge-workbench/NOTICE
+          wheel=$(unzip -Z1 dist/femforge_workbench-*.whl)
+          for file in ff.umd.js ff.css props.json version.json THIRD_PARTY_LICENSES.txt; do
+            grep -qx "femforge_workbench/widgets/serve/$file" <<<"$wheel" || { echo "::error::The workbench wheel lacks $file."; exit 1; }
+          done
+          if tar -tzf dist/femforge_workbench-*.tar.gz | grep -E '/(node_modules|dist)/' > /dev/null; then echo "::error::The workbench sdist carries build output."; exit 1; fi
+          if tar -tzf dist/femforge-*.tar.gz | grep -E '/(packages|docs|tests|typings)/' > /dev/null; then echo "::error::The femforge sdist carries more than the package."; exit 1; fi

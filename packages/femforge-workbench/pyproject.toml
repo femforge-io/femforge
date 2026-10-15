@@ -1,0 +1,82 @@
+[project]
+name = "femforge-workbench"
+version = "0.1.0"
+description = "Interactive workbench for femforge: a trame React shell whose dock holds scene, figure and table panels over runs, artifacts, logs and lab data."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12"
+authors = [{ name = "Nathan Woodward" }]
+keywords = ["fea", "finite-element", "elmer", "workbench", "visualization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "femforge[viz]==0.1.0",
+    "build123d>=0.13,<0.14",
+    "numpy>=2.5",
+    "pandas>=3.0",
+    "platformdirs>=4.11.5",
+    "plotly>=7.1",
+    "polars>=2.0,<3",
+    "psutil>=7.2.2",
+    "pyvista[colormaps]>=0.49.0,<0.50",
+    "scipy>=1.18",
+    "trame>=4.0.0",
+    "trame-client>=4.1",
+    "trame-rca>=2.11.8",
+    "trame-server>=4.1",
+    "trame-vtklocal>=1.7.1,<1.8",
+    "vtk>=9.7.1,<9.8",
+    "watchdog>=6.0",
+]
+
+[project.optional-dependencies]
+app = [
+    "pywebview>=6.2.1",
+]
+ocp = [
+    "ocp_vscode>=4.1,<4.2",
+]
+pty = [
+    "pywinpty>=3.0.5 ; sys_platform == 'win32'",
+]
+
+[project.urls]
+Homepage = "https://femforge.io"
+Documentation = "https://docs.femforge.io"
+Repository = "https://github.com/femforge-io/femforge"
+Issues = "https://github.com/femforge-io/femforge/issues"
+
+[project.scripts]
+femforge-workbench = "femforge_workbench.cli:main"
+
+[project.entry-points."femforge.workbenches"]
+demo = "femforge_workbench.demo:SPEC"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+artifacts = ["src/femforge_workbench/widgets/serve/**"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "js/src", "js/public", "js/scripts", "js/package.json", "js/package-lock.json", "js/vite.config.ts", "js/vitest.config.ts", "js/components.json", "js/tsconfig.json", "hatch_build.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/femforge_workbench"]
+
+[tool.hatch.build.hooks.custom]
+
+[tool.uv.sources]
+femforge = { workspace = true }

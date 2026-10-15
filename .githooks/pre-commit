@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Runs the truncation check, the basedpyright gate and ruff before each commit; the Quality workflow adds pytest.
+# Enable once per clone, together with the commit-msg hook: git config core.hooksPath .githooks
+set -euo pipefail
+
+uv run python .githooks/check_truncation.py
+
+uv run basedpyright --warnings
+uv run ruff check src packages scripts examples
+uv run ruff format --check src packages scripts examples

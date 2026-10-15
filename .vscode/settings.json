@@ -1,0 +1,44 @@
+{
+  "python.testing.pytestArgs": ["tests", "--no-cov"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.testing.autoTestDiscoverOnSaveEnabled": false,
+  "testing.automaticallyOpenPeekView": "never",
+
+  // Requires the "basedpyright" VS Code extension (DetachHead.basedpyright).
+  // basedpyright ships its own language server, so we disable Pylance to avoid
+  // two type checkers fighting. The extension reads [tool.basedpyright] from
+  // pyproject.toml -> GUI results match the `basedpyright` CLI exactly.
+  "python.languageServer": "None",
+  "basedpyright.disableLanguageServices": false,
+  "basedpyright.analysis.typeCheckingMode": "basic",
+  "basedpyright.analysis.useTypingExtensions": true,
+  "basedpyright.analysis.useLibraryCodeForTypes": true,
+  "files.exclude": {
+    ".ruff_cache": true,
+    ".pytest_cache": true,
+    ".githooks": true,
+    ".github": true,
+    ".python-version": true,
+    ".gitignore": true,
+    ".gitattributes": true,
+    "uv.lock": true
+  },
+  "commentBox.style": "hashes",
+  "commentBox.capitalize": false,
+  "commentBox.textAlignment": "center",
+  "commentBox.width": 60,
+  "[python]": {
+    // Explicitly set Ruff as your primary formatter
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+
+    "editor.codeActionsOnSave": {
+      // Explicitly use Ruff to organize your imports
+      "source.organizeImports.ruff": "always",
+      "source.fixAll.ruff": "explicit",
+      // CRITICAL: Explicitly turn off standard/competing import tools
+      "source.organizeImports": "never"
+    }
+  }
+}

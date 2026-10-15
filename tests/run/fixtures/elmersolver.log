@@ -1,0 +1,17 @@
+ELMER SOLVER (v 9.0) STARTED AT: 2026/06/14 10:00:00
+MAIN:
+MAIN: =============================================================
+MAIN:  ElmerSolver finite element software, Welcome!
+MAIN: =============================================================
+MAIN:
+LoadMesh: Base mesh name: ./case
+MAIN: -------------------------------------
+ComputeChange: NS (ITER=1) (NRM,RELC): ( 0.1500E+01 0.4231E-03 )
+ComputeChange: NS (ITER=2) (NRM,RELC): ( 0.1483E+01 0.1102E-05 )
+ComputeChange: SS (ITER=1) (NRM,RELC): ( 0.1483E+01 0.7240E-08 )
+MagnetoDynamicsCalcFields: Calculating nodal forces
+SaveScalars: Saving 5 values to case.dat
+ElmerSolver: Writing results to case.vtu
+SOLVER TOTAL TIME(CPU,REAL):         4.55        5.12
+*** Elmer Solver: ALL DONE ***
+ELMER SOLVER FINISHED AT: 2026/06/14 10:00:05

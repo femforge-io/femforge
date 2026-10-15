@@ -1,0 +1,38 @@
+name: Fingerprint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  fingerprint:
+    name: fingerprint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Reject assistant attributions, agent files and internal ticket ids
+        env:
+          ATTRIBUTION: 'Co-Authored-By:.*(Clau[d]e|Anthropi[c])|Clau[d]e-Session|Generated with \[Clau[d]e|clau[d]e\.ai'
+          TICKET: '(^|[^A-Za-z0-9_])DE[V]-[0-9]+'
+          AGENT_FILES: '(^|/)(\.clau[d]e/|CLAU[D]E(\.local)?\.md$)'
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          found=0
+          git ls-files | grep -E "$AGENT_FILES" && found=1
+          git grep -nIiE "$ATTRIBUTION" && found=1
+          git grep -nIE "$TICKET" && found=1
+          if git cat-file -e "$BASE^{commit}" 2>/dev/null; then range="$BASE..$HEAD"; else range="-1 $HEAD"; fi
+          messages="$(git log --format=%B $range)"$'\n'"$TITLE"$'\n'"$BODY"
+          grep -niE "$ATTRIBUTION" <<<"$messages" && found=1
+          grep -nE "$TICKET" <<<"$messages" && found=1
+          if [ "$found" = 1 ]; then echo "::error::Remove the matches above."; exit 1; fi

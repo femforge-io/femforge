@@ -1,0 +1,17 @@
+# User guide
+
+The user guide covers one task per page, in the order a simulation flows through femforge. Start with [Concepts](../overview/concepts.md) for the whole pipeline on one page.
+
+- [Geometry and tags](geometry.md): build the model in build123d and tag the bodies a simulation refers to.
+- [Materials](materials.md): the material models, their property functions and units.
+- [Conditions and physics](conditions.md): body forces, boundary conditions and the physics presets Elmer solves.
+- [Mesh](mesh.md): element sizes, gmsh options, deterministic meshing and the mesh backends.
+- [Frames](frames.md): solve the model in 3D or as an axisymmetric 2D section.
+- [Driver and runs](driver.md): how the driver stages, reuses and records each run.
+- [Results](results.md): load results, read forces and fields, and validate them.
+- [Artifacts and retention](artifacts.md): the artifact store, reuse across processes and the retention policy.
+- [Telemetry](telemetry.md): the logs, run indexes and sweep progress femforge records.
+- [Workbench](workbench.md): launch the workbench and inspect runs and fields in its panels.
+- [Optimization](optimization.md): parameter sweeps and the root-finding searches over expensive solves.
+- [Elmer: native and Docker](elmer.md): run Elmer from a native install or from the femforge image.
+- [CLI](cli.md): the `femforge` and `femforge-workbench` commands.

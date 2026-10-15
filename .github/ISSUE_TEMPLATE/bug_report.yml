@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a bug in femforge or femforge-workbench.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: femforge-version
+    attributes:
+      label: femforge version
+      description: Run `uv run python -c "import femforge; print(femforge.__version__)"` and paste the output.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Run `uv run python --version` and paste the output.
+      placeholder: "3.14.0"
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      description: Include the version.
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: elmer-mode
+    attributes:
+      label: Elmer mode
+      description: Select how femforge ran Elmer. Select **Not applicable** if the bug does not involve a solve.
+      options:
+        - Native
+        - Docker
+        - Not applicable
+    validations:
+      required: true
+  - type: input
+    id: elmer-version
+    attributes:
+      label: Elmer version
+      description: Paste the `ElmerSolver --version` output for a native install, or the image tag for Docker, such as `femforge-elmer:0.1.0`.
+    validations:
+      required: false
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Minimal configuration
+      description: Paste the smallest `SimulationConfig` and geometry that reproduce the problem. If the geometry is a STEP file, zip it and attach it to the next field.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened and what you expected
+      description: Describe what happened and what you expected instead. Include the full traceback if femforge raised an error.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: Paste the relevant lines from `run.log` in the run directory.
+      render: shell
+    validations:
+      required: false

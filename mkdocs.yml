@@ -1,0 +1,177 @@
+site_name: femforge
+site_url: https://docs.femforge.io/
+site_description: Typed FEA orchestration in Python, from build123d CAD through gmsh and Elmer to typed, provenance-tracked results.
+site_author: Nathan Woodward
+copyright: Copyright &copy; 2026 Nathan Woodward. Apache-2.0.
+repo_url: https://github.com/femforge-io/femforge
+repo_name: femforge-io/femforge
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  variant: classic
+  font: false
+  palette:
+    scheme: slate
+    primary: custom
+    accent: custom
+  features:
+    - content.action.edit
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - overrides/extra.css
+
+plugins:
+  - search
+  - tags
+  - redirects:
+      redirect_maps: {}
+  - markdown-exec
+  - mkdocstrings:
+      default_handler: python
+      enable_inventory: true
+      handlers:
+        python:
+          paths: [src, packages/femforge-workbench/src]
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://docs.pydantic.dev/latest/objects.inv
+            - https://numpy.org/doc/stable/objects.inv
+          options:
+            docstring_style: google
+            docstring_section_style: list
+            docstring_options:
+              ignore_init_summary: true
+            extensions:
+              - scripts/griffe_exports.py:RedundantAliasExports
+              - griffe_pydantic:
+                  schema: false
+            filters: public
+            group_by_category: true
+            heading_level: 2
+            line_length: 100
+            members_order: [__all__, source]
+            merge_init_into_class: true
+            relative_crossrefs: true
+            scoped_crossrefs: true
+            separate_signature: true
+            show_root_full_path: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+            summary: true
+            unwrap_annotated: true
+  - llmstxt:
+      markdown_description: femforge drives finite-element analysis from Python. One typed SimulationConfig takes a build123d model through gmsh meshing and an Elmer solve to a typed, provenance-tracked Result.
+      full_output: llms-full.txt
+      sections:
+        Overview: [index.md, overview/*.md]
+        User guide: [user-guide/*.md]
+        API reference: [reference/*.md, reference/workbench/*.md]
+        Contributing: [contributing/*.md, contributing/architecture/*.md]
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path: [".", docs]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Overview:
+      - index.md
+      - Install: overview/install.md
+      - Quickstart: overview/quickstart.md
+      - Concepts: overview/concepts.md
+      - Compatibility: overview/compatibility.md
+  - User guide:
+      - user-guide/index.md
+      - Geometry and tags: user-guide/geometry.md
+      - Materials: user-guide/materials.md
+      - Conditions and physics: user-guide/conditions.md
+      - Mesh: user-guide/mesh.md
+      - Frames: user-guide/frames.md
+      - Driver and runs: user-guide/driver.md
+      - Results: user-guide/results.md
+      - Artifacts and retention: user-guide/artifacts.md
+      - Telemetry: user-guide/telemetry.md
+      - Workbench: user-guide/workbench.md
+      - Optimization: user-guide/optimization.md
+      - "Elmer: native and Docker": user-guide/elmer.md
+      - CLI: user-guide/cli.md
+  - API reference:
+      - reference/index.md
+      - femforge:
+          - Config: reference/config.md
+          - Geometry: reference/geometry.md
+          - Physical: reference/physical.md
+          - Materials: reference/materials.md
+          - Meshing: reference/meshing.md
+          - Elmer: reference/elmer.md
+          - Elmer solvers: reference/elmer-config.md
+          - Run: reference/run.md
+          - Artifacts: reference/artifacts.md
+          - Telemetry: reference/telemetry.md
+          - Optimize: reference/optimize.md
+          - Validation: reference/validation.md
+          - Viz: reference/viz.md
+          - Common: reference/common.md
+          - Docker images: reference/execution.md
+          - JSON schemas: reference/schemas.md
+      - femforge_workbench:
+          - Serve: reference/workbench/serve.md
+          - Registry: reference/workbench/registry.md
+          - Dock: reference/workbench/dock.md
+          - Panels: reference/workbench/panels.md
+          - Widgets: reference/workbench/widgets.md
+          - Theme: reference/workbench/theme.md
+  - Contributing:
+      - Setup: contributing/index.md
+      - Principles: contributing/principles.md
+      - Invariants: contributing/invariants.md
+      - Architecture:
+          - Config objects: contributing/architecture/config-objects.md
+          - Solver objects: contributing/architecture/solver-objects.md
+          - Artifacts and retention: contributing/architecture/artifacts.md
+          - Telemetry: contributing/architecture/telemetry.md
+          - Workbench client: contributing/architecture/workbench.md
+      - Testing and gates: contributing/testing.md
+      - Tooling: contributing/tooling.md
+      - Release process: contributing/release.md
+  - Changelog: changelog.md

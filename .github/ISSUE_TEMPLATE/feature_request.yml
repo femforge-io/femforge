@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a new capability or an improvement for femforge or femforge-workbench.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the problem you want to solve. Say what you are trying to do and what stops you.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the change you want. If you have an API or a configuration in mind, show how you would use it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe other approaches or workarounds you considered, and why they fall short.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add links, references, or screenshots that help explain the request.
+    validations:
+      required: false

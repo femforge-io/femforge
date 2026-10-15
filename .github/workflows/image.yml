@@ -1,0 +1,95 @@
+name: Elmer image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/femforge/elmer/runtime/docker_image.py
+      - src/femforge/execution/docker/**
+      - .github/workflows/image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: elmer-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: github.repository == 'femforge-io/femforge' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    env:
+      FEMFORGE_DOCKER_TESTS: "1"
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Compute the image tag
+        id: tag
+        run: |
+          tag=$(uv run --no-sync femforge image tag)
+          case "$tag" in
+            *-dev.*)
+              echo "::error::$tag is a dev tag: the recipe changed without a version bump; run femforge image bump."
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag##*:}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Skip a tag the registry already holds
+        id: registry
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if docker manifest inspect "$TAG" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG is already published; tags are immutable, so nothing is pushed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the image from the recipe
+        if: steps.registry.outputs.exists == 'false'
+        run: uv run --no-sync femforge image build --no-pull
+      - name: Solve through the image before publishing it
+        if: steps.registry.outputs.exists == 'false'
+        run: uv run --no-sync pytest --no-cov tests/elmer/test_docker_integration.py
+      - name: Push the image
+        if: steps.registry.outputs.exists == 'false'
+        run: docker push "${{ steps.tag.outputs.tag }}"
+      - name: Publish Elmer's corresponding source beside the image
+        if: steps.registry.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          base=$(uv run --no-sync python -c "from femforge.elmer.runtime.docker_image import BASE_IMAGE; print(BASE_IMAGE)")
+          elmer=$(docker run --rm --platform linux/amd64 "$TAG" dpkg-query --show --showformat='${Version}' elmerfem-csc)
+          mkdir -p "$RUNNER_TEMP/source"
+          docker run --rm --platform linux/amd64 -v "$RUNNER_TEMP/source:/source" -w /source "$base" bash -euxc "
+            apt-get update
+            apt-get install -y --no-install-recommends software-properties-common gpg-agent dpkg-dev
+            add-apt-repository -y -s ppa:elmer-csc-ubuntu/elmer-csc-ppa
+            apt-get update
+            apt-get source --download-only elmerfem-csc=$elmer"
+          tar -czf "$RUNNER_TEMP/elmerfem-csc-$elmer-source.tar.gz" -C "$RUNNER_TEMP/source" .
+          gh release create "femforge-elmer-v$VERSION" "$RUNNER_TEMP/elmerfem-csc-$elmer-source.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false --title "femforge-elmer $VERSION" \
+            --notes "Image $TAG runs elmerfem-csc $elmer (GPL-2.0-or-later; ElmerSolver library LGPL-2.1-or-later). This release holds its corresponding source."
+          echo "femforge-elmer $VERSION: elmerfem-csc $elmer" >> "$GITHUB_STEP_SUMMARY"

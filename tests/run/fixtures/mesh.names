@@ -1,0 +1,6 @@
+! ----- names for bodies -----
+$ AIR = 1
+$ N42_MAGNETIZATIONN = 2
+! ----- names for boundaries -----
+$ AIR__EXT = 3
+$ AIR__N42_MAGNETIZATIONN = 4

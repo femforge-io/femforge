@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Rejects a commit message that carries an assistant attribution or an internal ticket id.
+# Enable once per clone: git config core.hooksPath .githooks
+set -euo pipefail
+
+attribution='Co-Authored-By:.*(Clau[d]e|Anthropi[c])|Clau[d]e-Session|Generated with \[Clau[d]e|clau[d]e\.ai'
+ticket='(^|[^A-Za-z0-9_])DE[V]-[0-9]+'
+
+# git commit --verbose appends the diff below a scissors line, and git drops everything below it.
+message=$(sed -e '/^# -\{24\} >8 -\{24\}$/,$d' -e '/^#/d' "$1")
+found=0
+grep -niE "$attribution" <<<"$message" && found=1
+grep -nE "$ticket" <<<"$message" && found=1
+if [ "$found" = 1 ]; then
+  echo "commit-msg: remove the lines above; attributions and internal ticket ids stay out of history." >&2
+  exit 1
+fi

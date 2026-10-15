@@ -1,0 +1,18 @@
+data/
+examples/*/runs/
+examples/*/runs-index/
+*__pycache__/
+.env
+.truncation-allow
+# Coverage artifacts (pytest-cov)
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.step
+dist/
+site/
+docs/schema/
+packages/femforge-workbench/js/node_modules/
+packages/femforge-workbench/js/dist/
+packages/femforge-workbench/src/femforge_workbench/widgets/serve/

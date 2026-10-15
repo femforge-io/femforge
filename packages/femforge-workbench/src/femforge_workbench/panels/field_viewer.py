@@ -1,0 +1,1605 @@
+"""The field viewer: a controller that opens a run's VTU as a FieldScene, the controls that steer it, and the 3D and plotly 2D views that show it."""
+
+import asyncio
+import json
+import math
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from enum import StrEnum
+from functools import cache, partial
+from pathlib import Path
+from typing import cast
+
+import plotly.graph_objects as go
+import polars as pl
+import pyvista as pv
+from trame.app import TrameComponent
+from trame.decorators import change, controller
+from trame.widgets import html, react
+
+from femforge.common.files import RunFile
+from femforge.common.log import log
+from femforge.common.utils import title
+from femforge.run.entities import Bodies
+from femforge.run.fields import GEOMETRY_IDS_ARRAY
+from femforge.run.inspect import Run
+from femforge.run.result import Result
+from femforge.telemetry.paths import Telemetry, resolve_root
+from femforge.telemetry.runs import RunQuery
+from femforge.telemetry.schemas import RunColumn
+from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, sample_colormap
+from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, select_flux_density_array
+from femforge_workbench import dock
+from femforge_workbench.app import Hook, Workbench
+from femforge_workbench.colormaps import COLORMAPS, FAVORITES, ColormapType
+from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
+from femforge_workbench.panels.figure import FigurePanel
+from femforge_workbench.panels.scene import ScenePanel, View
+from femforge_workbench.registry import FIELD_VIEWER
+from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
+from femforge_workbench.widgets.button import Button
+from femforge_workbench.widgets.checkbox import Checkbox
+from femforge_workbench.widgets.combobox import Combobox, ComboboxItem
+from femforge_workbench.widgets.element import EVENT, setter
+from femforge_workbench.widgets.field import Field, FieldLabel
+from femforge_workbench.widgets.icon import Icon
+from femforge_workbench.widgets.input import ColorInput, Input
+from femforge_workbench.widgets.progress import Progress
+from femforge_workbench.widgets.slider import Slider
+from femforge_workbench.widgets.switch import Switch
+
+
+PLOTLY_MAX_CELLS = 400_000
+"""Cells above which a 2D run is drawn in the plotter instead of as plotly meshes in the browser."""
+
+RUN_PICKER_LIMIT = 200
+"""The newest indexed runs with fields the run picker offers."""
+
+CLIM_STEPS = 1000
+"""Range slider resolution over the data range."""
+
+BOUNDS_RATIO = 2.0
+"""The largest diagonal ratio between two runs whose camera still carries over from one to the other."""
+
+FIELDS_PERIOD = 1.0
+"""How often the viewer checks whether a run it shows empty has finished solving."""
+
+LINE_COUNT_MIN = 2
+MAX_LENGTH_RANGE = (0.05, 1.0)
+MAX_LENGTH_STEP = 0.05
+RESTYLE_EVENT = "restyle"
+WHOLE_DOMAIN = ""
+WHOLE_DOMAIN_LABEL = "Whole Domain"
+NO_RUN = "No Run Open"
+VOLUME_2D = "Volume (3D Only)"
+MATERIAL_PREFIX = "material:"
+DEFAULTS = DisplaySpec()
+"""The display the viewer starts from unless given one."""
+
+LINE_DEFAULTS = FieldLineOptions()
+FULL_WIDTH = "w-full"
+RUN_WIDTH = "w-72"
+PATH_WIDTH = "w-96"
+BUSY_FULL = 100.0
+"""The bar is pulsed, not filled: the load reports no fraction."""
+
+FIELD_SECTION = "field"
+LINES_SECTION = "lines"
+BODIES_SECTION = "bodies"
+OPEN_SECTIONS = [FIELD_SECTION, LINES_SECTION, BODIES_SECTION]
+OPACITY_RANGE = (0.0, 1.0)
+OPACITY_STEP = 0.01
+ALL_BODIES = "All Bodies"
+PREVIEW_STOPS = 16
+"""Colors sampled for a colormap's swatch, enough for the CSS gradient to read as the map."""
+
+FAVORITES_GROUP = "Favorites"
+COLORMAP_FILTERS = [FAVORITES_GROUP, *(kind.value for kind in ColormapType)]
+SAME_AS_FIELD = "same-as-field"
+SAME_AS_FIELD_LABEL = "Same as Field"
+STACK = "flex flex-col gap-1.5"
+SETTING = "flex h-6 w-full shrink-0 items-center justify-between gap-2"
+READOUTS = "flex items-center justify-between"
+SWITCH_ID = "ff-switch-"
+BODY_TABLE = "flex w-full shrink-0 flex-col gap-1"
+BODY_ROW = "grid h-6 grid-cols-[1rem_minmax(0,1fr)_5.5rem_4.5rem] items-center gap-x-2"
+BODY_NAME = "truncate"
+MEMBER_NAME = "truncate pl-3"
+GROUP_NAME = "truncate font-medium"
+CHIP_SLOT = "grid grid-cols-[minmax(0,1fr)_1rem] items-center gap-0.5"
+CHIP = "h-4 w-full min-w-0 cursor-pointer rounded-sm border border-border p-0"
+COLOR_CHIP = f"{CHIP} [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[3px] [&::-webkit-color-swatch]:border-0"
+CHIP_CLEAR = "size-4"
+ENTER = "Enter"
+PRECISION = 4
+
+type Item = dict[str, object]
+type Location = Run | str | Path
+"""Where a run is: a Run, a run id or a bundle directory."""
+
+
+class FieldPanel(StrEnum):
+    """The viewer's panel ids; the two views double as the drawing paths a run takes."""
+
+    CONTROLS = "field-controls"
+    VIEW_3D = "field3d"
+    PLOT_2D = "field2d"
+
+
+class FieldVar(StrEnum):
+    """The viewer's state variables, bound by the controls, the app-bar run picker and the two views alike."""
+
+    RUN = "field_run"
+    """The location asked for: an indexed run id or a bundle directory."""
+
+    RUN_TEXT = "field_run_text"
+    RUN_ITEMS = "field_run_items"
+    RUN_ID = "field_run_id"
+    BUSY = "field_busy"
+    MODEL_DIM = "field_model_dim"
+    FIELDS = "field_fields"
+    FIELD = "field_field"
+    MODES = "field_modes"
+    MODE = "field_mode"
+    COLORMAP = "field_colormap"
+    LOG_SCALE = "field_log_scale"
+    INVERT = "field_invert"
+    OUTLINE = "field_outline"
+    AUTO_CLIM = "field_auto_clim"
+    CLIM = "field_clim"
+    CLIM_MIN = "field_clim_min"
+    CLIM_MAX = "field_clim_max"
+    CLIM_STEP = "field_clim_step"
+    VISIBLE_BODIES = "field_visible_bodies"
+    HAS_FLUX = "field_has_flux"
+    STREAMLINES = "field_streamlines"
+    SEED_PLACEMENTS = "field_seed_placements"
+    SEED_PLACEMENT = "field_seed_placement"
+    LINE_COUNT = "field_line_count"
+    LINE_COUNT_MAX = "field_line_count_max"
+    MAX_LENGTH = "field_max_length"
+    LINES_BODIES = "field_lines_bodies"
+    LINES_BODY = "field_lines_body"
+    OPACITY = "field_opacity"
+    OPACITY_MAPPING = "field_opacity_mapping"
+    OPACITY_RANGE = "field_opacity_range"
+    BODY_ROWS = "field_body_rows"
+    FIELD_GRADIENT = "field_gradient"
+    BODY_COLORMAP = "field_body_colormap"
+    BODY_COLORMAP_SHOWN = "field_body_colormap_shown"
+    """The body colormap picker's value: SAME_AS_FIELD while no body takes the body colormap."""
+
+    BODY_LEAD = "field_body_lead"
+    COLORMAP_ITEMS = "field_colormap_items"
+
+
+DISPLAY_KEYS: tuple[FieldVar, ...] = (
+    FieldVar.FIELD,
+    FieldVar.MODE,
+    FieldVar.COLORMAP,
+    FieldVar.LOG_SCALE,
+    FieldVar.INVERT,
+    FieldVar.OUTLINE,
+    FieldVar.AUTO_CLIM,
+    FieldVar.VISIBLE_BODIES,
+    FieldVar.STREAMLINES,
+    FieldVar.SEED_PLACEMENT,
+    FieldVar.LINES_BODY,
+    FieldVar.OPACITY_MAPPING,
+    FieldVar.BODY_COLORMAP,
+)
+"""The state variables whose change redraws the scene."""
+
+
+def names_of(value: object) -> list[str]:
+    """The strings of a state list, nothing for anything else."""
+    if not isinstance(value, list):
+        return []
+
+    return [str(item) for item in cast("list[object]", value)]
+
+
+def number_of(value: object, fallback: float) -> float:
+    """A state number, or the fallback for anything that is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return fallback
+
+    return float(value)
+
+
+def pair_of(value: object) -> tuple[float, float] | None:
+    """A state ``[lo, hi]`` as a tuple, None for anything else."""
+    if not isinstance(value, list) or len(cast("list[object]", value)) != 2:
+        return None
+
+    lo, hi = cast("list[object]", value)
+    if isinstance(lo, bool) or isinstance(hi, bool) or not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)):
+        return None
+
+    return (float(lo), float(hi))
+
+
+class RowKey(StrEnum):
+    """The keys of a body-table row."""
+
+    ID = "id"
+    TITLE = "title"
+    MEMBERS = "members"
+    GROUP = "group"
+    MEMBER = "member"
+    PAINT = "paint"
+    COLOR = "color"
+    OPACITY = "opacity"
+
+
+def hex_of(color: str) -> str:
+    """A color pyvista resolves as the ``#rrggbb`` a color input takes."""
+    return pv.Color(color).hex_rgb
+
+
+@cache
+def colormap_gradient(name: str, *, reverse: bool = False) -> str | None:
+    """A left-to-right CSS gradient through the colormap (right-to-left when reversed), None when no installed package resolves it."""
+    try:
+        samples = cast("list[list[float]]", sample_colormap(name, PREVIEW_STOPS).tolist())
+    except Exception:  # noqa: BLE001 - a colormap that cannot resolve loses its swatch, never the select
+        log.bind(colormap=name).warning("Colormap has no preview.")
+        return None
+
+    last = len(samples) - 1
+    stops = ", ".join(f"rgb({round(r * 255)}, {round(g * 255)}, {round(b * 255)}) {100 * index / last:.0f}%" for index, (r, g, b, *_) in enumerate(samples))
+
+    return f"linear-gradient(to {'left' if reverse else 'right'}, {stops})"
+
+
+@cache
+def colormap_items() -> list[ComboboxItem]:
+    """The colormap pickers' items: the favorites first, then every other catalogue entry, each with its label, groups and swatch."""
+    catalogue = {entry.name: entry for entry in COLORMAPS}
+    names = [*FAVORITES, *(name for name in catalogue if name not in FAVORITES)]
+    items: list[ComboboxItem] = []
+    for name in names:
+        entry = catalogue[name]
+        groups = [FAVORITES_GROUP, entry.kind.value] if name in FAVORITES else [entry.kind.value]
+        item: ComboboxItem = {"value": name, "label": title(entry.label), "groups": groups}
+        gradient = colormap_gradient(name)
+        if gradient is not None:
+            item["swatch"] = gradient
+
+        items.append(item)
+
+    return items
+
+
+def mode_items(info: FieldInfo) -> list[Item]:
+    """The mode select's items for one field."""
+    return [{ItemField.TITLE: mode.label, ItemField.VALUE: str(mode)} for mode in info.modes]
+
+
+def placement_items(model_dim: int = 3) -> list[Item]:
+    """The seed placement select's items; a 2D run offers no volume to seed."""
+    items: list[Item] = [{ItemField.TITLE: title(placement.value), ItemField.VALUE: str(placement)} for placement in SeedPlacement]
+    if model_dim == 2:
+        volume = next(item for item in items if item[ItemField.VALUE] == SeedPlacement.VOLUME)
+        volume.update({ItemField.TITLE: VOLUME_2D, ItemField.DISABLED: True})
+
+    return items
+
+
+def body_items(names: Sequence[str]) -> list[Item]:
+    """The field-line region select's items: the whole domain first, then every body."""
+    return [{ItemField.TITLE: WHOLE_DOMAIN_LABEL, ItemField.VALUE: WHOLE_DOMAIN}, *({ItemField.TITLE: name, ItemField.VALUE: name} for name in names)]
+
+
+def body_rows(bodies: Bodies, names: Sequence[str], looks: Mapping[str, BodyStyle], body_colormap: str) -> list[Item]:
+    """The body table's rows: a material that owns several bodies as a group row over them, then the rest, each showing where its color comes from, that color and its opacity.
+
+    Args:
+        bodies: The run's bodies, whose materials group the rows.
+        names: The body names to list, in order.
+        looks: Each body's own style by name; a body without one takes the field colormap.
+        body_colormap: The colormap spread evenly over the bodies whose paint is `BodyPaint.COLORMAP`.
+    """
+    grouped: dict[str, list[str]] = {}
+    for name in names:
+        body = bodies.get(name)
+        if body is None or body.material is None:
+            continue
+
+        grouped.setdefault(body.material, []).append(name)
+
+    styles = [looks.get(name) or BodyStyle(body=name) for name in names]
+    resolved = DisplaySpec(body_styles=tuple(styles), body_colormap=body_colormap).solid()
+
+    def row(id: str, title: str, members: Sequence[str], *, group: bool = False, member: bool = False) -> Item:
+        own = [looks.get(name) or BodyStyle(body=name) for name in members]
+        paints = {style.paint for style in own}
+        colors = [resolved.get(name) for name in members]
+        return {
+            RowKey.ID: id,
+            RowKey.TITLE: title,
+            RowKey.MEMBERS: list(members),
+            RowKey.GROUP: group,
+            RowKey.MEMBER: member,
+            RowKey.PAINT: str(paints.pop()) if len(paints) == 1 else str(BodyPaint.FIELD),
+            RowKey.COLOR: colors[0],
+            RowKey.OPACITY: [own[0].opacity],
+        }
+
+    rows: list[Item] = []
+    placed: set[str] = set()
+    for material, members in grouped.items():
+        if len(members) < 2:
+            continue
+
+        rows.append(row(f"{MATERIAL_PREFIX}{material}", material, members, group=True))
+        rows.extend(row(name, name, [name], member=True) for name in members)
+        placed.update(members)
+
+    rows.extend(row(name, name, [name]) for name in names if name not in placed)
+
+    return rows
+
+
+def has_flux_density(fields: Sequence[FieldInfo]) -> bool:
+    """Whether the fields include a magnetic flux density, the array the field lines integrate."""
+    try:
+        _ = select_flux_density_array(info.name for info in fields)
+    except KeyError:
+        return False
+
+    return True
+
+
+def run_items(telemetry: Telemetry | None) -> list[Item]:
+    """The run picker's items: the newest indexed runs that still have fields, empty without a telemetry root or a readable index."""
+    if telemetry is None:
+        return []
+
+    try:
+        frame = RunQuery(telemetry.runs.scan()).where(pl.col(RunColumn.HAS_VTU)).newest(RUN_PICKER_LIMIT).frame()
+    except Exception:  # noqa: BLE001 - an unreadable index costs the picker, never the viewer
+        log.opt(exception=True).warning("Run index unavailable.")
+        return []
+
+    run_ids = cast("list[str]", frame[RunColumn.RUN_ID].to_list())
+    physics = cast("list[str | None]", frame[RunColumn.PHYSICS].to_list())
+    dims = cast("list[int | None]", frame[RunColumn.MODEL_DIM].to_list())
+
+    items: list[Item] = []
+    for run_id, kind, dim in zip(run_ids, physics, dims, strict=True):
+        extent = f"{dim}D" if dim is not None else ""
+        items.append({ItemField.TITLE: " ".join(part for part in (run_id, kind or "", extent) if part), ItemField.VALUE: run_id})
+
+    return items
+
+
+def similar_bounds(a: Sequence[float], b: Sequence[float]) -> bool:
+    """Whether two bounding boxes frame alike: diagonals within BOUNDS_RATIO of each other and centres closer than half the larger diagonal."""
+
+    def measure(box: Sequence[float]) -> tuple[list[float], float]:
+        lower, upper = box[0::2], box[1::2]
+        center = [(lo + hi) / 2.0 for lo, hi in zip(lower, upper, strict=True)]
+        diagonal = math.sqrt(sum((hi - lo) ** 2 for lo, hi in zip(lower, upper, strict=True)))
+
+        return center, diagonal
+
+    center_a, diagonal_a = measure(a)
+    center_b, diagonal_b = measure(b)
+    if diagonal_a == 0.0 or diagonal_b == 0.0:
+        return False
+
+    largest = max(diagonal_a, diagonal_b)
+    distance = math.sqrt(sum((p - q) ** 2 for p, q in zip(center_a, center_b, strict=True)))
+
+    return largest / min(diagonal_a, diagonal_b) <= BOUNDS_RATIO and distance <= largest / 2.0
+
+
+def solving(run: Run) -> bool:
+    """Whether the run is still being solved: its manifest says running, or its bundle has none yet."""
+    try:
+        return run.manifest.status == "running"
+    except FileNotFoundError:
+        return run.path.is_dir()
+
+
+def missing_fields(run: Run) -> str | None:
+    """Why the run has no fields to show, None when it has them."""
+    if run.vtu_path is not None:
+        return None
+
+    record = run.purged(RunFile.FIELDS)
+    if record is not None:
+        return f"Fields purged on {record.applied_at:%Y-%m-%d} by {record.trigger}; re-solve to restore them"
+
+    if solving(run):
+        return "No fields yet: the run is still solving"
+
+    return "The solve wrote no fields"
+
+
+def captioned(label: str) -> Field:
+    """A caption over the control built inside the returned field: the controls column is too narrow for one beside it."""
+    field = Field(orientation="vertical", classes=str(Cls.CONTROL))
+    with field:
+        FieldLabel(title(label), classes=str(Cls.CAPTION))
+
+    return field
+
+
+def setting(model: FieldVar, label: str, *, disabled: react.Bind | None = None) -> None:
+    """A switch over `model` at the right of its label, every switch of the controls in one column.
+
+    Args:
+        model: The state variable the switch is bound to.
+        label: The caption at the left.
+        disabled: A client expression that disables the switch; None keeps it enabled.
+    """
+    with Field(orientation="horizontal", classes=SETTING):
+        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=str(Cls.CAPTION))
+        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled)
+
+
+def readouts(left: str | react.Bind, right: str | react.Bind) -> None:
+    """The row over a slider: a caption or its low end at the left, its high end at the right."""
+    with html.Div(classes=READOUTS):
+        html.Span([title(left) if isinstance(left, str) else left], classes=str(Cls.CAPTION))
+        html.Span([right], classes=str(Cls.CAPTION))
+
+
+def seed_count() -> str:
+    """The expression reading out the seeds the slider's count per axis makes for the chosen placement."""
+    count = f"{FieldVar.LINE_COUNT}[0]"
+    axes = f"({FieldVar.SEED_PLACEMENT} === {json.dumps(str(SeedPlacement.VOLUME))} ? 3 : {FieldVar.SEED_PLACEMENT} === {json.dumps(str(SeedPlacement.CENTER_PLANE))} ? 2 : 1)"
+
+    return f"Math.pow({count}, {axes}).toLocaleString()"
+
+
+def seed_limit(placement: SeedPlacement) -> int:
+    """The most seeds per axis a placement offers, so the seeds it makes stay within an integration of a few seconds."""
+    match placement:
+        case SeedPlacement.GAP_LINE:
+            return 200
+        case SeedPlacement.CENTER_PLANE:
+            return 60
+        case SeedPlacement.VOLUME:
+            return 16
+
+
+def only(value: object, fallback: float) -> float:
+    """The number in a one-thumb slider's state, or the fallback for anything else."""
+    # The state holds the slider's whole array: a `[value]` expression would hand Radix a fresh array on every render, and its controlled value would then never settle.
+    thumbs = cast("list[object]", value) if isinstance(value, list) else []
+    if len(thumbs) != 1:
+        return fallback
+
+    return number_of(thumbs[0], fallback)
+
+
+class FieldViewerController(TrameComponent):
+    """Owns the loaded run and its FieldScene: opens runs off the loop, publishes what they offer, and maps every display change to the plotter or the figure."""
+
+    def __init__(self, app: Workbench, *, telemetry: Telemetry | None = None, display: DisplaySpec = DEFAULTS) -> None:
+        """Seeds the viewer's state from `display` and registers the open hook and the state listeners.
+
+        Args:
+            app: The workbench shell the viewer runs in.
+            telemetry: The telemetry root whose run index the run picker lists and run ids resolve in; None leaves the picker empty.
+            display: The display the controls start from.
+        """
+        super().__init__(app.server)
+        self.app = app
+        self.telemetry = telemetry
+        self.startup = display
+        """The display the viewer was opened with; its body names are checked against every run shown."""
+        self.hidden_bodies = display.hidden_bodies
+        """The bodies every run opens with hidden."""
+        self.robust = display.robust
+        self.looks: dict[str, BodyStyle] = {style.body: style.model_copy(update={"color": hex_of(style.color) if style.color is not None else None}) for style in display.body_styles}
+        """Every body's own color and opacity by name, kept across runs; a body without one takes the field colormap at full opacity."""
+        lines = display.streamlines or LINE_DEFAULTS
+        self.lines = lines
+        """The field-line options the controls start from: their seeds, count and length, which the controls then set."""
+        self.lines_region = lines.region_id
+        """The field-line region the first run opens with, named once its bodies are known."""
+        self.run: Run | None = None
+        self.scene: FieldScene | None = None
+        self.model_dim = 3
+        self.bodies: list[str] = []
+        self.viewer: FieldViewerPanel | None = None
+        self.plot: FieldPlot2DPanel | None = None
+        self.attached: set[str] = set()
+        """The ids of the panels that took this controller; the last to leave releases it."""
+        self.live = True
+        """Whether the controller's listeners and open hook are registered."""
+        self.drawn: FieldScene | None = None
+        """The scene the plotter currently holds."""
+        self.framed: tuple[float, ...] | None = None
+        """The bounds the plotter's camera last framed, kept through a clear so the next run that frames alike keeps the view."""
+        self.shown: set[str] = set()
+        self.syncing = False
+        self.dirty = False
+        self.reveal = False
+        self.generation = 0
+        self.load_task: asyncio.Task[None] | None = None
+        self.task: asyncio.Task[None] | None = None
+        self.wait_task: asyncio.Task[None] | None = None
+        self.volume_seeds = False
+        """Whether a 2D run moved Volume seeds to the center plane, which the next 3D run moves back."""
+        self.placement = lines.seed_placement
+        """The seed placement the line count slider currently counts for."""
+        self.seed_counts: dict[SeedPlacement, int] = {}
+        """Each placement's own seeds per axis, so a count raised for a plane never lands on a volume."""
+
+        self.state.update(
+            {
+                FieldVar.RUN: "",
+                FieldVar.RUN_TEXT: "",
+                FieldVar.RUN_ITEMS: run_items(telemetry),
+                FieldVar.RUN_ID: "",
+                FieldVar.BUSY: False,
+                FieldVar.MODEL_DIM: self.model_dim,
+                FieldVar.FIELDS: [],
+                FieldVar.FIELD: display.field,
+                FieldVar.MODES: [],
+                FieldVar.MODE: str(display.mode),
+                FieldVar.COLORMAP: display.colormap,
+                FieldVar.LOG_SCALE: display.log_scale,
+                FieldVar.INVERT: display.invert,
+                FieldVar.OUTLINE: display.outline,
+                FieldVar.AUTO_CLIM: display.clim is None,
+                FieldVar.CLIM: list(display.clim or (0.0, 1.0)),
+                FieldVar.CLIM_MIN: 0.0,
+                FieldVar.CLIM_MAX: 1.0,
+                FieldVar.CLIM_STEP: 1.0 / CLIM_STEPS,
+                FieldVar.VISIBLE_BODIES: [],
+                FieldVar.HAS_FLUX: False,
+                FieldVar.STREAMLINES: display.streamlines is not None,
+                FieldVar.SEED_PLACEMENTS: placement_items(),
+                FieldVar.SEED_PLACEMENT: str(lines.seed_placement),
+                FieldVar.LINE_COUNT: [min(lines.line_count, seed_limit(lines.seed_placement))],
+                FieldVar.LINE_COUNT_MAX: seed_limit(lines.seed_placement),
+                FieldVar.MAX_LENGTH: [lines.max_length],
+                FieldVar.LINES_BODIES: body_items([]),
+                FieldVar.LINES_BODY: WHOLE_DOMAIN,
+                FieldVar.OPACITY: [display.opacity],
+                FieldVar.OPACITY_MAPPING: display.opacity_map is not None,
+                FieldVar.OPACITY_RANGE: list(display.opacity_map or OPACITY_RANGE),
+                FieldVar.BODY_ROWS: [],
+                FieldVar.FIELD_GRADIENT: colormap_gradient(display.colormap, reverse=display.invert) or "",
+                FieldVar.BODY_COLORMAP: display.body_colormap,
+                FieldVar.BODY_COLORMAP_SHOWN: SAME_AS_FIELD,
+                FieldVar.BODY_LEAD: self.lead(colormap_gradient(display.colormap, reverse=display.invert)),
+                FieldVar.COLORMAP_ITEMS: colormap_items(),
+            }
+        )
+        _ = self.state.setdefault(Shared.SELECTED_RUN_ID, None)
+
+    def attach(self, panel: PanelComponent) -> None:
+        """Takes a panel of the viewer, registering the listeners and hook again when a release had dropped them, and redrawing what the last run left."""
+        if not self.live:
+            self._bind_annotated_methods()
+            self.live = True
+
+        self.attached.add(panel.id)
+        if self.scene is not None:
+            self.request_redraw()
+
+    def detach(self, panel: PanelComponent) -> None:
+        """Drops a panel that left the dock; the last one releases the controller, since nothing is left to show a run."""
+        self.attached.discard(panel.id)
+        if panel is self.viewer:
+            self.viewer = None
+
+        if panel is self.plot:
+            self.plot = None
+
+        if not self.attached:
+            self.release()
+
+    def release(self) -> None:
+        """Drops the state listeners, the open hook and the work in flight."""
+        self._unbind_annotated_methods()
+        self.live = False
+        self.generation += 1
+        for task in (self.load_task, self.task, self.wait_task):
+            if task is not None and not task.done():
+                _ = task.cancel()
+
+    @property
+    def visible(self) -> bool:
+        """Whether either view is on screen."""
+        return bool(self.shown)
+
+    @property
+    def path(self) -> FieldPanel:
+        """Which view draws the scene: the plotly figure for a 2D run under the cell limit, else the plotter."""
+        scene = self.scene
+        small = scene is not None and scene.grid.n_cells <= PLOTLY_MAX_CELLS
+        if self.model_dim == 2 and small and self.plot is not None:
+            return FieldPanel.PLOT_2D
+
+        return FieldPanel.VIEW_3D
+
+    def status(self, message: str) -> None:
+        """Writes `message` to the shell's status line."""
+        self.app.status(message)
+
+    @contextmanager
+    def quiet(self) -> Iterator[None]:
+        """A state update whose change listeners must not redraw: the values come from the scene, not the user."""
+        self.syncing = True
+        try:
+            with self.state:
+                yield
+        finally:
+            self.syncing = False
+
+    @controller.set(str(Hook.FIELD_OPEN))
+    def open(self, location: Location) -> None:
+        """Schedules opening the run at ``location`` (a run id, a bundle directory or a Run) on the server loop, with the run picker showing it."""
+        with self.quiet():
+            self.state[FieldVar.RUN] = str(location.path) if isinstance(location, Run) else str(location)
+
+        self.load_task = asyncio.create_task(self.load(location))
+
+    def open_text(self) -> None:
+        """Opens whatever the bundle-path field holds; the select and the field drive the same run variable."""
+        location = str(self.state[FieldVar.RUN_TEXT])
+        if not location:
+            return
+
+        self.open(location)
+
+    async def load(self, location: Location) -> None:
+        """Opens the run at ``location`` off the loop and shows it; a run without fields empties the views, and one still solving opens once it ends; a newer open in flight wins."""
+        self.generation += 1
+        token = self.generation
+        self.set_busy(True)
+        self.status(f"opening {location}")
+        if self.scene is None:
+            self.notice(f"Opening {location}")
+
+        try:
+            run = await asyncio.to_thread(self.resolve, location)
+            reason = await asyncio.to_thread(missing_fields, run)
+            if token != self.generation:
+                return
+
+            if reason is not None:
+                self.clear(f"{run.path.name}: {reason}")
+                if await asyncio.to_thread(solving, run):
+                    self.wait_task = asyncio.create_task(self.await_fields(location, run.path, token))
+
+                return
+
+            scene = await asyncio.to_thread(FieldScene.from_run, run)
+            if token != self.generation:
+                return
+
+            self.show(run, scene)
+        except Exception as error:  # noqa: BLE001 - every failure to open a bundle ends in the status line
+            log.opt(exception=True).warning("Run failed to open.")
+            self.clear(f"{type(error).__name__}: {error}")
+        finally:
+            if token == self.generation:
+                self.set_busy(False)
+
+    async def await_fields(self, location: Location, path: Path, token: int) -> None:
+        """Opens the run once its solve has ended, unless another open came first.
+
+        Args:
+            location: The location to open once the run is solved.
+            path: The run's bundle directory, polled for the end of the solve.
+            token: The open generation that started the wait; a newer open ends it.
+        """
+        while token == self.generation:
+            await asyncio.sleep(FIELDS_PERIOD)
+            if token != self.generation:
+                return
+
+            if not await asyncio.to_thread(solving, Run(path)):
+                log.bind(run_id=path.name).info("Run solved; opening its fields.")
+                self.open(location)
+                return
+
+    def clear(self, reason: str) -> None:
+        """Empties both views and the run's controls, saying why, so nothing left on screen reads as the run asked for."""
+        self.run = None
+        self.scene = None
+        self.drawn = None
+        self.bodies = []
+        if self.viewer is not None:
+            self.viewer.clear()
+
+        if self.plot is not None:
+            self.plot.clear()
+
+        with self.quiet():
+            self.state[FieldVar.RUN_ID] = ""
+            self.state[FieldVar.FIELDS] = []
+            self.state[FieldVar.MODES] = []
+            self.state[FieldVar.BODY_ROWS] = []
+            self.state[FieldVar.VISIBLE_BODIES] = []
+            self.state[FieldVar.HAS_FLUX] = False
+            self.state[FieldVar.LINES_BODIES] = body_items([])
+
+        self.notice(reason)
+        self.status(reason)
+
+        log.bind(reason=reason).info("Field views cleared.")
+
+    def notice(self, text: str) -> None:
+        """Writes `text` over the empty 3D view; empty text removes it."""
+        if self.viewer is not None:
+            self.viewer.notice(text)
+
+    async def settle(self) -> None:
+        """Waits for the open and the redraw in flight."""
+        if self.load_task is not None and not self.load_task.done():
+            await self.load_task
+
+        if self.task is not None and not self.task.done():
+            await self.task
+
+    def resolve(self, location: Location) -> Run:
+        """The run at a location: a Run as is, a directory as a bundle, anything else as a run id looked up in the run index."""
+        if isinstance(location, Run):
+            return location
+
+        path = Path(location)
+        if path.is_dir():
+            return Run(path)
+
+        if self.telemetry is None:
+            raise FileNotFoundError(f"no run bundle at {path} and no telemetry root to look up a run id")
+
+        runs = RunQuery(self.telemetry.runs.scan()).where(pl.col(RunColumn.RUN_ID) == str(location)).runs()
+        if not runs:
+            raise FileNotFoundError(f"no run bundle at {path} and no run {location!r} in the run index")
+
+        return runs[0]
+
+    def set_busy(self, busy: bool) -> None:
+        """Shows or hides the busy bar."""
+        with self.state:
+            self.state[FieldVar.BUSY] = busy
+
+    def show(self, run: Run, scene: FieldScene) -> None:
+        """Adopts a loaded run: the knobs carry over, the field and mode snap to what it offers, every body but the hidden ones starts visible."""
+        self.run = run
+        self.scene = scene
+        self.model_dim = scene.model_dim
+        self.bodies = [str(key) for key in scene.blocks.keys()]
+        spec = self.fit(self.spec_from_state(), scene)
+
+        with self.quiet():
+            self.state[FieldVar.RUN_ID] = scene.run_id
+            self.state[FieldVar.RUN_TEXT] = str(run.path)
+            self.state[FieldVar.RUN_ITEMS] = self.offered(str(self.state[FieldVar.RUN]), scene.run_id)
+            self.state[FieldVar.MODEL_DIM] = self.model_dim
+            self.state[FieldVar.SEED_PLACEMENTS] = placement_items(self.model_dim)
+            self.state[FieldVar.SEED_PLACEMENT] = self.seeds_for(self.model_dim)
+            self.state[FieldVar.FIELDS] = [{ItemField.TITLE: info.display_name, ItemField.VALUE: info.name} for info in scene.fields]
+            self.state[FieldVar.FIELD] = spec.field
+            self.state[FieldVar.MODES] = mode_items(scene.field_info(spec.field))
+            self.state[FieldVar.MODE] = str(spec.mode)
+            self.state[FieldVar.BODY_ROWS] = self.rows(scene)
+            self.state[FieldVar.BODY_COLORMAP_SHOWN] = str(self.state[FieldVar.BODY_COLORMAP]) if self.painted(BodyPaint.COLORMAP) else SAME_AS_FIELD
+            self.state[FieldVar.VISIBLE_BODIES] = [body for body in self.bodies if body not in self.hidden_bodies]
+            self.state[FieldVar.HAS_FLUX] = has_flux_density(scene.fields)
+            self.state[FieldVar.LINES_BODIES] = body_items(self.bodies)
+            self.state[FieldVar.LINES_BODY] = self.lines_body(scene)
+
+        unmatched: list[str] = self.startup.unmatched(self.bodies)
+        if unmatched:
+            log.bind(run_id=scene.run_id, unmatched=unmatched, bodies=self.bodies).warning("Display names bodies this run lacks; check hidden_bodies and body_styles against its body names.")
+
+        self.notice("")
+        self.reveal = True
+        self.request_redraw()
+
+        log.bind(run_id=scene.run_id, model_dim=self.model_dim, cells=scene.grid.n_cells, path=str(self.path)).info("Run shown.")
+        self.status(f"{scene.run_id}: {len(scene.fields)} fields, {len(self.bodies)} bodies, {self.model_dim}D")
+
+    def seeds_for(self, model_dim: int) -> str:
+        """The seed placement for a run of `model_dim`: a 2D run has no volume, so Volume seeds move to the center plane until a 3D run takes them back."""
+        current = SeedPlacement(str(self.state[FieldVar.SEED_PLACEMENT]))
+        if model_dim == 2 and current is SeedPlacement.VOLUME:
+            self.volume_seeds = True
+            return str(SeedPlacement.CENTER_PLANE)
+
+        if model_dim != 2 and self.volume_seeds:
+            self.volume_seeds = False
+            if current is SeedPlacement.CENTER_PLANE:
+                return str(SeedPlacement.VOLUME)
+
+        return str(current)
+
+    def lines_body(self, scene: FieldScene) -> str:
+        """The field-line region to show: the startup region on the first run that has it, else the current one while the run still has that body."""
+        region, self.lines_region = self.lines_region, None
+        named = [body.name for body in scene.bodies if body.mesh_id == region and body.name in self.bodies]
+        if named:
+            return named[0]
+
+        current = str(self.state[FieldVar.LINES_BODY])
+
+        return current if current in self.bodies else WHOLE_DOMAIN
+
+    def members(self, row_id: object) -> list[str]:
+        """The bodies a table row stands for, nothing for a row the current run does not have."""
+        rows = cast("list[Item]", self.state[FieldVar.BODY_ROWS])
+        found = [row for row in rows if row[RowKey.ID] == row_id]
+
+        return names_of(found[0][RowKey.MEMBERS]) if found else []
+
+    def look(self, body: str) -> BodyStyle:
+        """A body's own style, or the field colormap at full opacity for a body without one."""
+        return self.looks.get(body) or BodyStyle(body=body)
+
+    def restyle(self, bodies: Sequence[str], *, redraw: bool = True, **changes: object) -> None:
+        """Applies `changes` to the bodies' looks, republishes the table and redraws unless told not to.
+
+        Args:
+            bodies: The bodies to restyle.
+            redraw: Whether the scene redraws; False while only a slider thumb moved.
+            changes: The BodyStyle fields to set.
+        """
+        for body in bodies:
+            self.looks[body] = self.look(body).model_copy(update=changes)
+
+        self.publish_rows()
+        if redraw:
+            self.request_redraw()
+
+    def rows(self, scene: FieldScene) -> list[Item]:
+        """The body table's rows for the scene's bodies and the current looks."""
+        return body_rows(scene.bodies, self.bodies, self.looks, str(self.state[FieldVar.BODY_COLORMAP]))
+
+    def publish_rows(self) -> None:
+        """Puts the body table's rows for the current looks and body colormap in the state, and what the body colormap picker reads."""
+        if self.scene is None:
+            return
+
+        with self.state:
+            self.state[FieldVar.BODY_ROWS] = self.rows(self.scene)
+            self.state[FieldVar.BODY_COLORMAP_SHOWN] = str(self.state[FieldVar.BODY_COLORMAP]) if self.painted(BodyPaint.COLORMAP) else SAME_AS_FIELD
+
+    def painted(self, paint: BodyPaint) -> list[str]:
+        """The run's bodies whose color comes from `paint`."""
+        return [name for name in self.bodies if self.look(name).paint is paint]
+
+    def lead(self, gradient: str | None) -> ComboboxItem:
+        """The body colormap picker's first entry, drawn in the field colormap."""
+        item: ComboboxItem = {"value": SAME_AS_FIELD, "label": SAME_AS_FIELD_LABEL}
+        if gradient is not None:
+            item["swatch"] = gradient
+
+        return item
+
+    def on_body_colormap_pick(self, value: object) -> None:
+        """Same as field returns the body colormap's bodies to the field colormap; a colormap, picked while no body takes one, takes the shown field-colored bodies, else every shown body."""
+        if value == SAME_AS_FIELD:
+            self.restyle(self.painted(BodyPaint.COLORMAP), paint=BodyPaint.FIELD, color=None)
+            return
+
+        with self.state:
+            self.state[FieldVar.BODY_COLORMAP] = str(value)
+
+        if self.painted(BodyPaint.COLORMAP):
+            return
+
+        shown = names_of(self.state[FieldVar.VISIBLE_BODIES])
+        fielded = [name for name in self.painted(BodyPaint.FIELD) if name in shown]
+        self.restyle(fielded or shown, paint=BodyPaint.COLORMAP, color=None)
+
+    def on_row_visible(self, row_id: object, checked: object) -> None:
+        """A row's checkbox: shows or hides every body it stands for."""
+        members = self.members(row_id)
+        visible = [name for name in names_of(self.state[FieldVar.VISIBLE_BODIES]) if name not in members]
+        shown = set(visible if checked is not True else [*visible, *members])
+        with self.state:
+            self.state[FieldVar.VISIBLE_BODIES] = [name for name in self.bodies if name in shown]
+
+    def on_row_colormap(self, row_id: object) -> None:
+        """A row's field chip: its bodies take their share of the body colormap."""
+        self.restyle(self.members(row_id), paint=BodyPaint.COLORMAP, color=None)
+
+    def on_row_field(self, row_id: object) -> None:
+        """A row's clear button: its bodies take the field colormap again."""
+        self.restyle(self.members(row_id), paint=BodyPaint.FIELD, color=None)
+
+    def on_row_color(self, row_id: object, color: object) -> None:
+        """A row's color picked by hand: its bodies keep it until cleared."""
+        self.restyle(self.members(row_id), paint=BodyPaint.SOLID, color=str(color))
+
+    def on_row_opacity(self, row_id: object, value: object) -> None:
+        """A row's opacity thumb moved: the looks and the table follow at once, the scene on the release."""
+        self.restyle(self.members(row_id), redraw=False, opacity=number_of(value, 1.0))
+
+    @change(FieldVar.BODY_COLORMAP)
+    def on_body_colormap(self, **_: object) -> None:
+        """Republishes the body table after the body colormap changed."""
+        self.publish_rows()
+
+    def offered(self, location: str, run_id: str) -> list[Item]:
+        """The picker's items with the open location among them: a bundle path, or a run older than the newest RUN_PICKER_LIMIT, is no value of the index and would leave the trigger blank."""
+        items = cast("list[Item]", self.state[FieldVar.RUN_ITEMS])
+        if not location or any(item[ItemField.VALUE] == location for item in items):
+            return items
+
+        return [{ItemField.TITLE: run_id, ItemField.VALUE: location}, *items]
+
+    def fit(self, spec: DisplaySpec, scene: FieldScene) -> DisplaySpec:
+        """The spec snapped to the scene's fields, falling back to its first field when the current one is not offered."""
+        try:
+            return spec.fitted(scene.fields)
+        except KeyError:
+            return spec.model_copy(update={"field": DEFAULTS.field}).fitted(scene.fields)
+
+    def spec_from_state(self) -> DisplaySpec:
+        """The display spec the controls currently describe; a color range the lookup table cannot map falls back to automatic."""
+        state = self.state
+        log_scale = bool(state[FieldVar.LOG_SCALE])
+        clim = None if bool(state[FieldVar.AUTO_CLIM]) else pair_of(state[FieldVar.CLIM])
+        if clim is not None and (clim[0] >= clim[1] or (log_scale and clim[0] <= 0.0)):
+            clim = None
+
+        visible = set(names_of(state[FieldVar.VISIBLE_BODIES]))
+        hidden = tuple(name for name in self.bodies if name not in visible)
+        drawing_lines = bool(state[FieldVar.STREAMLINES]) and bool(state[FieldVar.HAS_FLUX])
+        streamlines = self.streamline_options() if drawing_lines else None
+        opacity_map = pair_of(state[FieldVar.OPACITY_RANGE]) if bool(state[FieldVar.OPACITY_MAPPING]) else None
+
+        return DisplaySpec(
+            field=str(state[FieldVar.FIELD]),
+            mode=DisplayMode(str(state[FieldVar.MODE])),
+            colormap=str(state[FieldVar.COLORMAP]),
+            log_scale=log_scale,
+            invert=bool(state[FieldVar.INVERT]),
+            clim=clim,
+            robust=self.robust,
+            hidden_bodies=hidden,
+            outline=bool(state[FieldVar.OUTLINE]),
+            opacity=only(state[FieldVar.OPACITY], DEFAULTS.opacity),
+            opacity_map=opacity_map,
+            body_styles=tuple(look for look in (self.look(name) for name in self.bodies) if look.paint is not BodyPaint.FIELD or look.opacity != 1.0),
+            body_colormap=str(state[FieldVar.BODY_COLORMAP]),
+            streamlines=streamlines,
+        )
+
+    def streamline_options(self) -> FieldLineOptions:
+        """The startup field-line options with what the controls describe, following the shown field when it is a vector and confined to the chosen body when one is picked."""
+        state = self.state
+        scene = self.scene
+        body = scene.bodies.get(str(state[FieldVar.LINES_BODY])) if scene is not None else None
+        region = body.mesh_id if body is not None else None
+        vectors = self.vector_field()
+
+        return self.lines.model_copy(
+            update={
+                "seed_placement": SeedPlacement(str(state[FieldVar.SEED_PLACEMENT])),
+                "line_count": int(only(state[FieldVar.LINE_COUNT], LINE_DEFAULTS.line_count)),
+                "max_length": only(state[FieldVar.MAX_LENGTH], LINE_DEFAULTS.max_length),
+                "region_array": GEOMETRY_IDS_ARRAY if region is not None else None,
+                "region_id": region,
+                "clip_to_region": region is not None,
+                "show_outline": False,
+                "vectors": vectors,
+            }
+        )
+
+    def vector_field(self) -> str | None:
+        """The shown field's array name when it has three components, None for the flux density the lines fall back to."""
+        if self.scene is None:
+            return None
+
+        try:
+            info = self.scene.field_info(str(self.state[FieldVar.FIELD]))
+        except KeyError:
+            return None
+
+        return info.name if info.components == 3 else None
+
+    def request_redraw(self) -> None:
+        """Redraws with the latest state once the loop is free; bursts of changes collapse into one draw."""
+        self.dirty = True
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self.drain())
+
+    async def drain(self) -> None:
+        """Redraws until no change arrived during the last draw; a failed draw lands in the status line."""
+        while self.dirty:
+            self.dirty = False
+            try:
+                await self.redraw(self.spec_from_state())
+            except Exception as error:  # noqa: BLE001 - a display the scene cannot draw ends in the status line
+                log.opt(exception=True).warning("Field redraw failed.")
+                self.status(f"{type(error).__name__}: {error}")
+
+    async def redraw(self, spec: DisplaySpec) -> None:
+        """Draws the spec through the scene's path, then publishes the color range it produced."""
+        scene = self.scene
+        if scene is None:
+            return
+
+        if self.path is FieldPanel.PLOT_2D:
+            await self.draw_figure(scene, spec)
+        else:
+            await self.draw_plotter(scene, spec)
+
+        if scene is self.scene:
+            self.publish_range(scene)
+
+    async def draw_figure(self, scene: FieldScene, spec: DisplaySpec) -> None:
+        """Builds the plotly figure off the loop and shows it, clearing the plotter it replaces."""
+        plot = self.plot
+        if plot is None:
+            return
+
+        figure, bodies = await asyncio.to_thread(self.build_figure, scene, spec)
+        if scene is not self.scene:
+            return
+
+        if self.drawn is not None and self.viewer is not None:
+            self.viewer.clear()
+            self.drawn = None
+
+        plot.show(figure, bodies)
+        self.activate(FieldPanel.PLOT_2D)
+
+    def build_figure(self, scene: FieldScene, spec: DisplaySpec) -> tuple[go.Figure, list[str]]:
+        """The figure for a spec, named for export, with its body traces in order."""
+        encoded = scene.figure(spec)
+        traces = cast("list[dict[str, object]]", encoded["data"])
+        bodies = [str(trace["name"]) for trace in traces if trace["type"] == "mesh3d"]
+
+        figure = go.Figure(encoded)
+        _ = figure.update_layout(meta={"title": f"{scene.run_id} {scene.field_info(scene.spec.field).display_name}"})
+
+        return figure, bodies
+
+    async def draw_plotter(self, scene: FieldScene, spec: DisplaySpec) -> None:
+        """Draws or recolors the scene in the plotter, keeping the camera across runs that still frame it; new field lines are integrated off the loop."""
+        viewer = self.viewer
+        if viewer is None:
+            return
+
+        if self.drawn is not scene:
+            bounds = tuple(scene.grid.bounds)
+            keep = self.framed is not None and similar_bounds(self.framed, bounds)
+            scene.spec = spec.model_copy(update={"streamlines": None})
+            viewer.render(scene, keep_camera=keep)
+            if not keep:
+                viewer.look(View.TOP if self.model_dim == 2 else View.ISO)
+
+            self.drawn = scene
+            self.framed = bounds
+            if self.plot is not None:
+                self.plot.clear()
+        else:
+            kept = scene.spec.streamlines if spec.streamlines is not None else None
+            scene.update(viewer.plotter, spec.model_copy(update={"streamlines": kept}))
+            viewer.push()
+
+        self.activate(FieldPanel.VIEW_3D)
+
+        wanted = spec.streamlines
+        if wanted is None or wanted == scene.spec.streamlines:
+            return
+
+        cached = scene.integrated(wanted)
+        if cached is not None:
+            scene.show_streamlines(viewer.plotter, cached, wanted)
+            viewer.push()
+            return
+
+        self.status("integrating field lines")
+        actors = await asyncio.to_thread(scene.integrate_streamlines, wanted)
+        if scene is not self.scene or self.drawn is not scene:
+            return
+
+        scene.show_streamlines(viewer.plotter, actors, wanted)
+        viewer.push()
+        self.status(f"field lines: {actors.streamlines.n_cells} segments from {wanted.line_count} seeds per axis")
+
+    def activate(self, panel_id: FieldPanel) -> None:
+        """Brings a view's tab to the front once per opened run, unless it is already on screen."""
+        if not self.reveal:
+            return
+
+        self.reveal = False
+        if str(panel_id) in self.shown or self.app.dock is None:
+            return
+
+        self.app.dock.active_panel(str(panel_id))
+
+    def publish_range(self, scene: FieldScene) -> None:
+        """Puts the data range under the range slider and, while automatic, the limits the draw used on it."""
+        lo, hi = scene.data_range
+        with self.quiet():
+            self.state[FieldVar.CLIM_MIN] = lo
+            self.state[FieldVar.CLIM_MAX] = hi
+            self.state[FieldVar.CLIM_STEP] = (hi - lo) / CLIM_STEPS
+            if bool(self.state[FieldVar.AUTO_CLIM]):
+                self.state[FieldVar.CLIM] = list(scene.clim)
+
+    def on_visible(self, panel_id: str, visible: bool) -> None:
+        """Tracks which views are on screen; the viewer follows the shared run selection only while one is."""
+        was = self.visible
+        if visible:
+            self.shown.add(panel_id)
+        else:
+            self.shown.discard(panel_id)
+
+        if self.visible and not was:
+            self.follow_selection()
+
+    def follow_selection(self, *, again: bool = False) -> None:
+        """Opens the run the shared selection names when it is not the one shown, or `again` regardless, for a run picked a second time."""
+        selected = self.state[Shared.SELECTED_RUN_ID]
+        if not isinstance(selected, str) or not selected:
+            return
+
+        if not again and self.scene is not None and self.scene.run_id == selected:
+            return
+
+        self.open(selected)
+
+    def on_commit(self) -> None:
+        """A slider thumb released: its value has been in the state since the drag began, and is drawn now."""
+        if self.scene is None:
+            return
+
+        self.request_redraw()
+
+    @change(*DISPLAY_KEYS)
+    def on_display(self, **_: object) -> None:
+        """Redraws after a display control changed, unless the scene itself set it."""
+        if self.syncing or self.scene is None:
+            return
+
+        self.request_redraw()
+
+    @change(FieldVar.FIELD)
+    def on_field(self, **_: object) -> None:
+        """Offers the chosen field's modes and snaps the mode to one of them."""
+        scene = self.scene
+        if self.syncing or scene is None:
+            return
+
+        try:
+            info = scene.field_info(str(self.state[FieldVar.FIELD]))
+        except KeyError:
+            return
+
+        self.state[FieldVar.MODES] = mode_items(info)
+        if str(self.state[FieldVar.MODE]) not in {str(mode) for mode in info.modes}:
+            self.state[FieldVar.MODE] = str(info.modes[0])
+
+    @change(FieldVar.SEED_PLACEMENT)
+    def on_placement(self, **_: object) -> None:
+        """Keeps the count the last placement had and hands the new one its own, within its own range."""
+        placement = SeedPlacement(str(self.state[FieldVar.SEED_PLACEMENT]))
+        if placement is self.placement:
+            return
+
+        self.seed_counts[self.placement] = int(only(self.state[FieldVar.LINE_COUNT], self.lines.line_count))
+        self.placement = placement
+        limit = seed_limit(placement)
+        count = self.seed_counts.get(placement, self.lines.line_count)
+
+        self.state[FieldVar.LINE_COUNT_MAX] = limit
+        self.state[FieldVar.LINE_COUNT] = [max(LINE_COUNT_MIN, min(count, limit))]
+
+    @change(FieldVar.COLORMAP, FieldVar.INVERT)
+    def on_colormap(self, **_: object) -> None:
+        """Repaints the field chips of the body table and the body picker's Same as field in the colormap the scene draws."""
+        gradient = colormap_gradient(str(self.state[FieldVar.COLORMAP]), reverse=bool(self.state[FieldVar.INVERT]))
+        self.state[FieldVar.FIELD_GRADIENT] = gradient or ""
+        self.state[FieldVar.BODY_LEAD] = self.lead(gradient)
+
+    @change(FieldVar.RUN)
+    def on_run(self, **_: object) -> None:
+        """Opens the location the run picker or the bundle-path field set."""
+        location = str(self.state[FieldVar.RUN])
+        if self.syncing or not location:
+            return
+
+        self.open(location)
+
+    @change(Shared.SELECTED_RUN_ID)
+    def on_selected_run(self, **_: object) -> None:
+        """Opens the run another panel selected while a view is on screen."""
+        if self.visible:
+            self.follow_selection(again=True)
+
+
+class FieldViewerPanel(ScenePanel):
+    """The 3D view of the field scene, mirrored in the browser by default; its visibility feeds the controller."""
+
+    def __init__(self, app: Workbench, id: str, title: str, controller: FieldViewerController) -> None:
+        """Builds the 3D view and attaches it to the controller.
+
+        Args:
+            app: The workbench shell the panel is built in.
+            id: The panel id, which names its template and namespaces its state.
+            title: The panel's tab title.
+            controller: The viewer's controller, shared with the controls and the 2D plot.
+        """
+        self.controller = controller
+
+        super().__init__(app, id, title)
+
+        controller.viewer = self
+        controller.drawn = None
+        controller.framed = None
+        controller.attach(self)
+        if controller.scene is None:
+            self.notice(NO_RUN)
+
+    def clear(self) -> None:
+        """Empties the plotter and pushes the empty frame."""
+        self.plotter.clear()
+        self.renderable = None
+        self.push()
+
+    def on_visible(self, visible: bool) -> None:
+        """Tells the scene and the controller whether the view is on screen."""
+        super().on_visible(visible)
+        self.controller.on_visible(self.id, visible)
+
+    def dispose(self) -> None:
+        """Detaches from the controller, then frees the view."""
+        self.controller.detach(self)
+        super().dispose()
+
+
+class FieldPlot2DPanel(FigurePanel):
+    """The plotly view of a 2D run: every body a Mesh3d with hover values, its legend toggling bodies in step with the controls."""
+
+    def __init__(self, app: Workbench, id: str, title: str, controller: FieldViewerController) -> None:
+        """Builds the 2D plot and attaches it to the controller.
+
+        Args:
+            app: The workbench shell the panel is built in.
+            id: The panel id, which names its template and namespaces its state.
+            title: The panel's tab title.
+            controller: The viewer's controller, shared with the controls and the 3D view.
+        """
+        self.controller = controller
+        self.bodies: list[str] = []
+
+        super().__init__(app, id, title)
+
+        self.bind(RESTYLE_EVENT, self.on_restyle)
+        controller.plot = self
+        controller.attach(self)
+
+    def show(self, figure: go.Figure, bodies: Sequence[str]) -> None:
+        """Replaces the figure, remembering which body each mesh trace is."""
+        self.bodies = list(bodies)
+        self.update(figure)
+
+    def clear(self) -> None:
+        """Empties the figure."""
+        self.bodies = []
+        self.update(go.Figure())
+
+    def on_visible(self, visible: bool) -> None:
+        """Tells the controller whether the plot is on screen."""
+        self.controller.on_visible(self.id, visible)
+
+    def dispose(self) -> None:
+        """Detaches from the controller, then releases the panel."""
+        self.controller.detach(self)
+        super().dispose()
+
+    def on_restyle(self, payload: object) -> None:
+        """Mirrors a legend toggle into the visible-bodies state, so the tree and the 3D view follow."""
+        parts = cast("list[object]", payload) if isinstance(payload, list) else []
+        if len(parts) != 2 or not isinstance(parts[0], Mapping) or not isinstance(parts[1], list):
+            return
+
+        flags = cast("Mapping[str, object]", parts[0]).get("visible")
+        indices = cast("list[object]", parts[1])
+        if not isinstance(flags, list):
+            return
+
+        shown = set(names_of(self.state[FieldVar.VISIBLE_BODIES]))
+        for index, flag in zip(indices, cast("list[object]", flags), strict=False):
+            if not isinstance(index, int) or not 0 <= index < len(self.bodies):
+                continue
+
+            name = self.bodies[index]
+            if flag is True:
+                shown.add(name)
+            else:
+                shown.discard(name)
+
+        with self.state:
+            self.state[FieldVar.VISIBLE_BODIES] = [name for name in self.bodies if name in shown]
+
+
+class FieldControlsPanel(PanelComponent):
+    """The viewer's controls: the field, mode and colormap selects, the display switches, the colour range, the body tree and the field-line options."""
+
+    def __init__(self, app: Workbench, id: str, title: str, controller: FieldViewerController) -> None:
+        """Builds the controls and attaches them to the controller.
+
+        Args:
+            app: The workbench shell the panel is built in.
+            id: The panel id, which names its template and namespaces its state.
+            title: The panel's tab title.
+            controller: The viewer's controller, shared with the 3D view and the 2D plot.
+        """
+        self.controller = controller
+
+        super().__init__(app, id, title)
+
+        controller.attach(self)
+
+    def build_run_picker(self) -> None:
+        """The indexed-run select and the bundle-path field, both driving the same run variable; built into the app bar, its one place."""
+        with labelled("Run"):
+            picker(str(FieldVar.RUN), str(FieldVar.RUN_ITEMS), placeholder="No Run Selected", width=RUN_WIDTH)
+
+        Input(
+            model=str(FieldVar.RUN_TEXT),
+            placeholder="Bundle Path",
+            classes=PATH_WIDTH,
+            aria_label="Bundle path",
+            on_key_down=self.opening(),
+        )
+        with Button(size="icon-sm", variant="ghost", title="Open the bundle at that path", on_click=self.callback(self.controller.open_text)):
+            Icon("folder")
+
+    def opening(self) -> react.Callback:
+        """The bundle-path field's Enter: the text is committed and opened in one client-side step."""
+        text = f"{EVENT}.target.value"
+
+        return react.Callback(f'{EVENT}.key === "{ENTER}" && (trame.state.set("{FieldVar.RUN_TEXT}", {text}), trame.state.set("{FieldVar.RUN}", {text}))')
+
+    def build_colormap(self) -> None:
+        """The field colormap picker: searchable, filtered by type and favorites, the arrow keys stepping through it while it is closed."""
+        Combobox(
+            model=str(FieldVar.COLORMAP),
+            items=react.Bind(str(FieldVar.COLORMAP_ITEMS)),
+            filters=COLORMAP_FILTERS,
+            search_placeholder="Search Colormaps",
+            aria_label="Colormap",
+        )
+
+    def build_body_colormap(self) -> None:
+        """The body colormap picker as a swatch in the color column, reading Same as field while no body takes it."""
+        Combobox(
+            value=react.Bind(str(FieldVar.BODY_COLORMAP_SHOWN)),
+            on_value_change=self.callback(self.controller.on_body_colormap_pick, args=f"[{EVENT}]"),
+            items=react.Bind(str(FieldVar.COLORMAP_ITEMS)),
+            lead=react.Bind(str(FieldVar.BODY_LEAD)),
+            filters=COLORMAP_FILTERS,
+            compact=True,
+            search_placeholder="Search Colormaps",
+            aria_label="Body colormap",
+        )
+
+    def slider(self, model: FieldVar, label: str, bounds: tuple[float, float | react.Bind], step: float) -> None:
+        """A slider over `model` whose thumbs move with the drag and whose scene follows the release.
+
+        Args:
+            model: The state variable holding the thumb values.
+            label: The slider's accessible name.
+            bounds: The low and high ends; the high end may be a client expression.
+            step: The step between values.
+        """
+        Slider(
+            value=react.Bind(str(model)),
+            on_value_change=setter(str(model)),
+            on_value_commit=self.callback(self.controller.on_commit),
+            min_=bounds[0],
+            max_=bounds[1],
+            step=step,
+            aria_label=label,
+        )
+
+    def build_range(self) -> None:
+        """The Auto range switch over the two-thumb colour range across the data range, its ends read out above it."""
+        setting(FieldVar.AUTO_CLIM, "Auto range")
+        with html.Div(classes=STACK):
+            readouts(react.Bind(f"{FieldVar.CLIM}[0].toPrecision({PRECISION})"), react.Bind(f"{FieldVar.CLIM}[1].toPrecision({PRECISION})"))
+            Slider(
+                value=react.Bind(str(FieldVar.CLIM)),
+                on_value_change=setter(str(FieldVar.CLIM)),
+                on_value_commit=self.callback(self.controller.on_commit),
+                min_=react.Bind(str(FieldVar.CLIM_MIN)),
+                max_=react.Bind(str(FieldVar.CLIM_MAX)),
+                step=react.Bind(str(FieldVar.CLIM_STEP)),
+                disabled=react.Bind(str(FieldVar.AUTO_CLIM)),
+                aria_label="Color range",
+            )
+
+    def build_opacity(self) -> None:
+        """The Opacity mapping switch and, while it is on, the opacity at each end of the color range; the body table holds the overall opacity."""
+        setting(FieldVar.OPACITY_MAPPING, "Opacity mapping")
+        with react.If(str(FieldVar.OPACITY_MAPPING)), html.Div(classes=STACK):
+            readouts(react.Bind(f"{FieldVar.OPACITY_RANGE}[0].toFixed(2)"), react.Bind(f"{FieldVar.OPACITY_RANGE}[1].toFixed(2)"))
+            self.slider(FieldVar.OPACITY_RANGE, "Opacity", OPACITY_RANGE, OPACITY_STEP)
+
+    def build_field(self) -> None:
+        """The field section: what is shown and how it is colored, from the field select to the opacity mapping."""
+        with captioned("Quantity"):
+            picker(str(FieldVar.FIELD), str(FieldVar.FIELDS), placeholder=NO_RUN, width=FULL_WIDTH)
+
+        with captioned("Mode"):
+            picker(str(FieldVar.MODE), str(FieldVar.MODES), placeholder=NO_RUN, width=FULL_WIDTH)
+
+        with captioned("Colormap"):
+            self.build_colormap()
+
+        with html.Div(classes=STACK):
+            setting(FieldVar.INVERT, "Invert colormap")
+            setting(FieldVar.LOG_SCALE, "Log scale")
+            setting(FieldVar.OUTLINE, "Outline")
+
+        self.build_range()
+        self.build_opacity()
+
+    def build_bodies(self) -> None:
+        """The body table: the All bodies row with the body colormap, then a row per body and per material group, every row checkbox, name, color and opacity."""
+        controller = self.controller
+        visible = str(FieldVar.VISIBLE_BODIES)
+        row = ITEM
+        members = f"{row}.{RowKey.MEMBERS}"
+
+        def opacity_slider(value: str, change: react.Callback, commit: react.Callback, label: str | react.Bind) -> None:
+            Slider(
+                value=react.Bind(value),
+                on_value_change=change,
+                on_value_commit=commit,
+                min_=OPACITY_RANGE[0],
+                max_=OPACITY_RANGE[1],
+                step=OPACITY_STEP,
+                aria_label=label,
+            )
+
+        with html.Div(classes=BODY_TABLE):
+            with html.Div(classes=BODY_ROW):
+                Checkbox(
+                    checked=react.Bind(f"{visible}.length === 0 ? false : {visible}.length === {FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP}).length || 'indeterminate'"),
+                    on_checked_change=react.Callback(f"trame.state.set({json.dumps(visible)}, {EVENT} === true ? {FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP}).map(r => r.{RowKey.ID}) : [])"),
+                    aria_label="Show every body",
+                )
+                html.Span(ALL_BODIES, classes=GROUP_NAME)
+                self.build_body_colormap()
+                opacity_slider(str(FieldVar.OPACITY), setter(str(FieldVar.OPACITY)), self.callback(controller.on_commit), "Opacity of every body")
+
+            with react.For(items=str(FieldVar.BODY_ROWS), name=row), html.Div(classes=BODY_ROW):
+                Checkbox(
+                    checked=react.Bind(f"{members}.every(m => {visible}.includes(m)) || ({members}.some(m => {visible}.includes(m)) && 'indeterminate')"),
+                    on_checked_change=self.callback(controller.on_row_visible, args=f"[{row}.{RowKey.ID}, {EVENT}]"),
+                    aria_label=react.Bind(f"'Show ' + {row}.{RowKey.TITLE}"),
+                )
+                html.Span(
+                    [react.Bind(f"{row}.{RowKey.TITLE}")],
+                    classes=react.Bind(f"{row}.{RowKey.GROUP} ? {json.dumps(GROUP_NAME)} : {row}.{RowKey.MEMBER} ? {json.dumps(MEMBER_NAME)} : {json.dumps(BODY_NAME)}"),
+                    title=react.Bind(f"{row}.{RowKey.TITLE}"),
+                )
+                with html.Span(classes=CHIP_SLOT):
+                    painted = f"{row}.{RowKey.PAINT} !== {json.dumps(str(BodyPaint.FIELD))}"
+                    with react.If(painted):
+                        ColorInput(
+                            value=react.Bind(f"{row}.{RowKey.COLOR}"),
+                            on_change=self.callback(controller.on_row_color, args=f"[{row}.{RowKey.ID}, {EVENT}.target.value]"),
+                            classes=COLOR_CHIP,
+                            title=react.Bind(f"{row}.{RowKey.PAINT} === {json.dumps(str(BodyPaint.COLORMAP))} ? 'From the body colormap: pick to fix a color' : 'A fixed color'"),
+                            aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' color'"),
+                        )
+                        with Button(
+                            size="icon-xs",
+                            variant="ghost",
+                            classes=CHIP_CLEAR,
+                            title="Back to the field colormap",
+                            aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' back to the field colormap'"),
+                            on_click=self.callback(controller.on_row_field, args=f"[{row}.{RowKey.ID}]"),
+                        ):
+                            Icon("x")
+
+                    with react.If(f"!({painted})"):
+                        Button(
+                            size="icon-xs",
+                            variant="ghost",
+                            classes=CHIP,
+                            style={"background": react.Bind(str(FieldVar.FIELD_GRADIENT))},
+                            title="Field colormap: click for the body colormap",
+                            aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' to the body colormap'"),
+                            on_click=self.callback(controller.on_row_colormap, args=f"[{row}.{RowKey.ID}]"),
+                        )
+
+                opacity_slider(
+                    f"{row}.{RowKey.OPACITY}",
+                    self.callback(controller.on_row_opacity, args=f"[{row}.{RowKey.ID}, {EVENT}[0]]"),
+                    self.callback(controller.on_commit),
+                    react.Bind(f"{row}.{RowKey.TITLE} + ' opacity'"),
+                )
+
+    def build_lines(self) -> None:
+        """The field-line section: the switch, the seeds, the region and the two integration sliders."""
+        setting(FieldVar.STREAMLINES, "Show field lines", disabled=react.Bind(f"!{FieldVar.HAS_FLUX}"))
+
+        with captioned("Seeds"):
+            picker(str(FieldVar.SEED_PLACEMENT), str(FieldVar.SEED_PLACEMENTS), width=FULL_WIDTH)
+
+        with captioned("Integrate within"):
+            picker(str(FieldVar.LINES_BODY), str(FieldVar.LINES_BODIES), placeholder=WHOLE_DOMAIN_LABEL, width=FULL_WIDTH)
+
+        with html.Div(classes=STACK):
+            readouts("Seed count", react.Bind(seed_count()))
+            self.slider(FieldVar.LINE_COUNT, "Seeds per axis", (LINE_COUNT_MIN, react.Bind(str(FieldVar.LINE_COUNT_MAX))), 1)
+
+        with html.Div(classes=STACK):
+            readouts("Length", react.Bind(f"{FieldVar.MAX_LENGTH}[0].toPrecision(2)"))
+            self.slider(FieldVar.MAX_LENGTH, "Line length", MAX_LENGTH_RANGE, MAX_LENGTH_STEP)
+
+    def build(self) -> None:
+        """Builds the busy bar over the field, field-line and body sections."""
+
+        def section(value: str, heading: str, body: Callable[[], None]) -> None:
+            with AccordionItem(value=value, classes=str(Cls.SECTION_ITEM)):
+                AccordionTrigger(heading, classes=str(Cls.SECTION_TRIGGER))
+                with AccordionContent(classes=str(Cls.SECTION_BODY)):
+                    body()
+
+        with html.Div(classes=str(Cls.CONTROLS)):
+            with react.If(str(FieldVar.BUSY)):
+                Progress(value=BUSY_FULL, classes=str(Cls.BUSY))
+
+            with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
+                section(FIELD_SECTION, "Field", self.build_field)
+                section(LINES_SECTION, "Field Lines", self.build_lines)
+                section(BODIES_SECTION, "Bodies", self.build_bodies)
+
+    def dispose(self) -> None:
+        """Detaches from the controller, then releases the panel."""
+        self.controller.detach(self)
+        super().dispose()
+
+
+def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DEFAULTS, telemetry: str | Path | None = None) -> dock.Split:
+    """The field viewer dock: the controls beside the 3D view and the 2D plot as tabs.
+
+    Args:
+        run: The run to open once the server runs: a Result, a Run, a run id or a bundle directory; None opens none.
+        display: The display the controls start from.
+        telemetry: The telemetry root whose run index the run picker lists; None reads FEMFORGE_TELEMETRY.
+    """
+    root = resolve_root(telemetry)
+    index = Telemetry(root) if root is not None else None
+    location = Run.from_result(run) if isinstance(run, Result) else run
+    shared: FieldViewerController | None = None
+
+    def controller_for(app: Workbench) -> FieldViewerController:
+        nonlocal shared
+        if shared is None or shared.app is not app:
+            shared = FieldViewerController(app, telemetry=index, display=display)
+            if location is not None:
+                app.when_ready(partial(shared.open, location))
+
+        return shared
+
+    def controls(app: Workbench, id: str, title: str) -> FieldControlsPanel:
+        panel = FieldControlsPanel(app, id, title, controller_for(app))
+        with app.header:
+            panel.build_run_picker()
+
+        return panel
+
+    def view_3d(app: Workbench, id: str, title: str) -> FieldViewerPanel:
+        return FieldViewerPanel(app, id, title, controller_for(app))
+
+    def plot_2d(app: Workbench, id: str, title: str) -> FieldPlot2DPanel:
+        return FieldPlot2DPanel(app, id, title, controller_for(app))
+
+    views = dock.Tabs([dock.Panel("3D view", view_3d, id=FieldPanel.VIEW_3D), dock.Panel("2D plot", plot_2d, id=FieldPanel.PLOT_2D)], weight=3)
+
+    return dock.Split([dock.Panel(FIELD_VIEWER.title, controls, id=FieldPanel.CONTROLS, weight=1), views])

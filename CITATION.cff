@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: If you use femforge in your work, cite it as below.
+type: software
+title: femforge
+abstract: Typed, provenance-tracked finite-element orchestration in Python, from build123d CAD through gmsh meshing and Elmer solves to typed results.
+authors:
+  - family-names: Woodward
+    given-names: Nathan
+version: 0.1.0
+date-released: "2026-10-14"
+license: Apache-2.0
+repository-code: https://github.com/femforge-io/femforge
+url: https://docs.femforge.io
+keywords: [finite element analysis, Elmer, gmsh, build123d, electromagnetics, thermal simulation]
