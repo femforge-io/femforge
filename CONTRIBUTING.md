@@ -101,6 +101,8 @@ npm run format:check
 
 Write documentation, docstrings, and comments in the [Google developer documentation style](https://developers.google.com/style). Use active voice, present tense, short sentences, and second person for instructions.
 
+Write femforge in lowercase everywhere, including at the start of a sentence, never FemForge, FEMForge or FEM Forge.
+
 ## Pull requests
 
 1. Create a branch from `main`.
