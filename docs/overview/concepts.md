@@ -1,6 +1,6 @@
 # Concepts
 
-femforge runs one pipeline: tagged CAD becomes a STEP file, gmsh meshes it, Elmer solves it, and the parsed outputs become a typed result inside a run bundle. One [SimulationConfig][femforge.config.SimulationConfig] describes every stage, and a [Driver][femforge.run.Driver] executes it. This page names each concept once and links the guide page that covers it.
+femforge runs one pipeline. The mesh backend, gmsh today, meshes a STEP file whose bodies are named with their tags. The solver backend, Elmer today, solves the mesh, and the parsed outputs become a typed result inside a run bundle. One [SimulationConfig][femforge.config.SimulationConfig] describes every stage, and a [Driver][femforge.run.Driver] executes it. This page names each concept once and links the guide page that covers it.
 
 ```python
 import femforge as ff
@@ -26,7 +26,7 @@ print(result.axial_force("BEARING"))
 
 ## Geometry and tags
 
-A [TaggedPart][femforge.geometry.tags.TaggedPart] is a build123d part that carries `key=value` tags. The tags ride the part's STEP name into gmsh, where the mesher reads them back. The [TagKey][femforge.common.TagKey] vocabulary names the shared keys: `Material` picks the body's material, and `name=` sets the `Name` tag. A tag value cannot carry `/`, `,`, `_` or whitespace, so femforge removes them and warns. A body's group name is its `Name` tag when you set one, else its material tag joined with the names of the region tags it matched, uppercased in both cases. gmsh, the Elmer sif, `entities.json` and the workbench all use that one name. The geometry comes from an authored STEP at `mesh.step`, or from a parametric `geometry` area that the driver builds into the run directory. See [Geometry and tags](../user-guide/geometry.md).
+The geometry is a STEP file whose bodies carry `key=value` tags in their names, such as `Material=N52, Name=MAGNET`. Any CAD that writes body names into the STEP produces one, such as Fusion 360, SolidWorks or FreeCAD. In a build123d script, a [TaggedPart][femforge.geometry.tags.TaggedPart] carries the tags and writes them into its STEP name for you. The mesher reads the tags back from the names. The [TagKey][femforge.common.TagKey] vocabulary names the shared keys: `Material` picks the body's material, and `name=` sets the `Name` tag. A tag value cannot carry `/`, `,`, `_` or whitespace, so femforge removes them and warns. A body's group name is its `Name` tag when you set one, else its material tag joined with the names of the region tags it matched, uppercased in both cases. The mesh groups, the Elmer sif, `entities.json` and the workbench all use that one name. The geometry comes from an authored STEP at `mesh.step`, or from a parametric `geometry` area that the driver builds into the run directory. See [Geometry and tags](../user-guide/geometry.md).
 
 ## The config
 
@@ -53,11 +53,11 @@ A condition is a typed body force or boundary condition, such as [Magnetization]
 
 ## Frames
 
-The frame decides what Elmer solves. [Solid][femforge.common.frame.Solid] solves the authored 3D model as-is. [Axisymmetric][femforge.common.frame.Axisymmetric] sections the model into its r-z half-plane, with X radial and Y along the symmetry axis, and meshes it in 2D. Magnetostatics then solves with the 2D axisymmetric stack, and forces come back as full-revolution totals. Results stay in the solve frame. See [Frames](../user-guide/frames.md).
+The frame decides what femforge solves. [Solid][femforge.common.frame.Solid] solves the authored 3D model as-is. [Axisymmetric][femforge.common.frame.Axisymmetric] sections the model into its r-z half-plane, with X radial and Y along the symmetry axis, and meshes it in 2D. Magnetostatics then solves with the 2D axisymmetric stack, and forces come back as full-revolution totals. Results stay in the solve frame. See [Frames](../user-guide/frames.md).
 
 ## The driver and the run bundle
 
-[Driver.evaluate][femforge.run.Driver.evaluate] runs a config through named [stages][femforge.run.Stage]: prepare the geometry, mesh and convert with ElmerGrid, build and write the sif, and solve. It then parses the outputs, writes the bundle, publishes it and cleans up. Each run writes a bundle under `runs/<run_id>/`: the manifest, `result.json`, the sif, the Elmer mesh, the field output and `run.log`. The `run_id` is a memorable name derived from the run's content key, which hashes every input that affects the result. The code commit, the machine, the metadata and the execution settings stay out of it, so the same config always lands in the same bundle. A finished bundle with the same key is returned without solving, and a second process asking for a run in progress waits for it. The backend decides where Elmer runs and the mesher decides where gmsh runs. See [Driver and runs](../user-guide/driver.md).
+[Driver.evaluate][femforge.run.Driver.evaluate] runs a config through named [stages][femforge.run.Stage]: prepare the geometry, mesh and convert with ElmerGrid, build and write the sif, and solve. It then parses the outputs, writes the bundle, publishes it and cleans up. Each run writes a bundle under `runs/<run_id>/`: the manifest, `result.json`, the sif, the Elmer mesh, the field output and `run.log`. The `run_id` is a memorable name derived from the run's content key, which hashes every input that affects the result. The code commit, the machine, the metadata and the execution settings stay out of it, so the same config always lands in the same bundle. A finished bundle with the same key is returned without solving, and a second process asking for a run in progress waits for it. The mesher is a `MeshBackend`: `GmshMesher` runs gmsh in process and `WorkerMesher` runs it in its own process. The backend is an `ExecutionBackend`: `NativeElmer` runs an installed Elmer and `DockerElmer` runs Elmer in the femforge Docker image. See [Driver and runs](../user-guide/driver.md).
 
 ## Results
 

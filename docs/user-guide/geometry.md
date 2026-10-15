@@ -1,6 +1,13 @@
 # Geometry and tags
 
-A femforge model is a build123d assembly whose parts carry tags: `key=value` pairs such as `Material=N52`. The tags ride the part names into the STEP file, the mesher reads them back from the STEP, and every later stage selects bodies by them. One vocabulary connects the CAD to the materials, conditions and mesh sizes, so you never number a volume or a surface by hand.
+A femforge model is a STEP file whose bodies carry tags in their names: `key=value` pairs separated by commas, such as `Material=N52, Name=MAGNET`. The mesher reads the tags back from the STEP, and every later stage selects bodies by them. One vocabulary connects the CAD to the materials, conditions and mesh sizes, so you never number a volume or a surface by hand.
+
+The STEP file comes from one of two routes:
+
+- Any CAD that writes body names into the STEP, such as Fusion 360, SolidWorks or FreeCAD. Name each body with its tags, and make sure the names reach the STEP file.
+- A build123d script that uses the femforge tagged containers: [TaggedPart][femforge.geometry.tags.TaggedPart], [TaggedCompound][femforge.geometry.tags.TaggedCompound] and [Build123dGeometry][femforge.geometry.Build123dGeometry]. They write the names for you.
+
+The next two sections cover the build123d route. The tag keys, selectors and names apply to both.
 
 ## Build a tagged model
 
@@ -57,9 +64,9 @@ The two boxes overlap. The mesher splits them into a conformal decomposition, an
 
 `build_step` exports `model()` with every leaf flattened to world placement. A part inherits the tags of the compounds above it, and a deeper tag wins over an ancestor's tag with the same key.
 
-Without `geometry`, the mesher imports the file at [`MeshConfig.step`][femforge.meshing.MeshConfig.step]. An authored STEP works as long as its solid names carry `key=value` pairs, and the run identity then follows the file's content digest.
+Without `geometry`, the mesher imports the file at [`MeshConfig.step`][femforge.meshing.MeshConfig.step]. An authored STEP, such as a CAD export, works as long as its solid names carry `key=value` pairs, and the run identity then follows the file's content digest.
 
-build123d writes STEP files in millimetres, and gmsh converts them to metres on import (`GmshOptions.target_units="M"`). Author the CAD in millimetres and give every mesh size in metres. The mesher warns when the meshed model spans more than 2 m, which usually means a unit slip.
+gmsh converts the STEP from its own unit to metres on import (`GmshOptions.target_units="M"`), and build123d writes millimetres. Author the CAD in millimetres and give every mesh size in metres. The mesher warns when the meshed model spans more than 2 m, which usually means a unit slip.
 
 The model stays in the frame you author it in. `SimulationConfig.frame` maps it onto the solve, for example to an axisymmetric half-plane. See [Frames](frames.md).
 

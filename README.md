@@ -6,7 +6,7 @@
 
 ![Field lines of a magnet holding a steel ball, from the bearing-seat example](https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/bearing-seat.webp)
 
-femforge drives finite-element analysis from Python. One typed config describes the geometry, the mesh, the materials and the physics; a driver meshes it with gmsh, solves it with Elmer and returns typed results with units. Every run lands in a bundle named after the content hash of its inputs, so an identical config reuses the finished run instead of solving again.
+femforge drives finite-element analysis from Python. One typed config describes the geometry, the mesh, the materials and the physics; a driver meshes it, solves it and returns typed results with units. The geometry is a STEP file whose bodies are named with their tags, exported from any CAD or scripted in build123d with femforge's helpers. Meshing and solving run through backend seams; gmsh and Elmer are the backends implemented today. Every run lands in a bundle named after the content hash of its inputs, so an identical config reuses the finished run instead of solving again.
 
 femforge is pre-alpha. The API will change between 0.x releases, and the [changelog](https://github.com/femforge-io/femforge/blob/main/CHANGELOG.md) records each change.
 
@@ -56,7 +56,7 @@ The STEP holds a magnet, a steel plate and an air box, each solid named with its
 ## What you get
 
 - **One typed config.** Pydantic models with pint units check the geometry, the mesh, the materials, the conditions and the physics before anything runs.
-- **CAD to result in one call.** build123d geometry, gmsh meshing and Elmer magnetostatic, thermal and current solves, in 3D or on an axisymmetric section.
+- **CAD to result in one call.** A tagged STEP from your CAD or a build123d script, meshed and solved for magnetostatic, thermal and current physics, in 3D or on an axisymmetric section.
 - **Runs you can reuse and query.** Each run is a bundle with its config, logs and fields, and a telemetry index lists every run.
 - **A browser workbench.** Browse the runs, view the fields and compose your own panels from a script.
 

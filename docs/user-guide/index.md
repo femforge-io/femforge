@@ -2,9 +2,9 @@
 
 The user guide covers one task per page, in the order a simulation flows through femforge. Start with [Concepts](../overview/concepts.md) for the whole pipeline on one page.
 
-- [Geometry and tags](geometry.md): build the model in build123d and tag the bodies a simulation refers to.
+- [Geometry and tags](geometry.md): tag the bodies of the STEP file, in your CAD or in a build123d script.
 - [Materials](materials.md): the material models, their property functions and units.
-- [Conditions and physics](conditions.md): body forces, boundary conditions and the physics presets Elmer solves.
+- [Conditions and physics](conditions.md): body forces, boundary conditions and the physics presets femforge solves.
 - [Mesh](mesh.md): element sizes, gmsh options, deterministic meshing and the mesh backends.
 - [Frames](frames.md): solve the model in 3D or as an axisymmetric 2D section.
 - [Driver and runs](driver.md): how the driver stages, reuses and records each run.

@@ -36,7 +36,7 @@ Two comments guard the same direction inside the core: `physical/conditions.py` 
 
 ## The geometry seam
 
-A [GeometryArea][femforge.geometry.GeometryArea] is a parametric geometry with one method, `build_step(path)`, which writes the model as a STEP in the authored frame (`src/femforge/geometry/config.py:12-20`). [Build123dGeometry][femforge.geometry.Build123dGeometry] implements it for a build123d assembly: a subclass returns its tagged assembly from `model()`, and `build_step` exports it (`src/femforge/geometry/build123d_geometry.py:16-26`).
+A [GeometryArea][femforge.geometry.GeometryArea] is a parametric geometry with one method, `build_step(path)`, which writes the model as a STEP in the authored frame (`src/femforge/geometry/config.py:12-20`). [Build123dGeometry][femforge.geometry.Build123dGeometry] implements it for a build123d assembly: a subclass returns its tagged assembly from `model()`, and `build_step` exports it (`src/femforge/geometry/build123d_geometry.py:16-26`). A config without a geometry meshes the STEP at `mesh.step` instead, which any CAD can write as long as the tagged body names reach the file.
 
 ```python
 import build123d as b3d
