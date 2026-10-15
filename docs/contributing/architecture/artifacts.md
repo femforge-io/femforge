@@ -187,7 +187,7 @@ The boundary groups come from body adjacency. `partition_boundary_faces` sorts e
 
 ## The gmsh firewall
 
-gmsh can run in the driver's process or behind a process boundary (`src/femforge/meshing/backend.py:136-253`):
+gmsh, the mesh backend implemented today, runs in the driver's process or behind a process boundary (`src/femforge/meshing/backend.py:136-253`):
 
 | Mesher | gmsh runs | Notes |
 |---|---|---|

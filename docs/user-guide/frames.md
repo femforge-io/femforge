@@ -1,10 +1,10 @@
 # Frames
 
-A frame says how the model you author maps onto the coordinates Elmer solves in. [Solid][femforge.common.frame.Solid] solves the 3D model as it is. [Axisymmetric][femforge.common.frame.Axisymmetric] solves the r-z half-plane of a model that is symmetric about an axis, so a rotationally symmetric part such as a coil or a tubular actuator solves as a 2D problem. You always author the full 3D model, and femforge sections it for the 2D solve. The frame is the `frame` field of [SimulationConfig][femforge.config.SimulationConfig] and defaults to `Solid()`.
+A frame says how the model you author maps onto the coordinates the solver backend, Elmer today, solves in. [Solid][femforge.common.frame.Solid] solves the 3D model as it is. [Axisymmetric][femforge.common.frame.Axisymmetric] solves the r-z half-plane of a model that is symmetric about an axis, so a rotationally symmetric part such as a coil or a tubular actuator solves as a 2D problem. You always author the full 3D model, and femforge sections it for the 2D solve. The frame is the `frame` field of [SimulationConfig][femforge.config.SimulationConfig] and defaults to `Solid()`.
 
 ## The authoring frame
 
-You model in whatever frame suits the part, for example Z up in build123d. Every axis a frame names lives in that authored frame. An [Axis][femforge.common.frame.Axis] is a line through `origin` (in mm) along `direction`; a scaled direction names the same axis. `ff.Axis.X`, `ff.Axis.Y` and `ff.Axis.Z` are the coordinate axes through the origin.
+You model in whatever frame suits the part, for example Z up in your CAD or in build123d. Every axis a frame names lives in that authored frame. An [Axis][femforge.common.frame.Axis] is a line through `origin` (in mm) along `direction`; a scaled direction names the same axis. `ff.Axis.X`, `ff.Axis.Y` and `ff.Axis.Z` are the coordinate axes through the origin.
 
 | Frame | `kind` | Mesh dimension | Solve coordinates |
 |---|---|---|---|

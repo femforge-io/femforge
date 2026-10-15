@@ -1,6 +1,6 @@
 # Results
 
-A [Result][femforge.run.Result] is the typed outcome of one solve: its status, the forces and peak values Elmer exported, and the solve frame they are expressed in. Quantities carry their units as pint quantities. The driver writes each result to `result.json` in the run bundle, so you can read it back later by run id without the solver. The field output stays beside it as a VTU file, which [Run][femforge.run.Run] opens as a numpy query.
+A [Result][femforge.run.Result] is the typed outcome of one solve: its status, the forces and peak values the solver backend, Elmer today, exported, and the solve frame they are expressed in. Quantities carry their units as pint quantities. The driver writes each result to `result.json` in the run bundle, so you can read it back later by run id without the solver. The field output stays beside it as a VTU file, which [Run][femforge.run.Run] opens as a numpy query.
 
 ## Load a result
 

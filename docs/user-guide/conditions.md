@@ -1,6 +1,6 @@
 # Conditions and physics
 
-A [Physics][femforge.elmer.Physics] member picks what Elmer solves, and conditions supply the sources and constraints of that solve. Each condition knows its physics and whether it attaches to a body or a boundary, and it rides on an [EntityTag][femforge.physical.EntityTag] that selects bodies by their tags. One domain can carry conditions for several physics: a solve reads the conditions of its own physics and leaves the rest inert.
+A [Physics][femforge.elmer.Physics] member picks what the solver backend, Elmer today, solves, and conditions supply the sources and constraints of that solve. Each condition knows its physics and whether it attaches to a body or a boundary, and it rides on an [EntityTag][femforge.physical.EntityTag] that selects bodies by their tags. One domain can carry conditions for several physics: a solve reads the conditions of its own physics and leaves the rest inert.
 
 ## Drive a magnet and measure its force
 

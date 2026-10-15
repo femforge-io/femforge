@@ -1,6 +1,6 @@
 # Mesh
 
-[MeshConfig][femforge.meshing.MeshConfig] decides how gmsh turns the STEP into a mesh of tetrahedra, or of triangles for a 2D model: the domain-wide element size, the typed gmsh options and whether meshing is reproducible. Per-region sizes ride on the same tags that carry materials and conditions. A mesh backend decides where gmsh runs, and the driver caches each mesh by the inputs that decide it, so a sweep over currents or temperatures meshes once.
+[MeshConfig][femforge.meshing.MeshConfig] decides how the mesh backend, gmsh today, turns the STEP into a mesh of tetrahedra, or of triangles for a 2D model: the domain-wide element size, the typed gmsh options and whether meshing is reproducible. Per-region sizes ride on the same tags that carry materials and conditions. The backend decides where gmsh runs, and the driver caches each mesh by the inputs that decide it, so a sweep over currents or temperatures meshes once.
 
 ## Set the sizes
 
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     print(driver.evaluate(config).run_id)
 ```
 
-Every length is in metres. gmsh converts the STEP to metres on import, and build123d writes its STEP in millimetres, so a 10 mm magnet meshed at `mesh_size=0.0005` gets 0.5 mm elements.
+Every length is in metres. gmsh converts the STEP to metres on import, so a 10 mm magnet meshed at `mesh_size=0.0005` gets 0.5 mm elements.
 
 ## MeshConfig
 
@@ -67,6 +67,8 @@ Refine where the field changes fast: an air gap, a thin conductor, the surface o
 
 ## Mesh backends
 
+Meshing runs through the [MeshBackend][femforge.meshing.MeshBackend] seam, and gmsh is the backend implemented today, in two forms:
+
 | Backend | Where gmsh runs | Choose it when |
 | --- | --- | --- |
 | [GmshMesher][femforge.meshing.GmshMesher] | In this process. gmsh loads on the first job and is finalized after every one. | You mesh in a script or a notebook. It is the default. |
@@ -82,7 +84,7 @@ A tag's selector stays in the spec even without a `mesh_size`, because a matched
 
 ## Conformal meshes
 
-build123d exports each solid on its own, and solids may touch or overlap. gmsh would mesh such a STEP with duplicate coincident faces and no shared nodes, so the field could not cross an interface and the solve would be wrong. Before meshing, the mesher fragments every body against every other, so touching bodies share their interface faces and nodes.
+A STEP file holds each solid on its own, and solids may touch or overlap. gmsh would mesh such a STEP with duplicate coincident faces and no shared nodes, so the field could not cross an interface and the solve would be wrong. Before meshing, the mesher fragments every body against every other, so touching bodies share their interface faces and nodes.
 
 Fragmenting drops the STEP names. The mesher restores each piece's name from the smallest body that claims it, so an overlap belongs to the smaller body. Draw the air as a plain box around everything: the magnet inside it keeps its own volume, and the air keeps the rest.
 

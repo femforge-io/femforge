@@ -1,6 +1,6 @@
 # Solver objects
 
-femforge models every block of Elmer's solver input file (the sif) as a typed pydantic model whose fields are its sif keywords. A preset builds one such stack per physics, the sif writer turns the stack and the mesh groups into a sif, and two parsers read ElmerSolver's output back into typed values. This page covers the model tree, the field-to-keyword mapping, the writer, the checks a solve runs before it writes, and the parsers.
+Elmer is the solver backend femforge implements today. femforge models every block of Elmer's solver input file (the sif) as a typed pydantic model whose fields are its sif keywords. A preset builds one such stack per physics, the sif writer turns the stack and the mesh groups into a sif, and two parsers read ElmerSolver's output back into typed values. This page covers the model tree, the field-to-keyword mapping, the writer, the checks a solve runs before it writes, and the parsers.
 
 ## The solver model tree
 

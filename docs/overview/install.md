@@ -1,6 +1,6 @@
 # Install
 
-femforge is a Python package plus an Elmer solver that runs beside it. The package meshes with gmsh in Python; Elmer runs either from a native install or inside the femforge Docker image. This page installs both and checks the result with `femforge doctor`.
+femforge is a Python package plus a solver that runs beside it. It meshes through the mesh backend, gmsh today, which installs with the package. It solves through the solver backend, Elmer today, which runs from a native install or inside the femforge Docker image. This page installs both and checks the result with `femforge doctor`.
 
 ## Requirements
 

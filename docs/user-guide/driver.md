@@ -1,6 +1,6 @@
 # Driver and runs
 
-The [Driver][femforge.run.Driver] turns a [SimulationConfig][femforge.config.SimulationConfig] into a [Result][femforge.run.Result]. It derives the run identity from the config, returns a finished run with that identity when one exists, and otherwise meshes, writes the sif, solves, parses and records the run in its own bundle directory. Where each step executes is a driver setting, never part of the config, so the same config names the same run on every machine and every backend.
+The [Driver][femforge.run.Driver] turns a [SimulationConfig][femforge.config.SimulationConfig] into a [Result][femforge.run.Result]. It derives the run identity from the config and returns a finished run with that identity when one exists. Otherwise it meshes with the mesh backend, gmsh today, writes the sif and solves with the solver backend, Elmer today. It then parses the output and records the run in its own bundle directory. Where each step executes is a driver setting, never part of the config, so the same config names the same run on every machine and every backend.
 
 ## Evaluate a config
 
@@ -55,6 +55,8 @@ Every parameter is keyword-only.
 
 ## Execution backends
 
+Solving runs through the [ExecutionBackend][femforge.elmer.ExecutionBackend] seam, and Elmer is the solver implemented today:
+
 | Backend | Runs Elmer | Partitioned |
 |---|---|---|
 | [NativeElmer][femforge.elmer.NativeElmer] | from a local install, located on first use | no: native builds lack the MUMPS a partitioned solve needs |
@@ -85,6 +87,8 @@ Set `mpi_processes` above 1 to solve on several ranks. The driver checks at cons
 [Results](results.md#scalars) explains how femforge reads the per-rank scalar files.
 
 ## Meshers
+
+Meshing runs through the [MeshBackend][femforge.meshing.MeshBackend] seam, and gmsh is the mesher implemented today:
 
 | Mesher | Where gmsh runs |
 |---|---|
