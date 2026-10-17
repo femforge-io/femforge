@@ -88,10 +88,21 @@ def merge_exclude(left: ExcludeSpec, right: Mapping[str | int, object] | None) -
     return merged
 
 
-def spec_payload(spec: BaseModel, *, exclude: Mapping[str | int, object] | None = None) -> dict[str, object]:
-    """``spec.model_dump(mode="json")`` with every ``HashExclude()`` field (any depth) plus ``exclude`` removed — the dict that is hashed and recorded."""
+def spec_payload(
+    spec: BaseModel,
+    *,
+    exclude: Mapping[str | int, object] | None = None,
+    context: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """``spec.model_dump(mode="json")`` with every ``HashExclude()`` field (any depth) plus ``exclude`` removed — the dict that is hashed and recorded.
+
+    Args:
+        spec: The model to dump.
+        exclude: A pydantic-style exclude merged with the ``HashExclude()`` fields.
+        context: The serialization context, as in ``{CANONICAL_UNITS: True}`` for quantities in base units.
+    """
     excluded: ExcludeSpec = merge_exclude(hash_exclude_spec(spec), exclude)
-    return spec.model_dump(mode="json", exclude=excluded or None)  # pyright: ignore[reportArgumentType]  # pydantic accepts nested int/str keyed specs
+    return spec.model_dump(mode="json", exclude=excluded or None, context=context)  # pyright: ignore[reportArgumentType]  # pydantic accepts nested int/str keyed specs
 
 
 def artifact_key[S: BaseModel](kind: ArtifactKind[S], spec: S) -> ArtifactKey[S]:

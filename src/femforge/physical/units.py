@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Annotated, Protocol, cast, overload
 
 import pint
@@ -18,6 +18,9 @@ __all__ = [
     "U",
     "Unit",
     "quantity",
+    "quantity_string",
+    "CANONICAL_UNITS",
+    "canonical_units",
     "quantity_type",
     "vector_quantity_type",
     "dimensionality_matches",
@@ -278,6 +281,33 @@ def quantity(value: float | Vec3, units: Unit | str | None = None) -> Quantity |
     return cast("Quantity | VectorQuantity", U.Quantity(value, units))  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
+CANONICAL_UNITS: str = "canonical_units"
+"""The serialization-context flag that makes quantities dump in base units, so a hash ignores how the units were spelled."""
+
+
+def canonical_units(info: core_schema.SerializationInfo) -> bool:
+    """Whether the serialization context of ``info`` sets the ``CANONICAL_UNITS`` flag."""
+    context: object = info.context
+    if not isinstance(context, Mapping):
+        return False
+
+    return cast("Mapping[str, object]", context).get(CANONICAL_UNITS) is True
+
+
+def _canonical_magnitude(value: float) -> float:
+    # Twelve significant digits absorb the base-unit conversion's last-bit noise, so 2.5 um and 2.5e-6 m dump alike.
+    return float(f"{value:.12g}")
+
+
+def quantity_string(q: Quantity, *, canonical: bool = False) -> str:
+    """``q`` as the parseable ``"<magnitude> <units>"`` string, in base units at twelve significant digits when ``canonical``."""
+    if not canonical:
+        return f"{q.magnitude} {q.units:~}"
+
+    base: Quantity = q.to_base_units()
+    return f"{_canonical_magnitude(base.magnitude)} {base.units:~}"
+
+
 class _DimensionedQuantity:
     """
     Base for the Annotated metadata adapting a dimensionality-constrained pint Quantity to a Pydantic field.
@@ -291,7 +321,7 @@ class _DimensionedQuantity:
     def _validate(self, v: object) -> Quantity:
         raise NotImplementedError
 
-    def _serialize(self, q: Quantity) -> object:
+    def _serialize(self, q: Quantity, info: core_schema.SerializationInfo) -> object:
         raise NotImplementedError
 
     def _require_dimensionality(self, q: Quantity) -> None:
@@ -301,7 +331,7 @@ class _DimensionedQuantity:
     def __get_pydantic_core_schema__(self, source: object, handler: object) -> core_schema.CoreSchema:
         return core_schema.no_info_plain_validator_function(
             self._validate,
-            serialization=core_schema.plain_serializer_function_ser_schema(self._serialize),
+            serialization=core_schema.plain_serializer_function_ser_schema(self._serialize, info_arg=True),
         )
 
 
@@ -325,8 +355,8 @@ class _ScalarQuantity(_DimensionedQuantity):
         self._require_dimensionality(q)
         return q
 
-    def _serialize(self, q: Quantity) -> str:
-        return f"{q.magnitude} {q.units:~}"
+    def _serialize(self, q: Quantity, info: core_schema.SerializationInfo) -> str:
+        return quantity_string(q, canonical=canonical_units(info))
 
     def __get_pydantic_json_schema__(self, core: object, handler: object) -> dict[str, str]:
         return {
@@ -361,10 +391,16 @@ class _VectorQuantity(_DimensionedQuantity):
         self._require_dimensionality(q)
         return q
 
-    def _serialize(self, q: Quantity) -> dict[str, object]:
+    def _serialize(self, q: Quantity, info: core_schema.SerializationInfo) -> dict[str, object]:
+        canonical: bool = canonical_units(info)
+        shown: Quantity = q.to_base_units() if canonical else q
+        mag = cast(Vec3, shown.magnitude)
+
+        def component(value: float) -> float:
+            return _canonical_magnitude(value) if canonical else value
+
         # Full (non-abbreviated) unit name so composite units like torque ("meter * newton") re-parse cleanly on the way back in.
-        mag = cast(Vec3, q.magnitude)
-        return {"x": mag.x, "y": mag.y, "z": mag.z, "units": str(q.units)}
+        return {"x": component(mag.x), "y": component(mag.y), "z": component(mag.z), "units": str(shown.units)}
 
     def __get_pydantic_json_schema__(self, core: object, handler: object) -> dict[str, object]:
         num = {"type": "number"}

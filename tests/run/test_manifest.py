@@ -19,8 +19,9 @@ from femforge.config import SimulationConfig
 from femforge.meshing.config import MeshConfig
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.materials.neodymium import N42
-from femforge.materials.properties import MaterialProperties
+from femforge.materials.properties import ElectricalProperties, MaterialProperties
 from femforge.materials.steel import Steel_1080
+from femforge.physical.property_functions import Static
 from femforge.physical.units import Quantity, U, quantity
 from femforge.run.manifest import RunManifest, cache_key, git_sha, mesh_key
 from femforge.common.names import bundle_name
@@ -95,7 +96,7 @@ def test_cache_key_of_a_fixed_config_is_pinned() -> None:
     """A fixed config hashes to a pinned key, so a change that moves run identities fails here first."""
     config = _config(materials=[Steel_1080(), N42()])
 
-    assert cache_key(config) == "e4f113900cee470063595d320a78915e0cb21e215f0d90b942dd25dd9f7ccf9d"
+    assert cache_key(config) == "40b591f8c4debf8170b3c52dce6dd8c9970ffc0db7b6a1d462503caaaee7abcc"
 
 
 def test_cache_key_distinguishes_permeability_mode() -> None:
@@ -469,3 +470,13 @@ def test_mesh_key_changes_with_the_frame() -> None:
     flat = _config()
     flat.frame = Axisymmetric()
     assert mesh_key(_config()) != mesh_key(flat)
+
+
+def test_cache_key_reads_material_properties_in_base_units() -> None:
+    def copper(conductivity: Quantity) -> MaterialProperties:
+        return MaterialProperties(name="Cu", electrical=ElectricalProperties(conductivity=Static(value=conductivity)))
+
+    in_mega: str = cache_key(_config(materials=[copper(58 * U.MS / U.m)]))
+
+    assert in_mega == cache_key(_config(materials=[copper(5.8e7 * U.S / U.m)]))
+    assert in_mega != cache_key(_config(materials=[copper(59 * U.MS / U.m)]))

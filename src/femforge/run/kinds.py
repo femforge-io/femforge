@@ -19,7 +19,7 @@ from femforge.geometry.config import GeometryArea
 from femforge.geometry.frame import apply_frame
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.spec import MeshSpec, TagSelectorSpec
-from femforge.physical.units import Quantity, quantity
+from femforge.physical.units import CANONICAL_UNITS, Quantity, quantity
 
 
 RUN_PRODUCER_VERSION = 1
@@ -153,12 +153,17 @@ def mesh_key(config: SimulationConfig) -> str:
 
 
 def run_spec_payload(config: SimulationConfig) -> dict[str, object]:
-    """The hashed identity of a run: the config minus provenance and the STEP path, the geometry key, and the resolved solver stack."""
+    """The hashed identity of a run: the config minus provenance and the STEP path, the geometry key, and the resolved solver stack, every quantity in base units."""
+    context: dict[str, object] = {CANONICAL_UNITS: True}
     return {
         # `physics.overrides` is carried by the resolved stack, so overrides identical to the preset do not move the key.
-        "config": spec_payload(config, exclude={"physics": {"overrides"}, "meta": True, "mesh": {"step"}}),
+        "config": spec_payload(
+            config,
+            exclude={"physics": {"overrides"}, "meta": True, "mesh": {"step"}},
+            context=context,
+        ),
         "step_key": step_key(config),
-        "physics_config": config.resolved_stack().model_dump(mode="json"),
+        "physics_config": config.resolved_stack().model_dump(mode="json", context=context),
     }
 
 

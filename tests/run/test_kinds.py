@@ -1,7 +1,7 @@
 """Run identity v2: the STEP, mesh, and bundle keys move with what changes the artifact and with nothing else."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import pytest
 
@@ -17,10 +17,10 @@ from femforge.meshing.config import MeshConfig
 from femforge.meshing.gmsh_options import GmshOptions, MeshAlgorithm2D
 from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
-from femforge.physical.units import U
+from femforge.physical.units import Quantity, U, quantity
 from femforge.materials.properties import MaterialProperties
 from femforge.common.vector import Direction
-from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, RunSpec, StepSpec, cache_key, mesh_key, mesh_spec, step_digest, step_key
+from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, RunSpec, StepSpec, cache_key, mesh_key, mesh_spec, run_spec_payload, step_digest, step_key
 
 
 class _StubGeometry(GeometryArea):
@@ -210,3 +210,30 @@ def test_cache_key_of_a_parametric_run_ignores_hash_excluded_geometry_fields() -
     b = cache_key(SimulationConfig(geometry=_StubGeometry(width=2.0, label="b")))
     assert a == b
     assert a != cache_key(SimulationConfig(geometry=_StubGeometry(width=2.5)))
+
+
+def test_cache_key_is_the_same_for_the_same_quantity_in_any_unit() -> None:
+    spellings: list[Quantity] = [0.5 * U.mm, 0.0005 * U.m, 500 * U.um]
+    keys: set[str] = {cache_key(_config(global_mesh_size=size)) for size in spellings}
+
+    assert len(keys) == 1
+    assert cache_key(_config(global_mesh_size=0.6 * U.mm)) not in keys
+
+
+def test_the_run_payload_hashes_base_units_while_the_dump_keeps_the_spelling() -> None:
+    config = _config(global_mesh_size=0.5 * U.mm)
+    hashed = cast("dict[str, dict[str, object]]", run_spec_payload(config)["config"])
+    dumped = cast("dict[str, dict[str, object]]", config.model_dump())
+
+    assert hashed["mesh"]["global_mesh_size"] == "0.0005 m"
+    assert dumped["mesh"]["global_mesh_size"] == "0.5 mm"
+
+
+def test_cache_key_reads_the_operating_point_in_base_units() -> None:
+    def at(temperature: Quantity) -> str:
+        config = _config()
+        config.customize_physics().operating_point.temperature = temperature
+        return cache_key(config)
+
+    assert at(quantity(26.85, "degC")) == cache_key(_config())
+    assert at(quantity(30, "degC")) != cache_key(_config())

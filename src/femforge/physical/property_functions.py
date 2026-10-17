@@ -6,14 +6,16 @@ from bisect import bisect_right
 from typing import Annotated, Callable, Literal, Mapping, Protocol, cast, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FieldSerializationInfo, TypeAdapter, field_serializer, field_validator, model_validator
 from pydantic_core import core_schema
 
 from femforge.physical.expressions import Expr
 from femforge.physical.units import (
     Quantity,
     U,
+    canonical_units,
     dimensionality_matches,
+    quantity_string,
 )
 
 
@@ -167,11 +169,6 @@ def _as_quantity(v: object) -> Quantity:
     raise TypeError("expected a Quantity, a number or a quantity string")
 
 
-def _quantity_string(q: Quantity) -> str:
-    """Render a Quantity as the parseable ``'<magnitude> <units>'`` string ``_as_quantity`` revives."""
-    return f"{q.magnitude} {q.units:~}"
-
-
 # ---------------------------------------------------------------------------
 # 1) Static – the 0-parameter baseline.
 # ---------------------------------------------------------------------------
@@ -239,12 +236,13 @@ class CalibrationPoint(BaseModel):
         return _as_quantity(v)
 
     @field_serializer("inputs", when_used="json")
-    def _serialize_inputs(self, v: dict[str, Quantity]) -> dict[str, str]:
-        return {name: _quantity_string(q) for name, q in v.items()}
+    def _serialize_inputs(self, v: dict[str, Quantity], info: FieldSerializationInfo) -> dict[str, str]:
+        canonical: bool = canonical_units(info)
+        return {name: quantity_string(q, canonical=canonical) for name, q in v.items()}
 
     @field_serializer("output", when_used="json")
-    def _serialize_output(self, v: Quantity) -> str:
-        return _quantity_string(v)
+    def _serialize_output(self, v: Quantity, info: FieldSerializationInfo) -> str:
+        return quantity_string(v, canonical=canonical_units(info))
 
 
 def _sign(v: float) -> int:
@@ -483,9 +481,11 @@ def _serialize_property_function(fn: PropertyFunction, info: core_schema.Seriali
     Code-bearing kinds pass through as-is (python-mode only).
     """
     if isinstance(fn, Static):
-        return _quantity_string(fn.value)
+        return quantity_string(fn.value, canonical=canonical_units(info))
+
     if isinstance(fn, (Expression, Calibration)):
-        return fn.model_dump(mode=info.mode)
+        return fn.model_dump(mode=info.mode, context=info.context)
+
     return fn
 
 

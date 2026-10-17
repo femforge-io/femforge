@@ -196,7 +196,7 @@ The run id has the form `<adjective>-<noun>-<hash8>` and is a pure function of t
 | The pipeline's producer version | The git commit, the machine, the run directory |
 | | Every driver setting: backend, mesher, `mpi_processes`, retention, artifacts, bundle policy, telemetry |
 
-Editing `config.meta` relabels a run without solving it again. Overrides identical to the preset leave the key unchanged. When two keys share a name, which is astronomically unlikely, the driver raises so that two runs never mix in one directory.
+Quantities enter the key in base units, so `0.5 mm` and `0.0005 m` name the same run. Editing `config.meta` relabels a run without solving it again. Overrides identical to the preset leave the key unchanged. When two keys share a name, which is astronomically unlikely, the driver raises so that two runs never mix in one directory.
 
 ## Claims and reuse
 

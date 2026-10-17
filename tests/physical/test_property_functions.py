@@ -17,7 +17,7 @@ from femforge.physical.property_functions import (
     PropertyRangeError,
     Static,
 )
-from femforge.physical.units import Quantity, U
+from femforge.physical.units import CANONICAL_UNITS, Quantity, U, quantity
 from tests.physical._sif import sif_comment, sif_value
 
 
@@ -550,3 +550,30 @@ def test_calibration_json_dump_is_deterministic_across_constructions() -> None:
     first = json.dumps(_two_point_line().model_dump(mode="json"), sort_keys=True)
     second = json.dumps(_two_point_line().model_dump(mode="json"), sort_keys=True)
     assert first == second
+
+
+def test_a_calibration_dumps_base_units_under_the_canonical_context() -> None:
+    from femforge.materials.properties import ThermalProperties
+
+    in_celsius = Calibration(
+        param_dims={"temperature": "[temperature]"},
+        points=[
+            CalibrationPoint(inputs={"temperature": quantity(26.85, "degC")}, output=1000 * U.mW / (U.m * U.K)),
+            CalibrationPoint(inputs={"temperature": quantity(126.85, "degC")}, output=6000 * U.mW / (U.m * U.K)),
+        ],
+    )
+    context: dict[str, object] = {CANONICAL_UNITS: True}
+    kelvin = ThermalProperties(conductivity=_two_point_line())
+    celsius = ThermalProperties(conductivity=in_celsius)
+
+    assert kelvin.model_dump(mode="json", context=context) == celsius.model_dump(mode="json", context=context)
+    assert kelvin.model_dump(mode="json") != celsius.model_dump(mode="json")
+
+
+def test_a_static_property_dumps_base_units_under_the_canonical_context() -> None:
+    from femforge.materials.properties import ThermalProperties
+
+    thermal = ThermalProperties(conductivity=Static(value=8700 * U.mW / (U.m * U.K)))
+
+    assert thermal.model_dump(mode="json")["conductivity"] == "8700.0 mW / K / m"
+    assert thermal.model_dump(mode="json", context={CANONICAL_UNITS: True})["conductivity"] == "8.7 kg * m / K / s ** 3"

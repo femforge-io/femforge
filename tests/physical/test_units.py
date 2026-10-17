@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from femforge.common.vector import Vec3
 from femforge.physical.units import (
+    CANONICAL_UNITS,
     DIM_FORCE,
     DIM_TEMPERATURE,
     DIM_THERMAL_CONDUCTIVITY,
@@ -180,3 +181,26 @@ def test_vector_field_json_schema() -> None:
     assert force_schema["type"] == "object"
     assert force_schema["required"] == ["x", "y", "z", "units"]
     assert force_schema["x-unit-dimensionality"] == DIM_FORCE
+
+
+def test_scalar_field_dumps_base_units_under_the_canonical_context() -> None:
+    sample = _sample(temperature=quantity(26.85, "degC"), density=7.5 * U.g / U.cm**3)
+    canonical: dict[str, object] = sample.model_dump(mode="json", context={CANONICAL_UNITS: True})
+
+    assert canonical["temperature"] == "300.0 K"
+    assert canonical["density"] == "7500.0 kg / m ** 3"
+    assert sample.model_dump(mode="json", context={"other": True})["density"] == "7.5 g / cm ** 3"
+
+
+def test_vector_field_dumps_base_units_under_the_canonical_context() -> None:
+    context: dict[str, object] = {CANONICAL_UNITS: True}
+    in_millinewtons = _ForceModel(force=quantity(Vec3(2.5, 0.0, -1.0), "mN"))
+    in_newtons = _ForceModel(force=quantity(Vec3(0.0025, 0.0, -0.001), "N"))
+    canonical = cast(dict[str, object], in_millinewtons.model_dump(mode="json", context=context)["force"])
+    plain = cast(dict[str, object], in_millinewtons.model_dump(mode="json")["force"])
+
+    assert canonical == in_newtons.model_dump(mode="json", context=context)["force"]
+    assert canonical["x"] == 0.0025
+    assert canonical["units"] == str((1 * U.N).to_base_units().units)
+    assert plain["x"] == 2.5
+    assert plain["units"] == "mN"
