@@ -7,7 +7,7 @@ import femforge as ff
 
 config = ff.SimulationConfig(
     frame=ff.Axisymmetric(),
-    mesh=ff.MeshConfig(step="seat.step", global_mesh_size=0.0005),
+    mesh=ff.MeshConfig(step="seat.step", global_mesh_size=0.5 * ff.U.mm),
     domain=ff.DomainConfig(
         materials=[ff.materials.N52(), ff.materials.Steel_1080(), ff.materials.Air()],
         tags=[

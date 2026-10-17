@@ -24,13 +24,13 @@ A backend reads a Protocol slice or plain data, never `SimulationConfig`, so the
 
 | Consumer | Reads | Where |
 |---|---|---|
-| `Mesher` | [SupportsMeshing][femforge.meshing.SupportsMeshing]: `frame`, `mesh`, `domain` | `src/femforge/meshing/config.py:37-47`, `src/femforge/meshing/mesher.py:77-79` |
+| `Mesher` | [SupportsMeshing][femforge.meshing.SupportsMeshing]: `frame`, `mesh`, `domain` | `src/femforge/meshing/config.py:38-48`, `src/femforge/meshing/mesher.py:77-79` |
 | `MeshEntity` | the bare `DomainConfig` | `src/femforge/meshing/mesh_entity.py:16-27` |
-| [MeshBackend][femforge.meshing.MeshBackend] | a [MeshJob][femforge.meshing.MeshJob]: the mesh spec and the STEP path | `src/femforge/meshing/backend.py:65-103` |
+| [MeshBackend][femforge.meshing.MeshBackend] | a [MeshJob][femforge.meshing.MeshJob]: the mesh spec and the STEP path | `src/femforge/meshing/backend.py:66-104` |
 | `Sim` | the mesh groups, a physics, a solver stack and a frame | `src/femforge/elmer/sim.py:65-72` |
 | [ExecutionBackend][femforge.elmer.ExecutionBackend] | directories | `src/femforge/elmer/runtime/backend.py:14-35` |
 
-`SupportsMeshing` is structural, so `SimulationConfig` satisfies it without inheriting anything, and the mesh backend never imports the composition root. The mesh worker goes one step further: [mesh_inputs][femforge.meshing.mesh_inputs] rebuilds a `SupportsMeshing` from the job alone, with bare materials named by their tags and tag selectors without conditions (`src/femforge/meshing/backend.py:120-133`). The mesher therefore cannot read a condition or a material property, which is what lets a cached mesh serve every config that groups the bodies the same way.
+`SupportsMeshing` is structural, so `SimulationConfig` satisfies it without inheriting anything, and the mesh backend never imports the composition root. The mesh worker goes one step further: [mesh_inputs][femforge.meshing.mesh_inputs] rebuilds a `SupportsMeshing` from the job alone, with bare materials named by their tags and tag selectors without conditions (`src/femforge/meshing/backend.py:121-138`). The mesher therefore cannot read a condition or a material property, which is what lets a cached mesh serve every config that groups the bodies the same way.
 
 Two comments guard the same direction inside the core: `physical/conditions.py` must not import `meshing.config` or `elmer.sim` (`src/femforge/physical/conditions.py:2`), and `physics_config.py` must not import `elmer.sim` (`src/femforge/elmer/config/common/physics_config.py:2`).
 
@@ -99,13 +99,13 @@ A condition reaches the solver input through tags, never through a body id. The 
 1. **The STEP names carry tags.** `MeshEntity` parses each gmsh entity's name into `key=value` tags (`src/femforge/meshing/mesh_entity.py:29-30`). It matches the material whose `tag` equals the entity's `Material` tag, ignoring case (`src/femforge/meshing/mesh_entity.py:54-61`), and every [EntityTag][femforge.physical.EntityTag] whose selector the entity's tags contain, in domain order (`src/femforge/meshing/mesh_entity.py:63-66`). It writes the name back in canonical form, and that rewrite must parse to the same tags again, because the mesher resolves entities both before and after the conformal fragment (`src/femforge/meshing/mesh_entity.py:34-37`).
 2. **The mesher groups and names them.** Entities that share a material, an authored `Name` and a set of matched tags form one physical group (`src/femforge/meshing/mesher.py:193-209`). `compose_group_name` names it: the authored `Name` tag when there is one, else the material tag followed by the tag names (`src/femforge/meshing/naming.py:19-32`). The mesher, which writes the names, and the bundle readers, which require them, share this one grammar (`src/femforge/meshing/naming.py:1`). Elmer reads names into 128-character buffers and a boundary name joins two body names, so the function warns above 60 characters (`src/femforge/meshing/naming.py:9-11`).
 3. **The group carries the tag objects.** A `PhysicalGroup` keeps the `EntityTag` instances it matched, conditions included (`src/femforge/meshing/groups.py:48-49`). A cached mesh rebinds its groups to the current domain by selector, so today's conditions ride along on yesterday's mesh (`src/femforge/run/artifacts.py:48-56`).
-4. **The sif writer collects them per physics.** [conditions_for][femforge.physical.conditions_for] returns the conditions on a group's tags that belong to the active physics and attach to the requested target (`src/femforge/physical/domain.py:17-31`). `condition_physics` widens the active set for a coupled preset, so one set of tags drives the standalone and the coupled solves (`src/femforge/elmer/physics.py:52-66`).
+4. **The sif writer collects them per physics.** [conditions_for][femforge.physical.conditions_for] returns the conditions on a group's tags that belong to the active physics and attach to the requested target (`src/femforge/physical/domain.py:18-32`). `condition_physics` widens the active set for a coupled preset, so one set of tags drives the standalone and the coupled solves (`src/femforge/elmer/physics.py:52-66`).
 
 Each condition is self-describing. It pins its `physics` and its body or boundary `target`, carries a `kind` discriminator for the `ConditionUnion` (`src/femforge/physical/conditions.py:422-425`), and emits its own sif keywords. The base `to_elmer` reflects each field's `ElmerKeyword` metadata, which pairs the sif keyword with the SI unit the quantity is stripped to (`src/femforge/physical/conditions.py:64-103`). A condition with `external_only` set lands only on a body's external shell, never on an interface (`src/femforge/physical/conditions.py:85-87`). [Solver objects](solver-objects.md#bodies-boundaries-and-components) covers where each kind of condition lands in the sif.
 
 ## The run identity
 
-[cache_key][femforge.run.cache_key] is the SHA-256 of one canonical JSON payload: the bundle kind name, `RUN_PRODUCER_VERSION`, and the run spec (`src/femforge/run/kinds.py:145-147`). The run spec has three parts (`src/femforge/run/kinds.py:135-142`):
+[cache_key][femforge.run.cache_key] is the SHA-256 of one canonical JSON payload: the bundle kind name, `RUN_PRODUCER_VERSION`, and the run spec (`src/femforge/run/kinds.py:150-152`). The run spec has three parts (`src/femforge/run/kinds.py:140-147`):
 
 | Part | Holds | Leaves out |
 |---|---|---|
@@ -127,7 +127,7 @@ The run id is `bundle_name(cache_key)`: an adjective and a noun picked by hash b
 
 [SimulationConfig.resolved_stack][femforge.config.SimulationConfig.resolved_stack] returns `physics.overrides` when it is set, else the preset that `solved_stack` builds for the selection in the frame (`src/femforge/config.py:104-109`). [SimulationConfig.customize_physics][femforge.config.SimulationConfig.customize_physics] writes that preset into `physics.overrides` once and returns it for typed editing (`src/femforge/config.py:111-116`).
 
-The identity hashes the resolved stack and drops the authored overrides, so customizing without an edit leaves the key where it was (`src/femforge/run/kinds.py:138-141`):
+The identity hashes the resolved stack and drops the authored overrides, so customizing without an edit leaves the key where it was (`src/femforge/run/kinds.py:143-146`):
 
 ```python
 import femforge as ff

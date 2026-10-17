@@ -116,7 +116,7 @@ from femforge.telemetry import SweepJournal, SweepState, sweep_point
 def gap_config(gap_mm: int) -> ff.SimulationConfig:
     """The actuator config at one air gap."""
     return ff.SimulationConfig(
-        mesh=ff.MeshConfig(step=f"models/actuator-gap-{gap_mm}mm.step", global_mesh_size=0.002),
+        mesh=ff.MeshConfig(step=f"models/actuator-gap-{gap_mm}mm.step", global_mesh_size=2 * ff.U.mm),
         domain=ff.DomainConfig(materials=[ff.materials.Air(), ff.materials.N52()]),
         meta=ff.RunMeta(description=f"Gap {gap_mm} mm", tags={"study": "gap"}),
     )

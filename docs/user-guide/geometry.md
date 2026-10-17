@@ -43,7 +43,7 @@ class MagnetInAir(ff.Build123dGeometry):
 
 config = ff.SimulationConfig(
     geometry=MagnetInAir(magnet_size=8.0),
-    mesh=ff.MeshConfig(global_mesh_size=0.004),
+    mesh=ff.MeshConfig(global_mesh_size=4 * ff.U.mm),
     domain=ff.DomainConfig(
         materials=[ff.materials.Air(), ff.materials.N52()],
         tags=[
@@ -66,7 +66,7 @@ The two boxes overlap. The mesher splits them into a conformal decomposition, an
 
 Without `geometry`, the mesher imports the file at [`MeshConfig.step`][femforge.meshing.MeshConfig.step]. An authored STEP, such as a CAD export, works as long as its solid names carry `key=value` pairs, and the run identity then follows the file's content digest.
 
-gmsh converts the STEP from its own unit to metres on import (`GmshOptions.target_units="M"`), and build123d writes millimetres. Author the CAD in millimetres and give every mesh size in metres. The mesher warns when the meshed model spans more than 2 m, which usually means a unit slip.
+gmsh converts the STEP from its own unit to metres on import (`GmshOptions.target_units="M"`), and build123d writes millimetres. Author the CAD in millimetres. A mesh size carries its own unit, as in `0.5 * ff.U.mm`. The mesher warns when the meshed model spans more than 2 m, which usually means a unit slip.
 
 The model stays in the frame you author it in. `SimulationConfig.frame` maps it onto the solve, for example to an axisymmetric half-plane. See [Frames](frames.md).
 
@@ -108,7 +108,7 @@ An [EntityTag][femforge.physical.EntityTag] selects bodies by a `selector`. A bo
 | --- | --- |
 | `selector` | The `key=value` pairs a body must carry. |
 | `conditions` | Body forces and boundary conditions. See [Conditions and physics](conditions.md). |
-| `mesh_size` | A target element size in metres. See [Mesh](mesh.md#size-regions-by-tag). |
+| `mesh_size` | A target element size, as a length such as `0.5 * ff.U.mm`. See [Mesh](mesh.md#size-regions-by-tag). |
 
 A body can match several tags. It collects the conditions of all of them, and the finest `mesh_size` wins. Select by a shared tag such as `Magnetization=N` to reach many bodies at once, or by `Name` to reach one.
 

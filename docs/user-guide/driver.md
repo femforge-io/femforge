@@ -8,7 +8,7 @@ The [Driver][femforge.run.Driver] turns a [SimulationConfig][femforge.config.Sim
 import femforge as ff
 
 config = ff.SimulationConfig(
-    mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=0.002),
+    mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=2 * ff.U.mm),
     domain=ff.DomainConfig(
         materials=[ff.materials.Air(), ff.materials.N52()],
         tags=[

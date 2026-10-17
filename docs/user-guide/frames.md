@@ -18,7 +18,7 @@ import femforge as ff
 
 config = ff.SimulationConfig(
     frame=ff.Solid(),
-    mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=0.002),
+    mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=2 * ff.U.mm),
     domain=ff.DomainConfig(
         materials=[ff.materials.Air(), ff.materials.N52()],
         tags=[
@@ -43,7 +43,7 @@ import femforge as ff
 
 config = ff.SimulationConfig(
     frame=ff.Axisymmetric(axis=ff.Axis.Z),
-    mesh=ff.MeshConfig(step="models/tubular.step", global_mesh_size=0.0005),
+    mesh=ff.MeshConfig(step="models/tubular.step", global_mesh_size=0.5 * ff.U.mm),
     domain=ff.DomainConfig(
         materials=[ff.materials.Air(), ff.materials.N52()],
         tags=[

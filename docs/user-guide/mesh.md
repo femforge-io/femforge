@@ -10,13 +10,13 @@ import femforge as ff
 magnet = ff.EntityTag(
     selector={ff.TagKey.NAME: "Magnet"},
     conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))],
-    mesh_size=0.0005,
+    mesh_size=0.5 * ff.U.mm,
 )
 
 config = ff.SimulationConfig(
     mesh=ff.MeshConfig(
         step="magnet_in_air.step",
-        global_mesh_size=0.002,
+        global_mesh_size=2 * ff.U.mm,
         gmsh_options=ff.GmshOptions(mesh_size_min=0.0002),
         deterministic=True,
     ),
@@ -28,14 +28,14 @@ if __name__ == "__main__":
     print(driver.evaluate(config).run_id)
 ```
 
-Every length is in metres. gmsh converts the STEP to metres on import, so a 10 mm magnet meshed at `mesh_size=0.0005` gets 0.5 mm elements.
+A mesh size is a pint length: write `0.5 * ff.U.mm` in Python, or `"0.5 mm"` in a JSON config. A bare number such as `0.0005` fails validation, because it carries no unit. gmsh converts the STEP to metres on import, and femforge hands it every size in metres, so a 10 mm magnet meshed at `mesh_size=0.5 * ff.U.mm` gets 0.5 mm elements. The `GmshOptions` clamps `mesh_size_min` and `mesh_size_max` mirror gmsh's own options and stay plain floats in metres.
 
 ## MeshConfig
 
 | Field | Default | Unit | Meaning |
 | --- | --- | --- | --- |
 | `step` | `"data/geometry.step"` | | The STEP the mesher imports. A config with `geometry` set points it at the built STEP. |
-| `global_mesh_size` | `0.001` | m | The domain-wide target element size. |
+| `global_mesh_size` | `1 mm` | length | The domain-wide target element size. |
 | `gmsh_options` | `GmshOptions()` | | The typed gmsh options below. |
 | `deterministic` | `False` | | Pin meshing to one thread, so the same STEP and sizes always give the same mesh. |
 

@@ -46,14 +46,14 @@ A kind is a module-level [ArtifactKind][femforge.artifacts.ArtifactKind] constan
 | Kind | Spec | Files | Produced by |
 |---|---|---|---|
 | [STEP][femforge.run.STEP] | `StepSpec`: the geometry source and the frame | `geometry.step` | the kind's own producer: build the geometry, then convert it into the frame (`src/femforge/run/kinds.py:74-94`) |
-| [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | the four ElmerGrid mesh files, `mesh.names`, `groups.json` | the driver, which owns gmsh and ElmerGrid (`src/femforge/run/kinds.py:121-127`) |
-| [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec]: the config | `manifest.json`, `result.json`, and what the bundle policy adds | the run itself, in place (`src/femforge/run/kinds.py:159-167`) |
+| [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | the four ElmerGrid mesh files, `mesh.names`, `groups.json` | the driver, which owns gmsh and ElmerGrid (`src/femforge/run/kinds.py:126-132`) |
+| [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec]: the config | `manifest.json`, `result.json`, and what the bundle policy adds | the run itself, in place (`src/femforge/run/kinds.py:164-172`) |
 
 `json_record_kind` declares a further kind whose artifact is one `record.json` holding a typed result, such as one point of a sweep; `RecordKind.get_or_produce` serves the stored value or computes and publishes it under a claim (`src/femforge/artifacts/records.py`).
 
 ## Identity and names
 
-`artifact_key` hashes the kind name, its producer version and the spec payload with every `HashExclude()` field removed, unless the kind overrides its key (`src/femforge/artifacts/keys.py:97-105`). The bundle kind overrides it with `cache_key`, so a bundle's store key and its run id agree (`src/femforge/run/kinds.py:159-166`). [Config objects](config-objects.md#the-run-identity) covers the run and STEP payloads.
+`artifact_key` hashes the kind name, its producer version and the spec payload with every `HashExclude()` field removed, unless the kind overrides its key (`src/femforge/artifacts/keys.py:97-105`). The bundle kind overrides it with `cache_key`, so a bundle's store key and its run id agree (`src/femforge/run/kinds.py:164-171`). [Config objects](config-objects.md#the-run-identity) covers the run and STEP payloads.
 
 An [ArtifactKey][femforge.artifacts.ArtifactKey] is a `str` of 18 to 64 lowercase hex characters, typed by the spec model it was hashed from, so a mesh key cannot pass where a bundle key belongs (`src/femforge/artifacts/keys.py:27-46`). Its `name` is the `<adjective>-<noun>-<hash8>` directory name.
 
@@ -175,11 +175,11 @@ Each pass that removes something appends a `CleanupRecord` with trigger `purge` 
 |---|---|
 | `step_key` | the geometry, in its solve frame |
 | `model_dim` | the frame's body dimension |
-| `global_mesh_size`, `gmsh_options`, `deterministic` | the sizes and the mesher settings; thread count and terminal output are `HashExclude()` |
+| `global_mesh_size`, `gmsh_options`, `deterministic` | the sizes, as floats in metres, and the mesher settings; thread count and terminal output are `HashExclude()` |
 | `tags` | each tag's selector and mesh size, in domain order, because an unnamed body's group name joins the matched tag names in that order |
 | `materials` | the sorted material tags, because an unnamed body's group name starts with its material tag |
 
-Conditions, material properties, physics and metadata stay out, so configs that differ only there share one mesh ([mesh_key][femforge.run.mesh_key], `src/femforge/run/kinds.py:108-132`).
+Conditions, material properties, physics and metadata stay out, so configs that differ only there share one mesh ([mesh_key][femforge.run.mesh_key], `src/femforge/run/kinds.py:108-137`).
 
 The artifact keeps ElmerGrid's files, never the `.msh`, plus `groups.json`, a `MeshGroupsFile` of body and boundary group records and the element count (`src/femforge/meshing/groups.py:156-258`). `rebind_groups` turns the records back into groups against the current domain: materials by tag, tags by selector, and each body's name composed again with `compose_group_name`. Any mismatch raises `MeshRebindError`, so a condition never lands on the wrong boundary (`src/femforge/run/artifacts.py:35-92`). The driver then sets each group's id from `mesh.names`, because ElmerGrid renumbers the groups, boundary ids after body ids (`src/femforge/run/driver.py:616-625`, `src/femforge/elmer/mesh_names.py`).
 
@@ -187,14 +187,14 @@ The boundary groups come from body adjacency. `partition_boundary_faces` sorts e
 
 ## The gmsh firewall
 
-gmsh, the mesh backend implemented today, runs in the driver's process or behind a process boundary (`src/femforge/meshing/backend.py:136-253`):
+gmsh, the mesh backend implemented today, runs in the driver's process or behind a process boundary (`src/femforge/meshing/backend.py:141-258`):
 
 | Mesher | gmsh runs | Notes |
 |---|---|---|
 | [GmshMesher][femforge.meshing.GmshMesher] | in this process | gmsh loads on the first job and is finalized after every one, so no model outlives its job (`src/femforge/meshing/gmsh_backend.py:18-19`) |
 | [WorkerMesher][femforge.meshing.WorkerMesher] | in a child `python -m femforge.meshing.worker` | gmsh, its license and its crashes stay out of the caller's process |
 
-`WorkerMesher` writes the job as JSON into a temporary directory and starts the worker on it (`src/femforge/meshing/backend.py:219-253`). The worker logs every record to stdout as one JSON line, meshes, and writes an outcome file, turning any exception into a failed outcome (`src/femforge/meshing/worker.py:33-65`). The parent relays each line into its own log with `worker=mesh` bound and strips `FEMFORGE_TELEMETRY` from the child's environment, so the child writes no telemetry of its own and its records reach the parent's terminal, `run.log` and telemetry through the relay (`src/femforge/meshing/backend.py:227-243`). A worker that exits without an outcome, or runs past `timeout_s`, raises `MeshError` with the tail of its log.
+`WorkerMesher` writes the job as JSON into a temporary directory and starts the worker on it (`src/femforge/meshing/backend.py:224-258`). The worker logs every record to stdout as one JSON line, meshes, and writes an outcome file, turning any exception into a failed outcome (`src/femforge/meshing/worker.py:33-65`). The parent relays each line into its own log with `worker=mesh` bound and strips `FEMFORGE_TELEMETRY` from the child's environment, so the child writes no telemetry of its own and its records reach the parent's terminal, `run.log` and telemetry through the relay (`src/femforge/meshing/backend.py:232-248`). A worker that exits without an outcome, or runs past `timeout_s`, raises `MeshError` with the tail of its log.
 
 [block_gmsh][femforge.meshing.block_gmsh] installs an import hook that makes every later `import gmsh` raise, and refuses when gmsh is already loaded (`src/femforge/meshing/firewall.py:18-34`). An entry point calls it to prove it never loads gmsh.
 

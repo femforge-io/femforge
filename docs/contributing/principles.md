@@ -23,17 +23,17 @@ class CoolingConfig(ConfigArea):
 print(CoolingConfig.model_fields["ambient_temperature"].description)
 ```
 
-**Backends consume a Protocol slice or plain data, never `SimulationConfig`.** A backend that reads only what it needs can be swapped, tested with a stand-in, or run in another process. The mesher reads [SupportsMeshing][femforge.meshing.SupportsMeshing], which declares only `frame`, `mesh` and `domain` (`src/femforge/meshing/config.py:37-47`); a [MeshBackend][femforge.meshing.MeshBackend] takes a `MeshJob` (`src/femforge/meshing/backend.py:98-101`); an [ExecutionBackend][femforge.elmer.ExecutionBackend] takes directories (`src/femforge/elmer/runtime/backend.py:14-35`). No module under `meshing/`, `elmer/runtime/` or `execution/` imports `femforge.config`.
+**Backends consume a Protocol slice or plain data, never `SimulationConfig`.** A backend that reads only what it needs can be swapped, tested with a stand-in, or run in another process. The mesher reads [SupportsMeshing][femforge.meshing.SupportsMeshing], which declares only `frame`, `mesh` and `domain` (`src/femforge/meshing/config.py:38-48`); a [MeshBackend][femforge.meshing.MeshBackend] takes a `MeshJob` (`src/femforge/meshing/backend.py:99-102`); an [ExecutionBackend][femforge.elmer.ExecutionBackend] takes directories (`src/femforge/elmer/runtime/backend.py:14-35`). No module under `meshing/`, `elmer/runtime/` or `execution/` imports `femforge.config`.
 
 ## Runs
 
-**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:128`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:135-147`).
+**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:128`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:140-152`).
 
-**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:130-132`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
+**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:135-137`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
 
 ## Units and values
 
-**Physical values stay pint quantities until `to_elmer` strips them once.** Conversions happen in one place, against one registry, so a unit mismatch fails loudly instead of scaling a result. `U` is the shared registry (`src/femforge/physical/units.py:255`), and each property is converted to its Elmer unit and stripped to a float at the emit site (`src/femforge/materials/properties.py:59-63`).
+**Physical values stay pint quantities until `to_elmer` strips them once.** Conversions happen in one place, against one registry, so a unit mismatch fails loudly instead of scaling a result. `U` is the shared registry (`src/femforge/physical/units.py:257`), and each property is converted to its Elmer unit and stripped to a float at the emit site (`src/femforge/materials/properties.py:59-63`).
 
 **Keys live on fields as typed metadata, never in string-keyed lookup tables.** A table beside a model drifts from it; metadata on the field moves with the field. [Map][femforge.common.Map] ties a field to its sif keyword, and [mapped_items][femforge.common.mapped_items] reflects the pairs out (`src/femforge/common/pydantic.py:9`, `:34`), as in `max_output_level: Annotated[int, Map("Max Output Level")]` (`src/femforge/elmer/config/common/simulation.py:65`).
 
@@ -53,7 +53,7 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 
 ## Docstrings and comments
 
-**A physical field documents its glyph and unit, and its name carries no unit.** The docstring's first line reads `` `glyph` `[unit]`: meaning ``, with `[-]` for a dimensionless value. `tests/test_field_docstrings.py:42` enforces the format on the modules it lists and checks that pint parses the unit, as in `` `h` `[m]`: Domain-wide target element size `` (`src/femforge/meshing/config.py:22`).
+**A physical field documents its glyph and unit, and its name carries no unit.** The docstring's first line reads `` `glyph` `[unit]`: meaning ``, with `[-]` for a dimensionless value. `tests/test_field_docstrings.py:42` enforces the format on the modules it lists and checks that pint parses the unit, as in `` `h` `[mm]`: Domain-wide target element size `` (`src/femforge/meshing/config.py:23`).
 
 **A docstring is one sentence, two at most.** Design rationale belongs in these pages. A public function or constructor with three or more parameters adds a Google `Args:` block with one line per parameter, which `tests/test_public_api.py:497` checks against the signature, as in `to_elmer` (`src/femforge/materials/properties.py:176-183`).
 

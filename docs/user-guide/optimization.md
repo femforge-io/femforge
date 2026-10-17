@@ -8,7 +8,7 @@ The optimization seam turns free parameters into an objective number through ord
 import femforge as ff
 
 base = ff.SimulationConfig(
-    mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=0.002),
+    mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=2 * ff.U.mm),
     domain=ff.DomainConfig(
         materials=[ff.materials.Air(), ff.materials.N52()],
         tags=[
@@ -17,7 +17,7 @@ base = ff.SimulationConfig(
                 conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))],
             ),
             ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.ForceComponent(label="mover")]),
-            ff.EntityTag(selector={ff.TagKey.NAME: "gap"}, mesh_size=0.001),
+            ff.EntityTag(selector={ff.TagKey.NAME: "gap"}, mesh_size=1 * ff.U.mm),
         ],
     ),
 )
@@ -64,8 +64,8 @@ The grid walks the Cartesian product of its value lists, here six points in grid
 
 | Knob | What it sets |
 |---|---|
-| [GlobalMeshSize][femforge.optimize.GlobalMeshSize] | `MeshConfig.global_mesh_size`, in metres. |
-| [RegionMeshSize][femforge.optimize.RegionMeshSize] | The `mesh_size` of the [EntityTag][femforge.physical.EntityTag] whose `name` equals `tag`, such as `GAP` for a `{Name: "gap"}` selector; it raises when the base config has no such tag. |
+| [GlobalMeshSize][femforge.optimize.GlobalMeshSize] | `MeshConfig.global_mesh_size`, with the knob value in metres. |
+| [RegionMeshSize][femforge.optimize.RegionMeshSize] | The `mesh_size` of the [EntityTag][femforge.physical.EntityTag] whose `name` equals `tag`, such as `GAP` for a `{Name: "gap"}` selector, with the knob value in metres; it raises when the base config has no such tag. |
 
 | Objective | Score |
 |---|---|
@@ -109,12 +109,12 @@ class FakeDriver:
     """Scores a finer mesh with a larger force, without solving."""
 
     def evaluate(self, config: ff.SimulationConfig) -> ff.Result:
-        force = ff.quantity(ff.Vec3(1.0 / config.mesh.global_mesh_size, 0.0, 0.0), ff.U.N)
+        force = ff.quantity(ff.Vec3(1.0 / config.mesh.global_mesh_size.m_as("m"), 0.0, 0.0), ff.U.N)
         return ff.Result(frame=ff.Solid(), status="ok", force=force)
 
 
 parameterization = ff.optimize.Parameterization(
-    base=ff.SimulationConfig(mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=1.0)),
+    base=ff.SimulationConfig(mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=1.0 * ff.U.m)),
     knobs=[ff.optimize.GlobalMeshSize(name="global", low=0.2, high=1.0)],
 )
 search = ff.optimize.GridSearch(
