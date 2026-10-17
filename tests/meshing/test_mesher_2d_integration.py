@@ -63,7 +63,7 @@ def _config(step: Path) -> SimulationConfig:
         mesh=MeshConfig(
             step=str(step),
             global_mesh_size=2 * U.mm,
-            gmsh_options=GmshOptions(mesh_size_max=0.002),
+            gmsh_options=GmshOptions(mesh_size_max=2 * U.mm),
         ),
         domain=DomainConfig(
             materials=[Air(), Copper(), Steel_316()],

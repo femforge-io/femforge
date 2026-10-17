@@ -17,7 +17,7 @@ config = ff.SimulationConfig(
     mesh=ff.MeshConfig(
         step="magnet_in_air.step",
         global_mesh_size=2 * ff.U.mm,
-        gmsh_options=ff.GmshOptions(mesh_size_min=0.0002),
+        gmsh_options=ff.GmshOptions(mesh_size_min=0.2 * ff.U.mm),
         deterministic=True,
     ),
     domain=ff.DomainConfig(materials=[ff.materials.Air(), ff.materials.N52()], tags=[magnet]),
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     print(driver.evaluate(config).run_id)
 ```
 
-A mesh size is a pint length: write `0.5 * ff.U.mm` in Python, or `"0.5 mm"` in a JSON config. A bare number such as `0.0005` fails validation, because it carries no unit. gmsh converts the STEP to metres on import, and femforge hands it every size in metres, so a 10 mm magnet meshed at `mesh_size=0.5 * ff.U.mm` gets 0.5 mm elements. The `GmshOptions` clamps, `mesh_size_min` and `mesh_size_max`, mirror gmsh's own options and stay plain floats in metres.
+Every mesh size, the `GmshOptions` clamps included, is a pint length: write `0.5 * ff.U.mm` in Python, or `"0.5 mm"` in a JSON config. A bare number such as `0.0005` fails validation, because it carries no unit. gmsh converts the STEP to metres on import, and femforge hands it every size in metres, so a 10 mm magnet meshed at `mesh_size=0.5 * ff.U.mm` gets 0.5 mm elements.
 
 ## MeshConfig
 
@@ -50,8 +50,8 @@ A mesh size is a pint length: write `0.5 * ff.U.mm` in Python, or `"0.5 mm"` in 
 | `algorithm_2d` | `Mesh.Algorithm` | `FRONTAL_DELAUNAY` | | The 2D algorithm. It meshes the surfaces of a 3D model and the bodies of a 2D one. |
 | `algorithm_3d` | `Mesh.Algorithm3D` | `HXT` | | The 3D algorithm. HXT runs on `num_threads`. |
 | `recombine_all` | `Mesh.RecombineAll` | `False` | | Recombine triangles and tetrahedra into quads and hexes. Keep it off. |
-| `mesh_size_min` | `Mesh.MeshSizeMin` | `None` | m | The lower clamp on element size. |
-| `mesh_size_max` | `Mesh.MeshSizeMax` | `None` | m | The upper clamp on element size. |
+| `mesh_size_min` | `Mesh.MeshSizeMin` | `None` | length | The lower clamp on element size. |
+| `mesh_size_max` | `Mesh.MeshSizeMax` | `None` | length | The upper clamp on element size. |
 | `optimize` | `Mesh.Optimize` | `True` | | Optimize element quality after meshing. |
 | `smoothing` | `Mesh.Smoothing` | `None` | | The number of smoothing steps. |
 | `num_threads` | `General.NumThreads` | physical core count | | Meshing threads; `None` gives gmsh's default of one. Never part of an identity. |

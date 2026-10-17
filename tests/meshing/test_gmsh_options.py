@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from femforge.meshing.gmsh_options import GmshOptions, MeshAlgorithm2D, MeshAlgorithm3D
+from femforge.physical.units import U
 
 
 def _capture(opts: GmshOptions) -> dict[str, float | str]:
@@ -86,7 +87,7 @@ def test_none_fields_are_skipped() -> None:
 
 
 def test_optional_numeric_fields_emit_when_set() -> None:
-    calls: dict[str, float | str] = _capture(GmshOptions(mesh_size_min=0.1, mesh_size_max=2.5, smoothing=3, num_threads=8))
+    calls: dict[str, float | str] = _capture(GmshOptions(mesh_size_min=0.1 * U.m, mesh_size_max=2.5 * U.m, smoothing=3, num_threads=8))
     assert calls["Mesh.MeshSizeMin"] == pytest.approx(0.1)
     assert calls["Mesh.MeshSizeMax"] == pytest.approx(2.5)
     assert calls["Mesh.Smoothing"] == 3.0
@@ -112,11 +113,24 @@ def test_validate_assignment_rejects_wrong_type() -> None:
 
     opts: GmshOptions = GmshOptions()
     with pytest.raises(ValidationError):
-        opts.mesh_size_max = "huge"  # pyright: ignore[reportAttributeAccessIssue]  # exercising runtime validate_assignment
+        opts.mesh_size_max = 2.0  # pyright: ignore[reportAttributeAccessIssue]  # exercising runtime validate_assignment
 
 
 def test_round_trip_through_model_dump() -> None:
-    opts: GmshOptions = GmshOptions(algorithm_3d=MeshAlgorithm3D.HXT, mesh_size_max=1.5)
+    opts: GmshOptions = GmshOptions(algorithm_3d=MeshAlgorithm3D.HXT, mesh_size_max=1.5 * U.mm)
     restored: GmshOptions = GmshOptions.model_validate(opts.model_dump())
     assert restored.algorithm_3d is MeshAlgorithm3D.HXT
-    assert restored.mesh_size_max == pytest.approx(1.5)
+    assert restored.mesh_size_max == 1.5 * U.mm
+
+
+def test_length_clamps_reach_gmsh_in_metres() -> None:
+    calls: dict[str, float | str] = _capture(GmshOptions(mesh_size_min=0.2 * U.mm, mesh_size_max=0.5 * U.inch))
+    assert calls["Mesh.MeshSizeMin"] == pytest.approx(0.0002)
+    assert calls["Mesh.MeshSizeMax"] == pytest.approx(0.0127)
+
+
+def test_a_bare_float_clamp_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="bare number"):
+        _ = GmshOptions.model_validate({"mesh_size_min": 0.0002})

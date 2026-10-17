@@ -10,6 +10,7 @@ import psutil
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.pydantic import HashExclude, Map, mapped_items
+from femforge.physical.units import Length, Quantity
 
 
 def _default_num_threads() -> int:
@@ -93,11 +94,11 @@ class GmshOptions(BaseModel):
     recombine_all: Annotated[bool, Map("Mesh.RecombineAll")] = False
     """Recombine the simplex mesh into quads and hexes (Mesh.RecombineAll); keep it False, since WhitneyAVSolver needs tetrahedra and recombining makes 3D meshing fail."""
 
-    mesh_size_min: Annotated[float | None, Map("Mesh.MeshSizeMin")] = None
-    """`h_min` `[m]`: Lower clamp on element size (Mesh.MeshSizeMin); None inherits gmsh's default."""
+    mesh_size_min: Annotated[Length | None, Map("Mesh.MeshSizeMin")] = None
+    """`h_min` `[mm]`: Lower clamp on element size (Mesh.MeshSizeMin); None inherits gmsh's default."""
 
-    mesh_size_max: Annotated[float | None, Map("Mesh.MeshSizeMax")] = None
-    """`h_max` `[m]`: Upper clamp on element size (Mesh.MeshSizeMax); None inherits gmsh's default."""
+    mesh_size_max: Annotated[Length | None, Map("Mesh.MeshSizeMax")] = None
+    """`h_max` `[mm]`: Upper clamp on element size (Mesh.MeshSizeMax); None inherits gmsh's default."""
 
     optimize: Annotated[bool, Map("Mesh.Optimize")] = True
     """Run mesh optimization after generation (Mesh.Optimize)."""
@@ -124,10 +125,14 @@ class GmshOptions(BaseModel):
         emit_string: Callable[[str, str], None] = _gmsh_set_string if set_string is None else set_string
 
         for option_name, value in mapped_items(self):
-            # A str option (the OCC target unit) goes through setString; bool / IntEnum / int / float are all setNumber.
+            # A str option (the OCC target unit) goes through setString; a length, bool / IntEnum / int / float are all setNumber.
             if isinstance(value, str):
                 log.bind(option=option_name, value=value).debug("Setting gmsh option.")
                 emit_string(option_name, value)
+            elif isinstance(value, Quantity):
+                metres: float = value.m_as("m")
+                log.bind(option=option_name, value=metres).debug("Setting gmsh option.")
+                emit_number(option_name, metres)
             elif isinstance(value, (int, float)):
                 log.bind(option=option_name, value=value).debug("Setting gmsh option.")
                 emit_number(option_name, float(value))

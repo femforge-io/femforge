@@ -17,7 +17,9 @@ from femforge.common.pydantic import HashExclude
 from femforge.config import SimulationConfig
 from femforge.geometry.config import GeometryArea
 from femforge.geometry.frame import apply_frame
+from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.spec import MeshSpec, TagSelectorSpec
+from femforge.physical.units import Quantity, quantity
 
 
 RUN_PRODUCER_VERSION = 1
@@ -106,17 +108,30 @@ def step_key(config: SimulationConfig) -> str:
 
 
 def mesh_spec(config: SimulationConfig, step_key_override: str | None = None) -> MeshSpec:
-    """The mesh artifact spec of ``config`` (``step_key_override`` when the driver already resolved the geometry)."""
+    """The mesh artifact spec of ``config`` (``step_key_override`` when the driver already resolved the geometry), every length in metres."""
+
+    def metres(length: Quantity) -> float:
+        # Twelve significant digits absorb the conversion's last-bit noise, so 2.5 um and 2.5e-6 m key alike.
+        return float(f"{length.m_as('m'):.12g}")
+
+    def clamp(length: Quantity | None) -> Quantity | None:
+        return None if length is None else quantity(metres(length), "m")
+
     tags: list[TagSelectorSpec] = []
     for tag in config.domain.tags:
-        size: float | None = None if tag.mesh_size is None else tag.mesh_size.m_as("m")
+        size: float | None = None if tag.mesh_size is None else metres(tag.mesh_size)
         tags.append(TagSelectorSpec(selector=dict(tag.selector), mesh_size=size))
+
+    options: GmshOptions = config.mesh.gmsh_options
+    canonical_options: GmshOptions = options.model_copy(
+        update={"mesh_size_min": clamp(options.mesh_size_min), "mesh_size_max": clamp(options.mesh_size_max)},
+    )
 
     return MeshSpec(
         step_key=step_key_override if step_key_override is not None else step_key(config),
         model_dim=config.frame.model_dim,
-        global_mesh_size=config.mesh.global_mesh_size.m_as("m"),
-        gmsh_options=config.mesh.gmsh_options,
+        global_mesh_size=metres(config.mesh.global_mesh_size),
+        gmsh_options=canonical_options,
         deterministic=config.mesh.deterministic,
         tags=tags,
         materials=sorted(material.tag for material in config.domain.materials),

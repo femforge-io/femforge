@@ -45,7 +45,7 @@ def config_for(
 
     mesh = ff.MeshConfig(
         global_mesh_size=air_size,
-        gmsh_options=ff.GmshOptions(mesh_size_max=(air_size * 2).m_as("m")),
+        gmsh_options=ff.GmshOptions(mesh_size_max=air_size * 2),
     )
 
     domain = ff.DomainConfig(

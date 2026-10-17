@@ -119,6 +119,16 @@ def test_mesh_spec_carries_the_sizes_in_metres() -> None:
 
 def test_mesh_key_is_the_same_for_the_same_size_in_any_unit() -> None:
     assert mesh_key(_config(global_mesh_size=0.5 * U.mm)) == mesh_key(_config(global_mesh_size=0.0005 * U.m))
+    assert mesh_key(_config(global_mesh_size=2.5 * U.um)) == mesh_key(_config(global_mesh_size=2.5e-6 * U.m))
+
+
+def test_mesh_key_is_the_same_for_the_same_clamps_in_any_unit() -> None:
+    in_millimetres = GmshOptions(mesh_size_min=0.2 * U.mm, mesh_size_max=5 * U.mm)
+    in_metres = GmshOptions(mesh_size_min=0.0002 * U.m, mesh_size_max=0.005 * U.m)
+
+    assert mesh_key(_config(gmsh_options=in_millimetres)) == mesh_key(_config(gmsh_options=in_metres))
+    assert mesh_key(_config(gmsh_options=in_millimetres)) != mesh_key(_config())
+    assert mesh_spec(_config(gmsh_options=in_millimetres)).gmsh_options.mesh_size_min == 0.0002 * U.m
 
 
 def test_mesh_key_moves_with_mesh_settings_and_grouping_inputs() -> None:
