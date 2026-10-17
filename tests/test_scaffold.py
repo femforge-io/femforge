@@ -22,15 +22,15 @@ def _project(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("version", "requirement"),
+    ("version", "requirements"),
     [
-        ("0.1.0", "femforge[workbench]~=0.1.0"),
-        ("0.2.3", "femforge[workbench]~=0.2.3"),
-        ("0.1.0rc1", "femforge[workbench]==0.1.0rc1"),
-        ("0.2.0b2", "femforge[workbench]==0.2.0b2"),
+        ("0.1.0", '"femforge[workbench]~=0.1.0"'),
+        ("0.2.3", '"femforge[workbench]~=0.2.3"'),
+        ("0.1.0rc1", '"femforge[workbench]==0.1.0rc1", "femforge-workbench==0.1.0rc1"'),
+        ("0.2.0b2", '"femforge[workbench]==0.2.0b2", "femforge-workbench==0.2.0b2"'),
     ],
 )
-def test_the_script_pins_the_femforge_version_it_was_made_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, requirement: str) -> None:
+def test_the_script_pins_the_femforge_version_it_was_made_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, requirements: str) -> None:
     def without_dependencies(script: str) -> list[str]:
         return [line for line in script.splitlines() if not line.startswith("# dependencies = ")]
 
@@ -39,7 +39,7 @@ def test_the_script_pins_the_femforge_version_it_was_made_with(tmp_path: Path, m
     script = (_project(tmp_path) / scaffold.SCRIPT).read_text(encoding="utf-8")
     template = (scaffold.TEMPLATE / scaffold.SCRIPT).read_text(encoding="utf-8")
 
-    assert f'# dependencies = ["{requirement}"]' in script.splitlines()
+    assert f"# dependencies = [{requirements}]" in script.splitlines()
     assert without_dependencies(script) == without_dependencies(template)
 
 

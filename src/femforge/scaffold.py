@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 from string import Template
@@ -19,7 +20,7 @@ TEMPLATE = Path(__file__).with_name("templates") / "new"
 """The directory the project files come from."""
 
 SCRIPT = "main.py"
-"""The script a project runs, copied with its dependency pinned to this femforge version."""
+"""The script a project runs, copied with its requirements pinned to this femforge version."""
 
 README = "README.md"
 """The README, whose ``$name`` becomes the project's folder name."""
@@ -40,8 +41,12 @@ def new_project(project: Path, *, force: bool = False) -> None:
         raise CliError(f"{project} is not empty; pass --force to write into it anyway")
 
     version = femforge.__version__
-    operator = "==" if re.search(r"[a-z]", version) else "~="
-    line = f'# dependencies = ["femforge[workbench]{operator}{version}"]'
+    requirements = [f"femforge[workbench]~={version}"]
+    if re.search(r"[a-z]", version):
+        # uv takes a pre-release only where a direct requirement names one, so the workbench is pinned beside femforge.
+        requirements = [f"femforge[workbench]=={version}", f"femforge-workbench=={version}"]
+
+    line = f"# dependencies = {json.dumps(requirements)}"
     template = (TEMPLATE / SCRIPT).read_text(encoding="utf-8")
     script, count = DEPENDENCIES.subn(lambda _: line, template)
     if count != 1:

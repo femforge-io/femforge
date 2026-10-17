@@ -522,8 +522,8 @@ def test_new_starts_a_project_and_refuses_to_write_over_it_without_force(tmp_pat
     assert sorted(path.name for path in (tmp_path / "magnet-plate").iterdir()) == [".gitignore", "README.md", "main.py"]
 
 
-@pytest.mark.parametrize(("version", "requirement"), [("0.1.0", "~=0.1.0"), ("0.1.0rc1", "==0.1.0rc1")])
-def test_new_pins_the_running_femforge_version(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, version: str, requirement: str) -> None:
+@pytest.mark.parametrize(("version", "requirements"), [("0.1.0", '"femforge[workbench]~=0.1.0"'), ("0.1.0rc1", '"femforge[workbench]==0.1.0rc1", "femforge-workbench==0.1.0rc1"')])
+def test_new_pins_the_running_femforge_version(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, version: str, requirements: str) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(femforge, "__version__", version)
 
@@ -532,4 +532,4 @@ def test_new_pins_the_running_femforge_version(tmp_path: Path, capsys: pytest.Ca
 
     script = (tmp_path / "magnet-plate" / "main.py").read_text(encoding="utf-8")
 
-    assert f'# dependencies = ["femforge[workbench]{requirement}"]' in script.splitlines()
+    assert f"# dependencies = [{requirements}]" in script.splitlines()
