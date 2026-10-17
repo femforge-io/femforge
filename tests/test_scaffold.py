@@ -1,10 +1,11 @@
-"""``femforge new``: the copied script, the named README, the .gitignore, the refusal, ``--force`` and the printed command."""
+"""``femforge new``: the pinned script, the named README, the .gitignore, the refusal, ``--force`` and the printed command."""
 
 import argparse
 from pathlib import Path
 
 import pytest
 
+import femforge
 from femforge import scaffold
 from femforge.common.cli import CliError
 
@@ -20,10 +21,38 @@ def _project(tmp_path: Path) -> Path:
     return project
 
 
-def test_the_script_is_copied_byte_for_byte(tmp_path: Path) -> None:
-    project = _project(tmp_path)
+@pytest.mark.parametrize(
+    ("version", "requirement"),
+    [
+        ("0.1.0", "femforge[workbench]~=0.1.0"),
+        ("0.2.3", "femforge[workbench]~=0.2.3"),
+        ("0.1.0rc1", "femforge[workbench]==0.1.0rc1"),
+        ("0.2.0b2", "femforge[workbench]==0.2.0b2"),
+    ],
+)
+def test_the_script_pins_the_femforge_version_it_was_made_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, requirement: str) -> None:
+    def without_dependencies(script: str) -> list[str]:
+        return [line for line in script.splitlines() if not line.startswith("# dependencies = ")]
 
-    assert (project / scaffold.SCRIPT).read_bytes() == (scaffold.TEMPLATE / scaffold.SCRIPT).read_bytes()
+    monkeypatch.setattr(femforge, "__version__", version)
+
+    script = (_project(tmp_path) / scaffold.SCRIPT).read_text(encoding="utf-8")
+    template = (scaffold.TEMPLATE / scaffold.SCRIPT).read_text(encoding="utf-8")
+
+    assert f'# dependencies = ["{requirement}"]' in script.splitlines()
+    assert without_dependencies(script) == without_dependencies(template)
+
+
+def test_a_template_without_its_dependencies_line_fails_before_writing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    template = tmp_path / "template"
+    template.mkdir()
+    _ = (template / scaffold.SCRIPT).write_text("# /// script\n# ///\n", encoding="utf-8")
+    monkeypatch.setattr(scaffold, "TEMPLATE", template)
+
+    with pytest.raises(RuntimeError, match="0 dependencies lines"):
+        scaffold.new_project(tmp_path / "magnet-plate")
+
+    assert not (tmp_path / "magnet-plate").exists()
 
 
 def test_the_readme_is_named_after_the_project_folder(tmp_path: Path) -> None:
@@ -96,7 +125,7 @@ def test_force_replaces_the_three_files_and_keeps_the_rest(tmp_path: Path) -> No
     scaffold.new_project(project, force=True)
 
     assert (project / "notes.txt").read_text(encoding="utf-8") == "keep"
-    assert (project / scaffold.SCRIPT).read_bytes() == (scaffold.TEMPLATE / scaffold.SCRIPT).read_bytes()
+    assert (project / scaffold.SCRIPT).read_text(encoding="utf-8").startswith("# /// script\n")
 
 
 @pytest.mark.parametrize(("name", "command"), [("magnet-plate", "uv run magnet-plate/main.py"), (str(Path("work") / "magnet-plate"), "uv run work/magnet-plate/main.py")])

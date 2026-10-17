@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
+import femforge
 from femforge import cli
 from femforge.artifacts.cache import ArtifactCache
 from femforge.artifacts.lock import OWNER_FILE, DirLock, LockOwner
@@ -519,3 +520,16 @@ def test_new_starts_a_project_and_refuses_to_write_over_it_without_force(tmp_pat
 
     assert cli.main(["new", "magnet-plate", "--force"]) == 0
     assert sorted(path.name for path in (tmp_path / "magnet-plate").iterdir()) == [".gitignore", "README.md", "main.py"]
+
+
+@pytest.mark.parametrize(("version", "requirement"), [("0.1.0", "~=0.1.0"), ("0.1.0rc1", "==0.1.0rc1")])
+def test_new_pins_the_running_femforge_version(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, version: str, requirement: str) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(femforge, "__version__", version)
+
+    assert cli.main(["new", "magnet-plate"]) == 0
+    _ = capsys.readouterr()
+
+    script = (tmp_path / "magnet-plate" / "main.py").read_text(encoding="utf-8")
+
+    assert f'# dependencies = ["femforge[workbench]{requirement}"]' in script.splitlines()

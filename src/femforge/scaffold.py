@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from string import Template
 from typing import cast
 
+import femforge
 from femforge.common.cli import CliError
 
 
@@ -17,13 +19,16 @@ TEMPLATE = Path(__file__).with_name("templates") / "new"
 """The directory the project files come from."""
 
 SCRIPT = "main.py"
-"""The script a project runs, copied byte for byte."""
+"""The script a project runs, copied with its dependency pinned to this femforge version."""
 
 README = "README.md"
 """The README, whose ``$name`` becomes the project's folder name."""
 
 GITIGNORE = "gitignore"
 """The template's ignore file, stored without its dot so it does not act on this repository."""
+
+DEPENDENCIES = re.compile(r"^# dependencies = \[.*\]$", re.MULTILINE)
+"""The script-metadata line that names the femforge requirement."""
 
 
 def new_project(project: Path, *, force: bool = False) -> None:
@@ -34,10 +39,18 @@ def new_project(project: Path, *, force: bool = False) -> None:
     if project.is_dir() and any(project.iterdir()) and not force:
         raise CliError(f"{project} is not empty; pass --force to write into it anyway")
 
+    version = femforge.__version__
+    operator = "==" if re.search(r"[a-z]", version) else "~="
+    line = f'# dependencies = ["femforge[workbench]{operator}{version}"]'
+    template = (TEMPLATE / SCRIPT).read_text(encoding="utf-8")
+    script, count = DEPENDENCIES.subn(lambda _: line, template)
+    if count != 1:
+        raise RuntimeError(f"{TEMPLATE / SCRIPT} has {count} dependencies lines, not one")
+
     project.mkdir(parents=True, exist_ok=True)
     readme = Template((TEMPLATE / README).read_text(encoding="utf-8")).substitute(name=project.resolve().name)
 
-    _ = (project / SCRIPT).write_bytes((TEMPLATE / SCRIPT).read_bytes())
+    _ = (project / SCRIPT).write_text(script, encoding="utf-8", newline="\n")
     _ = (project / README).write_text(readme, encoding="utf-8", newline="\n")
     _ = (project / ".gitignore").write_bytes((TEMPLATE / GITIGNORE).read_bytes())
 
