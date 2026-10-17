@@ -5,7 +5,15 @@ title: Overview
 
 ![Field lines of a magnet holding a steel ball, from the bearing-seat example](assets/bearing-seat.webp)
 
-femforge is finite-element analysis as a typed Python API. You describe a simulation as one typed [SimulationConfig][femforge.config.SimulationConfig]: the geometry, the mesh settings, the materials and conditions of each region, and the physics to solve. The geometry is a STEP file whose bodies are named with their tags, exported from any CAD or scripted in build123d with femforge's helpers. A [Driver][femforge.run.Driver] meshes the config through the mesh backend, gmsh today, solves it through the solver backend, Elmer today, and returns a typed [Result][femforge.run.Result] whose quantities carry their units. Every run lands in a bundle named after the content hash of its inputs, so an identical config reuses the finished run instead of solving again. The workbench shows the fields and the runs in a browser, and everything it shows is also scriptable.
+femforge is finite-element analysis as a typed Python API.
+
+You describe a simulation once, as one [SimulationConfig][femforge.config.SimulationConfig]: the geometry, the mesh, the materials and conditions of each region, and the physics to solve. Every setting is a typed Pydantic field with a docstring, and every physical quantity carries its unit, so your editor completes the config and validation rejects a mistake before anything is meshed or solved.
+
+The geometry is a STEP file whose bodies are named with their tags, exported from any CAD or scripted in build123d with femforge's helpers.
+
+A [Driver][femforge.run.Driver] meshes the config, solves it and returns a [Result][femforge.run.Result] whose quantities carry their units. Every run lands in a bundle named after the content hash of its inputs, so an identical config reuses the finished run instead of solving again.
+
+The workbench shows the fields and the runs in a browser, and everything it shows is also scriptable. Geometry, meshing and solving run behind interfaces, and [Status](overview/status.md) lists what each one supports today.
 
 femforge is pre-alpha. The API will change between 0.x releases, and the [changelog](changelog.md) records each change.
 
