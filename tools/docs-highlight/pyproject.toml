@@ -1,0 +1,14 @@
+[project]
+name = "femforge-docs-highlight"
+version = "0.1.0"
+description = "Pygments filter that colours the femforge docs the way an editor would."
+requires-python = ">=3.12"
+dependencies = ["pygments>=2.12"]
+classifiers = ["Private :: Do Not Upload"]
+
+[project.entry-points."pygments.filters"]
+femforge = "femforge_docs_highlight:SemanticNames"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"

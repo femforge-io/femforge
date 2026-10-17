@@ -46,18 +46,20 @@
   --md-code-bg-color--lighter: oklch(0.19 0.004 255 / 54%);
   --md-code-hl-color: var(--ff-primary);
   --md-code-hl-color--light: oklch(0.9 0.2 160 / 10%);
-  --md-code-hl-keyword-color: var(--ff-chart-1);
-  --md-code-hl-string-color: var(--ff-chart-3);
-  --md-code-hl-number-color: var(--ff-serious);
-  --md-code-hl-function-color: var(--ff-chart-5);
-  --md-code-hl-constant-color: var(--ff-warning);
-  --md-code-hl-special-color: var(--ff-destructive-ink);
-  --md-code-hl-name-color: var(--ff-foreground);
-  --md-code-hl-variable-color: var(--ff-foreground);
-  --md-code-hl-comment-color: var(--ff-muted-foreground);
+  --md-code-hl-keyword-color: #569cd6;
+  --md-code-hl-flow-color: #c586c0;
+  --md-code-hl-function-color: #dcdcaa;
+  --md-code-hl-class-color: #4ec9b0;
+  --md-code-hl-variable-color: #9cdcfe;
+  --md-code-hl-constant-color: #4fc1ff;
+  --md-code-hl-string-color: #ce9178;
+  --md-code-hl-number-color: #b5cea8;
+  --md-code-hl-special-color: #d7ba7d;
+  --md-code-hl-comment-color: #6a9955;
   --md-code-hl-generic-color: var(--ff-muted-foreground);
-  --md-code-hl-operator-color: var(--ff-muted-foreground);
-  --md-code-hl-punctuation-color: var(--ff-muted-foreground);
+  --md-code-hl-name-color: #d4d4d4;
+  --md-code-hl-operator-color: #d4d4d4;
+  --md-code-hl-punctuation-color: #d4d4d4;
   --md-admonition-fg-color: var(--ff-foreground);
   --md-admonition-bg-color: var(--ff-card);
   --md-warning-fg-color: var(--ff-foreground);
@@ -73,6 +75,12 @@
 .md-header, .md-header--shadow { box-shadow: none; border-bottom: 1px solid var(--ff-border); }
 .md-tabs { border-bottom: 1px solid var(--ff-border); }
 .md-typeset :is(pre > code, .highlight, .admonition, details, .tabbed-set, table:not([class])) { border-radius: var(--ff-radius); }
+.md-typeset .highlight :is(.k, .kn) { color: var(--md-code-hl-flow-color); }
+.md-typeset .highlight :is(.kd, .kc, .ow, .bp) { color: var(--md-code-hl-keyword-color); }
+.md-typeset .highlight :is(.nc, .nn, .ne) { color: var(--md-code-hl-class-color); }
+.md-typeset .highlight .nd { color: var(--md-code-hl-function-color); }
+.md-typeset .highlight .sd { color: var(--md-code-hl-string-color); }
+.md-typeset .highlight .go { color: var(--md-code-hl-name-color); }
 
 .md-typeset :is(h1, h2, h3, h4) { color: var(--ff-foreground); font-weight: 600; letter-spacing: 0; }
 .md-typeset :is(table, code) { font-variant-numeric: tabular-nums; }

@@ -104,6 +104,11 @@ markdown_extensions:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
+      extend_pygments_lang:
+        - name: python
+          lang: python
+          options:
+            filters: [femforge]
   - pymdownx.inlinehilite
   - pymdownx.keys
   - pymdownx.snippets:

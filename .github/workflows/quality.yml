@@ -66,8 +66,8 @@ jobs:
           path: ${{ env.SERVE_DIR }}
       - run: uv sync --locked --python ${{ matrix.python }}
       - run: uv run --no-sync basedpyright --warnings
-      - run: uv run --no-sync ruff check src packages scripts examples
-      - run: uv run --no-sync ruff format --check src packages scripts examples
+      - run: uv run --no-sync ruff check src packages scripts examples tools
+      - run: uv run --no-sync ruff format --check src packages scripts examples tools
       - run: xvfb-run -a uv run --no-sync pytest
 
   docker-e2e:

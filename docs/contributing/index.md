@@ -75,8 +75,8 @@ Run every gate from the repository root before you open a pull request:
 
 ```console
 uv run basedpyright --warnings
-uv run ruff check src packages scripts examples
-uv run ruff format --check src packages scripts examples
+uv run ruff check src packages scripts examples tools
+uv run ruff format --check src packages scripts examples tools
 uv run pytest
 uv run python -m femforge.schemas --out docs/schema
 uv run zensical build --strict
@@ -87,7 +87,7 @@ npm run build
 npm run check-dist
 ```
 
-The npm gates matter when you change `js/` or a workbench Python file. `uv run ruff format src packages scripts examples` and `npm run format` fix formatting in place. [Testing and gates](testing.md) explains what each gate proves.
+The npm gates matter when you change `js/` or a workbench Python file. `uv run ruff format src packages scripts examples tools` and `npm run format` fix formatting in place. [Testing and gates](testing.md) explains what each gate proves.
 
 ## Run a subset of the tests
 
@@ -107,6 +107,8 @@ uv run zensical serve
 ```
 
 Pass `--open` to open the preview in a browser and `--dev-addr` to change the address. `zensical serve` does not support strict mode yet, so run `zensical build --strict` before you push.
+
+Zensical caches each rendered page under `.cache` keyed by the page source, so a change to `markdown_extensions` in `mkdocs.yml` leaves unchanged pages stale. Run `uv run zensical build --clean` once after such a change.
 
 ## Pull requests
 
