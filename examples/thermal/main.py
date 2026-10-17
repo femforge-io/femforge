@@ -69,7 +69,7 @@ def config(power: float = 1.0) -> ff.SimulationConfig:
     return ff.SimulationConfig(
         meta=ff.RunMeta(description=f"{power:g} W puck"),
         geometry=geometry,
-        mesh=ff.MeshConfig(global_mesh_size=0.001),
+        mesh=ff.MeshConfig(global_mesh_size=1 * ff.U.mm),
         physics=ff.PhysicsSelection(selected=ff.Physics.THERMAL),
         domain=ff.DomainConfig(
             materials=[COPPER, FR4],

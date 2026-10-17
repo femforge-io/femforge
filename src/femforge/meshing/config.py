@@ -8,6 +8,7 @@ from femforge.common.config import ConfigArea
 from femforge.common.frame import Frame
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.physical.domain import DomainConfig
+from femforge.physical.units import Length, quantity
 
 
 class MeshConfig(ConfigArea):
@@ -18,8 +19,8 @@ class MeshConfig(ConfigArea):
     step: str = "data/geometry.step"
     """Path to the STEP file the mesher imports; its build123d part names are parsed into materials and region tags (`MeshEntity`)."""
 
-    global_mesh_size: float = 0.001
-    """`h` `[m]`: Domain-wide target element size, which a region's [`EntityTag.mesh_size`][femforge.physical.domain.EntityTag.mesh_size] overrides."""
+    global_mesh_size: Length = Field(default_factory=lambda: quantity(1.0, "mm"))
+    """`h` `[mm]`: Domain-wide target element size, which a region's [`EntityTag.mesh_size`][femforge.physical.domain.EntityTag.mesh_size] overrides."""
 
     gmsh_options: GmshOptions = Field(default_factory=GmshOptions)
     """Typed gmsh options applied before meshing."""

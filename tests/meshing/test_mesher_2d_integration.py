@@ -27,6 +27,7 @@ from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.groups import PhysicalGroup
 from femforge.meshing.mesher import Mesher
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import U
 
 
 AIR = "AIR_MATERIALAIR"
@@ -61,14 +62,14 @@ def _config(step: Path) -> SimulationConfig:
         frame=Axisymmetric(),
         mesh=MeshConfig(
             step=str(step),
-            global_mesh_size=0.002,
+            global_mesh_size=2 * U.mm,
             gmsh_options=GmshOptions(mesh_size_max=0.002),
         ),
         domain=DomainConfig(
             materials=[Air(), Copper(), Steel_316()],
             tags=[
                 EntityTag(selector={TagKey.MATERIAL: "Air"}),
-                EntityTag(selector={TagKey.MATERIAL: "Copper"}, mesh_size=0.0005),
+                EntityTag(selector={TagKey.MATERIAL: "Copper"}, mesh_size=0.5 * U.mm),
                 EntityTag(selector={TagKey.MATERIAL: "Steel316"}),
             ],
         ),
@@ -94,7 +95,7 @@ def test_step_faces_keep_their_labels_and_become_body_groups(meshed_2d: Mesher) 
     assert groups[COPPER].material.tag == "Copper"
     assert groups[STEEL].material.tag == "Steel316"
     # The per-region EntityTag rode through, so region mesh sizing is addressable in 2D too.
-    assert groups[COPPER].tags[0].mesh_size == pytest.approx(0.0005)
+    assert groups[COPPER].tags[0].mesh_size == 0.5 * U.mm
 
 
 def test_boundaries_are_curve_groups_named_by_adjacency(meshed_2d: Mesher) -> None:

@@ -24,7 +24,7 @@ class ConvergencePoint(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, use_attribute_docstrings=True)
 
     refinement: float
-    """`r` `[-]`: Refinement factor applied to global_mesh_size (>1 = finer than the base)."""
+    """`r` `[-]`: Factor that divides ``global_mesh_size`` (>1 = finer than the base)."""
 
     quantity: Quantity
     """`q` `[?]`: The quantity of interest at this level (a pint quantity, e.g. force magnitude in N)."""
@@ -57,7 +57,7 @@ def convergence_ladder(
     previous: Quantity | None = None
 
     for refinement in refinements:
-        refined_size = base_config.mesh.global_mesh_size / refinement
+        refined_size: Quantity = base_config.mesh.global_mesh_size / refinement
         refined_mesh = base_config.mesh.model_copy(update={"global_mesh_size": refined_size})
         refined: SimulationConfig = base_config.model_copy(update={"mesh": refined_mesh})
 

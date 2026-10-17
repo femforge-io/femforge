@@ -20,6 +20,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.meshing.groups import MeshGroupsFile
 from femforge.meshing.spec import MeshSpec
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import Quantity, quantity
 
 
 if TYPE_CHECKING:
@@ -123,12 +124,16 @@ def mesh_inputs(job: MeshJob) -> MeshInputs:
     frame: Frame = Solid() if spec.model_dim == 3 else Axisymmetric()
     mesh = MeshConfig(
         step=job.step,
-        global_mesh_size=spec.global_mesh_size,
+        global_mesh_size=quantity(spec.global_mesh_size, "m"),
         gmsh_options=spec.gmsh_options,
         deterministic=spec.deterministic,
     )
     materials: list[MaterialProperties] = [MaterialProperties(name=tag, tag=tag) for tag in spec.materials]
-    tags: list[EntityTag] = [EntityTag(selector=dict(tag.selector), mesh_size=tag.mesh_size) for tag in spec.tags]
+
+    tags: list[EntityTag] = []
+    for tag in spec.tags:
+        size: Quantity | None = None if tag.mesh_size is None else quantity(tag.mesh_size, "m")
+        tags.append(EntityTag(selector=dict(tag.selector), mesh_size=size))
 
     return MeshInputs(frame=frame, mesh=mesh, domain=DomainConfig(materials=materials, tags=tags))
 

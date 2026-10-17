@@ -23,6 +23,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.run.driver import Driver
+from femforge.physical.units import U
 from femforge.run.retention import RetentionPolicy
 
 pytestmark = pytest.mark.skipif(os.environ.get("FEMFORGE_DOCKER_TESTS") != "1", reason="set FEMFORGE_DOCKER_TESTS=1 to run the Docker end-to-end tests")
@@ -47,7 +48,7 @@ def test_a_docker_driver_converts_partitions_and_solves_without_native_elmer(tmp
     magnet = EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 0, 1))])
     config = SimulationConfig(
         geometry=_MagnetInAir(),
-        mesh=MeshConfig(global_mesh_size=0.004),
+        mesh=MeshConfig(global_mesh_size=4 * U.mm),
         domain=DomainConfig(materials=[Air(), N42()], tags=[magnet]),
         physics=PhysicsSelection(selected=Physics.MAGNETOSTATICS),
     )

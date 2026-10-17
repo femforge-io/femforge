@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
 
 from femforge.config import SimulationConfig
+from femforge.physical.units import quantity
 
 
 class ParamSpec(BaseModel):
@@ -49,19 +50,19 @@ class Knob(BaseModel):
 
 
 class GlobalMeshSize(Knob):
-    """Knob over [`MeshConfig.global_mesh_size`][] — the domain-wide target element size (in metres; the pipeline is SI)."""
+    """Knob over [`MeshConfig.global_mesh_size`][], the domain-wide target element size, with its value in metres."""
 
     kind: Literal["global_mesh_size"] = "global_mesh_size"
     """The discriminator a serialized parameterization reads this knob back by."""
 
     def apply(self, config: SimulationConfig, value: float) -> SimulationConfig:
-        """A copy of ``config`` with ``global_mesh_size`` set to ``value``."""
-        mesh = config.mesh.model_copy(update={"global_mesh_size": value})
+        """A copy of ``config`` with ``global_mesh_size`` set to ``value`` metres."""
+        mesh = config.mesh.model_copy(update={"global_mesh_size": quantity(value, "m")})
         return config.model_copy(update={"mesh": mesh})
 
 
 class RegionMeshSize(Knob):
-    """Knob over one tagged region's [`EntityTag.mesh_size`][], such as a finer air gap than the bulk.
+    """Knob over one tagged region's [`EntityTag.mesh_size`][] in metres, such as a finer air gap than the bulk.
 
     Targets the region by ``tag`` name and raises when the base config has no such region.
     """
@@ -73,11 +74,13 @@ class RegionMeshSize(Knob):
     """Derived `EntityTag.name` (e.g. ``"Phase0"``) of the region whose mesh_size this knob sets."""
 
     def apply(self, config: SimulationConfig, value: float) -> SimulationConfig:
-        """A copy of ``config`` with the ``mesh_size`` of the region named ``tag`` set to ``value``."""
+        """A copy of ``config`` with the ``mesh_size`` of the region named ``tag`` set to ``value`` metres."""
         if not any(tag.name == self.tag for tag in config.domain.tags):
             raise ValueError(f"no region tagged {self.tag!r} in the base config")
+
+        size = quantity(value, "m")
         # Replace only the matching tag; other tags are shared unchanged — apply must not mutate the base.
-        tags = [tag.model_copy(update={"mesh_size": value}) if tag.name == self.tag else tag for tag in config.domain.tags]
+        tags = [tag.model_copy(update={"mesh_size": size}) if tag.name == self.tag else tag for tag in config.domain.tags]
 
         domain = config.domain.model_copy(update={"tags": tags})
         return config.model_copy(update={"domain": domain})

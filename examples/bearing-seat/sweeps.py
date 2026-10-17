@@ -18,7 +18,7 @@ def z_sweep() -> ff.Driver:
         config = config_for(
             as_2d=True,
             airgap=float(airgap),
-            mesh_size=0.001,
+            mesh_size=1.0,
             domain_padding=50.0,
             shell_thickness=2.0,
         )

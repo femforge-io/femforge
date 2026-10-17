@@ -89,14 +89,13 @@ class Solenoid(ff.Build123dGeometry):
 
 def config(gap: float = 2.0) -> ff.SimulationConfig:
     """The magnetostatic solve of the plunger ``gap`` mm above the bottom plate, on the axisymmetric section about Z."""
-    # Mesh sizes are in metres; the geometry is in millimetres.
-    fine = 0.00025
+    fine = 0.25 * ff.U.mm
 
     return ff.SimulationConfig(
         meta=ff.RunMeta(description=f"{gap:g} mm gap"),
         geometry=Solenoid(gap=gap),
         frame=ff.Axisymmetric(),
-        mesh=ff.MeshConfig(global_mesh_size=0.002),
+        mesh=ff.MeshConfig(global_mesh_size=2 * ff.U.mm),
         physics=ff.PhysicsSelection(selected=ff.Physics.MAGNETOSTATICS),
         domain=ff.DomainConfig(
             materials=[COPPER, STEEL, AIR],

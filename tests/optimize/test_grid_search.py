@@ -30,13 +30,14 @@ class _FakeDriver:
         self.seen: list[float] = []
 
     def evaluate(self, config: SimulationConfig) -> Result:
-        self.seen.append(config.mesh.global_mesh_size)
-        force_x: float = 1.0 / config.mesh.global_mesh_size  # finer mesh (smaller size) -> larger "force"
+        size: float = config.mesh.global_mesh_size.m_as("m")
+        self.seen.append(size)
+        force_x: float = 1.0 / size  # finer mesh (smaller size) -> larger "force"
         return Result(frame=Solid(), status="ok", force=quantity(Vec3(force_x, 0.0, 0.0), U.N))
 
 
 def _parameterization() -> Parameterization:
-    base = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step", global_mesh_size=1.0))
+    base = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step", global_mesh_size=1.0 * U.m))
     return Parameterization(base=base, knobs=[GlobalMeshSize(name="global", low=0.2, high=1.0)])
 
 

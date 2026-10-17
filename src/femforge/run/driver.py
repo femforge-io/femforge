@@ -695,9 +695,9 @@ class Driver:
     def mesh_stats(self, state: SolveState) -> MeshStats:
         """The built mesh's [`MeshStats`][]: the meshed element count plus the config's size settings."""
         config: SimulationConfig = state.config
-        sizes: list[float] = [tag.mesh_size for tag in config.domain.tags if tag.mesh_size is not None]
+        sizes: list[float] = [tag.mesh_size.m_as("m") for tag in config.domain.tags if tag.mesh_size is not None]
         if not sizes:
-            sizes = [config.mesh.global_mesh_size]
+            sizes = [config.mesh.global_mesh_size.m_as("m")]
 
         return MeshStats(
             element_count=state.element_count,

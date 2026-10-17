@@ -28,10 +28,10 @@ class ResolvedRegionMeshSize:
 
 
 def resolve_region_sizes(groups: Iterable[_SizedRegion]) -> list[ResolvedRegionMeshSize]:
-    """The per-region size overrides to apply: each group's finest requested ``mesh_size``, leaving out groups that request none."""
+    """The per-region size overrides to apply, in metres: each group's finest requested ``mesh_size``, leaving out groups that request none."""
     assignments: list[ResolvedRegionMeshSize] = []
     for group in groups:
-        requested: list[float] = [tag.mesh_size for tag in group.tags if tag.mesh_size is not None]
+        requested: list[float] = [tag.mesh_size.m_as("m") for tag in group.tags if tag.mesh_size is not None]
         if not requested:
             continue
 

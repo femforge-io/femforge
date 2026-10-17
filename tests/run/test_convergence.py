@@ -14,12 +14,12 @@ from femforge.run.result import Result
 
 # Force magnitude (N) the fake solve returns at each refinement level; it converges toward 10 N.
 _FORCE_BY_REFINEMENT: dict[float, float] = {1.0: 9.0, 2.0: 9.9, 4.0: 9.99}
-_BASE_SIZE: float = 1.0
+_BASE_SIZE: Quantity = 1.0 * U.m
 
 
 def _fake_evaluate(config: SimulationConfig) -> Result:
     # Recover the refinement level from the global mesh size and return the canned force.
-    refinement: float = _BASE_SIZE / config.mesh.global_mesh_size
+    refinement: float = (_BASE_SIZE / config.mesh.global_mesh_size).m_as("dimensionless")
     magnitude: float = _FORCE_BY_REFINEMENT[round(refinement, 6)]
     return Result(frame=Solid(), status="ok", force=quantity(Vec3(magnitude, 0.0, 0.0), U.N))
 

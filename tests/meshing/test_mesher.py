@@ -22,6 +22,7 @@ from femforge.meshing.mesher import (
 )
 from femforge.meshing.naming import MAX_SAFE_GROUP_NAME, compose_group_name
 from femforge.physical.domain import EntityTag
+from femforge.physical.units import U
 
 
 def test_the_group_helpers_keep_their_mesher_import_path() -> None:
@@ -38,7 +39,7 @@ def test_mesher_constructor_is_gmsh_free_and_derives_paths() -> None:
     assert mesher.output_filename == "data/geometry.msh"
     assert mesher.name == "geometry"
     # The fully-defaulted config is exposed for inspection/modification before generate().
-    assert mesher.config.mesh.global_mesh_size == 0.001  # 1 mm, in metres (the pipeline is SI)
+    assert mesher.config.mesh.global_mesh_size == 1 * U.mm
 
 
 def test_the_msh_goes_where_asked_or_else_beside_the_step(tmp_path: Path) -> None:

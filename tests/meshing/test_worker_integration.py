@@ -25,6 +25,7 @@ from femforge.materials.properties import MaterialProperties
 from femforge.meshing.backend import GmshMesher, MeshError, MeshJob, WorkerMesher, WorkerProbe
 from femforge.meshing.config import MeshConfig
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import U
 from femforge.run.kinds import mesh_spec
 
 
@@ -50,7 +51,7 @@ def worker_imports_this_tree(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _job(step: Path, materials: list[MaterialProperties]) -> MeshJob:
     config = SimulationConfig(
-        mesh=MeshConfig(step=str(step), global_mesh_size=0.004, deterministic=True),
+        mesh=MeshConfig(step=str(step), global_mesh_size=4 * U.mm, deterministic=True),
         domain=DomainConfig(materials=materials, tags=[EntityTag(selector={TagKey.MAGNETIZATION: "N"})]),
     )
 

@@ -12,6 +12,7 @@ from femforge.common.utils import COLORS
 from femforge.elmer.physics import Physics
 from femforge.materials.properties import MaterialProperties
 from femforge.physical.conditions import Condition, ConditionTarget, ConditionUnion
+from femforge.physical.units import Length
 
 
 def conditions_for(tags: Iterable["EntityTag"], physics: Physics | Iterable[Physics], target: ConditionTarget) -> list[Condition]:
@@ -40,8 +41,8 @@ class EntityTag(ConfigArea):
     conditions: list[ConditionUnion] = Field(default_factory=list)
     """Composable, self-describing conditions (body forces / boundary conditions) this region carries."""
 
-    mesh_size: float | None = None
-    """`h` `[m]`: Target mesh size for this region, such as a finer air gap; None inherits ``MeshConfig.global_mesh_size``."""
+    mesh_size: Length | None = None
+    """`h` `[mm]`: Target mesh size for this region, such as a finer air gap; None inherits ``MeshConfig.global_mesh_size``."""
 
     def matches(self, tags: Mapping[str, str]) -> bool:
         """Whether an entity's tag dict satisfies every selector pair."""

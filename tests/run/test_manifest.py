@@ -21,7 +21,7 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.materials.neodymium import N42
 from femforge.materials.properties import MaterialProperties
 from femforge.materials.steel import Steel_1080
-from femforge.physical.units import U, quantity
+from femforge.physical.units import Quantity, U, quantity
 from femforge.run.manifest import RunManifest, cache_key, git_sha, mesh_key
 from femforge.common.names import bundle_name
 from femforge.run.result import MeshStats
@@ -32,7 +32,7 @@ FIXED_DT = datetime(2026, 6, 14, 10, 0, 0, tzinfo=timezone.utc)
 
 def _config(
     *,
-    global_mesh_size: float = 1.0,
+    global_mesh_size: Quantity = 1.0 * U.m,
     materials: list[MaterialProperties] | None = None,
     tags: list[EntityTag] | None = None,
     physics: Physics = Physics.MAGNETOSTATICS,
@@ -55,8 +55,8 @@ def test_cache_key_is_stable_for_identical_configs() -> None:
 
 
 def test_cache_key_changes_when_a_result_affecting_field_changes() -> None:
-    coarse = cache_key(_config(global_mesh_size=1.0))
-    fine = cache_key(_config(global_mesh_size=0.5))
+    coarse = cache_key(_config(global_mesh_size=1.0 * U.m))
+    fine = cache_key(_config(global_mesh_size=0.5 * U.m))
     assert coarse != fine
 
 
@@ -95,7 +95,7 @@ def test_cache_key_of_a_fixed_config_is_pinned() -> None:
     """A fixed config hashes to a pinned key, so a change that moves run identities fails here first."""
     config = _config(materials=[Steel_1080(), N42()])
 
-    assert cache_key(config) == "78a98f3475ce177bbeaa6683887348485b8d3e642f7798d7b44643aa590d6c5f"
+    assert cache_key(config) == "e4f113900cee470063595d320a78915e0cb21e215f0d90b942dd25dd9f7ccf9d"
 
 
 def test_cache_key_distinguishes_permeability_mode() -> None:
@@ -124,12 +124,12 @@ def test_mesh_key_is_invariant_to_non_geometry_changes() -> None:
 
 
 def test_mesh_key_changes_with_global_mesh_size() -> None:
-    assert mesh_key(_config(global_mesh_size=1.0)) != mesh_key(_config(global_mesh_size=0.5))
+    assert mesh_key(_config(global_mesh_size=1.0 * U.m)) != mesh_key(_config(global_mesh_size=0.5 * U.m))
 
 
 def test_mesh_key_changes_with_per_region_mesh_size() -> None:
-    coarse = _config(tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.2)])
-    fine = _config(tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.05)])
+    coarse = _config(tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.2 * U.m)])
+    fine = _config(tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.05 * U.m)])
     assert mesh_key(coarse) != mesh_key(fine)
 
 
@@ -191,7 +191,7 @@ def test_manifest_notes_do_not_change_run_id() -> None:
 
 
 def test_manifest_round_trips_through_json() -> None:
-    config = _config(materials=[MaterialProperties(name="N52")], tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1)])
+    config = _config(materials=[MaterialProperties(name="N52")], tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1 * U.mm)])
     manifest = RunManifest.build(
         config,
         status="ok",
@@ -206,7 +206,7 @@ def test_manifest_round_trips_through_json() -> None:
     assert restored.mesh_key == manifest.mesh_key
     assert restored.created_at == FIXED_DT
     assert restored.mesh_stats is not None and restored.mesh_stats.element_count == 1234
-    assert restored.config.domain.tags[0].mesh_size == 0.1
+    assert restored.config.domain.tags[0].mesh_size == 0.1 * U.mm
 
 
 def test_manifest_round_trips_nonlinear_steel() -> None:

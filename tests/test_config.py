@@ -33,7 +33,8 @@ def test_simulation_config_defaults() -> None:
     """The master config defaults to every area's own defaults, reachable by concern."""
     c: SimulationConfig = SimulationConfig()
     assert c.mesh.step == "data/geometry.step"
-    assert c.mesh.global_mesh_size == 0.001
+    assert c.mesh.global_mesh_size == 1 * U.mm
+    assert c.mesh.global_mesh_size.units == U.mm
     assert isinstance(c.mesh.gmsh_options, GmshOptions)
     assert c.domain.materials == [] and c.domain.tags == []
     assert c.physics.selected is Physics.MAGNETOSTATICS
@@ -41,16 +42,16 @@ def test_simulation_config_defaults() -> None:
 
 def test_simulation_config_areas_independently_meaningful() -> None:
     """Each area model stands on its own and composes into the master config unchanged."""
-    mesh: MeshConfig = MeshConfig(step="data/halbach.step", global_mesh_size=0.5, gmsh_options=GmshOptions(algorithm_3d=MeshAlgorithm3D.HXT))
+    mesh: MeshConfig = MeshConfig(step="data/halbach.step", global_mesh_size=0.5 * U.mm, gmsh_options=GmshOptions(algorithm_3d=MeshAlgorithm3D.HXT))
     domain: DomainConfig = DomainConfig(
         materials=[MaterialProperties(name="N52")],
-        tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1)],
+        tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1 * U.mm)],
     )
     physics: PhysicsSelection = PhysicsSelection(selected=Physics.THERMAL)
 
     c: SimulationConfig = SimulationConfig(mesh=mesh, domain=domain, physics=physics)
     assert c.mesh.step == "data/halbach.step"
-    assert c.mesh.global_mesh_size == 0.5
+    assert c.mesh.global_mesh_size == 0.5 * U.mm
     assert c.mesh.gmsh_options.algorithm_3d is MeshAlgorithm3D.HXT
     assert [m.name for m in c.domain.materials] == ["N52"]
     assert [t.selector for t in c.domain.tags] == [{"Region": "gap"}]
@@ -60,7 +61,7 @@ def test_simulation_config_areas_independently_meaningful() -> None:
 def test_simulation_config_round_trip() -> None:
     """The nested config (with a polymorphic condition under domain.tags) round-trips through dump/validate."""
     c: SimulationConfig = SimulationConfig(
-        mesh=MeshConfig(step="data/halbach.step", global_mesh_size=0.25),
+        mesh=MeshConfig(step="data/halbach.step", global_mesh_size=0.25 * U.mm),
         domain=DomainConfig(
             materials=[MaterialProperties(name="N52")],
             tags=[EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 1, 0))])],
@@ -69,7 +70,7 @@ def test_simulation_config_round_trip() -> None:
     )
     restored: SimulationConfig = SimulationConfig.model_validate(c.model_dump())
     assert restored.mesh.step == "data/halbach.step"
-    assert restored.mesh.global_mesh_size == 0.25
+    assert restored.mesh.global_mesh_size == 0.25 * U.mm
     assert [m.name for m in restored.domain.materials] == ["N52"]
     assert restored.physics.selected is Physics.ELECTROSTATICS
     # The discriminated condition union survives the round-trip with its concrete type.
@@ -157,6 +158,32 @@ def test_frames_reject_what_they_cannot_solve() -> None:
 def test_mesh_config_rejects_removed_fields() -> None:
     with pytest.raises(ValidationError, match="model_dim"):
         MeshConfig(model_dim=2)  # pyright: ignore[reportCallIssue]  # exercising the removed field
+
+
+def test_mesh_sizes_default_to_millimetres_and_dump_with_their_unit() -> None:
+    mesh = MeshConfig()
+
+    assert mesh.global_mesh_size.m_as("m") == pytest.approx(0.001)
+    assert mesh.model_dump()["global_mesh_size"] == "1.0 mm"
+
+
+def test_mesh_sizes_read_quantity_strings() -> None:
+    mesh = MeshConfig.model_validate({"global_mesh_size": "0.5 mm"})
+    tag = EntityTag.model_validate({"mesh_size": "200 um"})
+
+    assert mesh.global_mesh_size == 0.5 * U.mm
+    assert tag.mesh_size is not None and tag.mesh_size.m_as("mm") == pytest.approx(0.2)
+
+
+def test_mesh_sizes_reject_a_bare_number_and_say_what_to_write() -> None:
+    with pytest.raises(ValidationError, match='bare number 0.001; give it units, as in "0.001 m"'):
+        MeshConfig.model_validate({"global_mesh_size": 0.001})
+
+    with pytest.raises(ValidationError, match=r"expected dimensionality \[length\]"):
+        EntityTag.model_validate({"mesh_size": 0.0005})
+
+    with pytest.raises(ValidationError, match=r"expected dimensionality \[length\], got \[temperature\]"):
+        MeshConfig.model_validate({"global_mesh_size": "1 K"})
 
 
 def test_a_transverse_magnetization_fails_at_config_construction() -> None:

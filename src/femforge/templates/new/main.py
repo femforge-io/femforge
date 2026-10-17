@@ -65,14 +65,13 @@ class MagnetAndPlate(ff.Build123dGeometry):
 
 def config(gap: float = 1.0) -> ff.SimulationConfig:
     """The magnetostatic solve of the magnet and the plate ``gap`` mm apart, on the axisymmetric section about Z."""
-    # Mesh sizes are in metres; the geometry is in millimetres.
-    fine = 0.0002
+    fine = 0.2 * ff.U.mm
 
     return ff.SimulationConfig(
         meta=ff.RunMeta(description=f"{gap:g} mm gap"),
         geometry=MagnetAndPlate(gap=gap),
         frame=ff.Axisymmetric(),
-        mesh=ff.MeshConfig(global_mesh_size=0.002),
+        mesh=ff.MeshConfig(global_mesh_size=2 * ff.U.mm),
         physics=ff.PhysicsSelection(selected=ff.Physics.MAGNETOSTATICS),
         domain=ff.DomainConfig(
             materials=[N52, STEEL, AIR],

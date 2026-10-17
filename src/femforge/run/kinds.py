@@ -107,13 +107,18 @@ def step_key(config: SimulationConfig) -> str:
 
 def mesh_spec(config: SimulationConfig, step_key_override: str | None = None) -> MeshSpec:
     """The mesh artifact spec of ``config`` (``step_key_override`` when the driver already resolved the geometry)."""
+    tags: list[TagSelectorSpec] = []
+    for tag in config.domain.tags:
+        size: float | None = None if tag.mesh_size is None else tag.mesh_size.m_as("m")
+        tags.append(TagSelectorSpec(selector=dict(tag.selector), mesh_size=size))
+
     return MeshSpec(
         step_key=step_key_override if step_key_override is not None else step_key(config),
         model_dim=config.frame.model_dim,
-        global_mesh_size=config.mesh.global_mesh_size,
+        global_mesh_size=config.mesh.global_mesh_size.m_as("m"),
         gmsh_options=config.mesh.gmsh_options,
         deterministic=config.mesh.deterministic,
-        tags=[TagSelectorSpec(selector=dict(tag.selector), mesh_size=tag.mesh_size) for tag in config.domain.tags],
+        tags=tags,
         materials=sorted(material.tag for material in config.domain.materials),
     )
 

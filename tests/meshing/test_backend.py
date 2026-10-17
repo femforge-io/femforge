@@ -31,6 +31,7 @@ from femforge.meshing.naming import compose_group_name
 from femforge.meshing.spec import MeshSpec, TagSelectorSpec
 from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import U
 from femforge.run.kinds import mesh_spec
 
 
@@ -64,10 +65,10 @@ def test_mesh_inputs_rebuild_the_frame_the_mesh_settings_and_a_bare_domain() -> 
 
     assert isinstance(inputs.frame, Solid)
     assert inputs.mesh.step == "model.step"
-    assert inputs.mesh.global_mesh_size == 0.002
+    assert inputs.mesh.global_mesh_size == 2 * U.mm
     assert inputs.mesh.resolved_gmsh_options().num_threads == 1
     assert [(material.name, material.tag) for material in inputs.domain.materials] == [("Air", "Air"), ("N42", "N42")]
-    assert [(dict(tag.selector), tag.mesh_size, tag.conditions) for tag in inputs.domain.tags] == [({"Magnetization": "N"}, 0.0005, [])]
+    assert [(dict(tag.selector), tag.mesh_size, tag.conditions) for tag in inputs.domain.tags] == [({"Magnetization": "N"}, 0.5 * U.mm, [])]
     assert isinstance(mesh_inputs(MeshJob(spec=_spec(model_dim=2), step="model.step")).frame, Axisymmetric)
 
 

@@ -17,6 +17,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.meshing.gmsh_options import GmshOptions, MeshAlgorithm2D
 from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import U
 from femforge.materials.properties import MaterialProperties
 from femforge.common.vector import Direction
 from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, RunSpec, StepSpec, cache_key, mesh_key, mesh_spec, step_digest, step_key
@@ -40,7 +41,7 @@ def _config(**mesh: object) -> SimulationConfig:
                 EntityTag(
                     selector={TagKey.MAGNETIZATION: "N"},
                     conditions=[Magnetization(direction=Direction(0, 1, 0))],
-                    mesh_size=0.5,
+                    mesh_size=0.5 * U.mm,
                 )
             ],
         ),
@@ -109,12 +110,23 @@ def test_an_authored_step_key_ignores_where_the_file_lives(tmp_path: Path) -> No
     assert len(keys) == 1
 
 
+def test_mesh_spec_carries_the_sizes_in_metres() -> None:
+    spec = mesh_spec(_config(global_mesh_size=2 * U.mm))
+
+    assert spec.global_mesh_size == pytest.approx(0.002)
+    assert [tag.mesh_size for tag in spec.tags] == [pytest.approx(0.0005)]
+
+
+def test_mesh_key_is_the_same_for_the_same_size_in_any_unit() -> None:
+    assert mesh_key(_config(global_mesh_size=0.5 * U.mm)) == mesh_key(_config(global_mesh_size=0.0005 * U.m))
+
+
 def test_mesh_key_moves_with_mesh_settings_and_grouping_inputs() -> None:
     base = mesh_key(_config())
     assert base == mesh_key(_config())
     assert base == artifact_key(ELMER_MESH, mesh_spec(_config()))
 
-    assert base != mesh_key(_config(global_mesh_size=0.5))
+    assert base != mesh_key(_config(global_mesh_size=0.5 * U.mm))
     planar = _config()
     planar.frame = Axisymmetric(axis=Axis.Y)
     assert mesh_spec(planar).model_dim == 2
@@ -123,7 +135,7 @@ def test_mesh_key_moves_with_mesh_settings_and_grouping_inputs() -> None:
     assert base != mesh_key(_config(gmsh_options=GmshOptions(algorithm_2d=MeshAlgorithm2D.DELAUNAY)))
 
     resized = _config()
-    resized.domain.tags[0].mesh_size = 0.1
+    resized.domain.tags[0].mesh_size = 0.1 * U.mm
     assert base != mesh_key(resized)
 
     regrouped = _config()
@@ -179,7 +191,7 @@ def test_cache_key_is_machine_and_path_independent() -> None:
     labeled.meta.description = "label"
     assert base == cache_key(labeled)
 
-    assert base != cache_key(_config(global_mesh_size=0.5))
+    assert base != cache_key(_config(global_mesh_size=0.5 * U.mm))
     assert artifact_key(RUN_BUNDLE, RunSpec(config=_config())) == base
 
 

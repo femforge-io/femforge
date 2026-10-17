@@ -12,7 +12,7 @@ def config_for(
     as_2d: bool = False,
     magnet_thickness: float = 2.0,
     airgap: float = 0.25,
-    mesh_size: float = 0.001,
+    mesh_size: float = 1.0,
     domain_padding: float = 70.0,
     shell_thickness: float | None = None,
     description: str = "Bearing Seat",
@@ -23,7 +23,7 @@ def config_for(
         as_2d: Solve the axisymmetric section about Z instead of the 3D model.
         magnet_thickness: Axial thickness of the magnet disc, in millimetres.
         airgap: Lift of the ball off its seat, in millimetres.
-        mesh_size: Element size on the seat, the ball and the shell, in metres; the air grows five times coarser.
+        mesh_size: Element size on the seat, the ball and the shell, in millimetres; the air grows five times coarser.
         domain_padding: Air around the bodies, in millimetres.
         shell_thickness: Wall thickness of the steel shell in millimetres; None for no shell.
         description: The run description the workbench lists.
@@ -40,11 +40,12 @@ def config_for(
     )
 
     # A uniform fine mesh fills the 3D air box with millions of elements; the field that sets the pull lives in and around the bodies.
-    air_size = mesh_size * 5
+    body_size = mesh_size * ff.U.mm
+    air_size = body_size * 5
 
     mesh = ff.MeshConfig(
         global_mesh_size=air_size,
-        gmsh_options=ff.GmshOptions(mesh_size_max=air_size * 2),
+        gmsh_options=ff.GmshOptions(mesh_size_max=(air_size * 2).m_as("m")),
     )
 
     domain = ff.DomainConfig(
@@ -53,17 +54,17 @@ def config_for(
             ff.EntityTag(
                 selector={ff.TagKey.NAME: EntityNames.SEAT},
                 conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))],
-                mesh_size=mesh_size,
+                mesh_size=body_size,
             ),
             ff.EntityTag(
                 selector={ff.TagKey.NAME: EntityNames.BEARING},
                 conditions=[ff.ForceComponent(calculate_magnetic_force=True)],
-                mesh_size=mesh_size,
+                mesh_size=body_size,
             ),
             ff.EntityTag(
                 selector={ff.TagKey.NAME: EntityNames.SHELL},
                 conditions=[ff.ForceComponent(calculate_magnetic_force=True)],
-                mesh_size=mesh_size,
+                mesh_size=body_size,
             ),
         ],
     )
@@ -88,7 +89,7 @@ def evaluate() -> ff.Driver:
         config = config_for(
             as_2d=True,
             magnet_thickness=magnet_thickness,
-            mesh_size=0.0005,
+            mesh_size=0.5,
             shell_thickness=shell_thickness,
             description=f"{magnet_thickness:g} mm magnet {shell} shell",
         )
@@ -114,7 +115,7 @@ def evaluate() -> ff.Driver:
     config_3d = config_for(
         as_2d=False,
         magnet_thickness=4.0,
-        mesh_size=0.001,
+        mesh_size=1.0,
         shell_thickness=2.0,
         description="4 mm magnet with shell (3D)",
     )

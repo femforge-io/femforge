@@ -27,6 +27,7 @@ from femforge.meshing import WorkerMesher, block_gmsh
 from femforge.meshing.config import MeshConfig
 from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import U
 from femforge.run.driver import Driver
 from femforge.run.kinds import ELMER_MESH, mesh_spec
 from femforge.run.result import Result
@@ -125,7 +126,7 @@ def _config(direction: Direction) -> SimulationConfig:
 
     return SimulationConfig(
         geometry=MagnetInAir(),
-        mesh=MeshConfig(global_mesh_size=0.004),
+        mesh=MeshConfig(global_mesh_size=4 * U.mm),
         domain=DomainConfig(materials=[Air(), N42()], tags=[magnet]),
         physics=PhysicsSelection(selected=Physics.MAGNETOSTATICS),
     )

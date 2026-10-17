@@ -21,6 +21,7 @@ __all__ = [
     "quantity_type",
     "vector_quantity_type",
     "dimensionality_matches",
+    "DIM_LENGTH",
     "DIM_TEMPERATURE",
     "DIM_THERMAL_CONDUCTIVITY",
     "DIM_SPECIFIC_HEAT",
@@ -41,6 +42,7 @@ __all__ = [
     "DIM_FORCE",
     "DIM_TORQUE",
     "DIM_DIMENSIONLESS",
+    "Length",
     "Temperature",
     "Conductivity",
     "ThermalConductivity",
@@ -314,6 +316,12 @@ class _ScalarQuantity(_DimensionedQuantity):
         else:
             raise ValueError("expected a scalar Quantity, a number or a quantity string")
 
+        bare: bool = not isinstance(v, U.Quantity) and q.dimensionality == _DIMENSIONLESS
+        if bare and _dimensionality(self.dimensionality) != _DIMENSIONLESS:
+            compatible = next(iter(U.get_compatible_units(_dimensionality(self.dimensionality))))
+            si_units = cast(Quantity, U.Quantity(1, compatible)).to_base_units().units
+            raise ValueError(f'expected dimensionality {self.dimensionality}, got the bare number {v}; give it units, as in "{v} {si_units:~}"')
+
         self._require_dimensionality(q)
         return q
 
@@ -376,6 +384,7 @@ def vector_quantity_type(dimensionality: str) -> object:
 
 # --- dimensionality vocabulary: named once so the quantity_type aliases and the property-function
 # field types (physical.property_functions) reference the same string rather than re-spelling it.
+DIM_LENGTH: str = "[length]"
 DIM_TEMPERATURE: str = "[temperature]"
 DIM_THERMAL_CONDUCTIVITY: str = "[power]/[length]/[temperature]"
 DIM_SPECIFIC_HEAT: str = "[energy]/[mass]/[temperature]"
@@ -422,6 +431,7 @@ def dimensionality_matches(expected: str, got: str) -> bool:
 # Field-type aliases. Written as direct ``Annotated[...]`` type expressions (not
 # ``quantity_type(...)`` calls) so each name is a real *type alias* a type checker
 # accepts in field position; the factories above stay for any dynamic callers.
+Length = Annotated[Quantity, _ScalarQuantity(DIM_LENGTH)]
 Temperature = Annotated[Quantity, _ScalarQuantity(DIM_TEMPERATURE)]
 ThermalConductivity = Annotated[Quantity, _ScalarQuantity(DIM_THERMAL_CONDUCTIVITY)]
 Conductivity = ThermalConductivity

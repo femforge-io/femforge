@@ -241,7 +241,7 @@ class Mesher:
 
         # Set global + per-region element sizes, then mesh and write the .msh.
         apply_mesh_sizing(
-            config.mesh.global_mesh_size,
+            config.mesh.global_mesh_size.m_as("m"),
             resolve_region_sizes(physical_groups),
             set_global=gmsh_set_global_size,
             set_region=lambda tags, size: gmsh_set_region_size(tags, size, body_dim),

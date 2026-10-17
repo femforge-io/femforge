@@ -61,6 +61,11 @@ def test_scalar_field_rejects_non_quantity_non_scalar() -> None:
         _sample(density=cast(Quantity, None))
 
 
+def test_a_bare_number_names_the_si_units_to_write() -> None:
+    with pytest.raises(ValidationError, match='bare number 300; give it units, as in "300 K"'):
+        _sample(temperature=cast(Quantity, 300))
+
+
 def test_json_schema_includes_unit_annotation() -> None:
     schema: dict[str, object] = _Sample.model_json_schema()
     dens = cast(dict[str, object], schema["properties"])

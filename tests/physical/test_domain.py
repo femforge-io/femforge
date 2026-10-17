@@ -71,9 +71,9 @@ def test_entitytag_schema_exports() -> None:
 
 def test_domain_config_defaults_and_population() -> None:
     assert DomainConfig().materials == [] and DomainConfig().tags == []
-    d: DomainConfig = DomainConfig(materials=[MaterialProperties(name="N52")], tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1)])
+    d: DomainConfig = DomainConfig(materials=[MaterialProperties(name="N52")], tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1 * U.mm)])
     assert [m.name for m in d.materials] == ["N52"]
-    assert d.tags[0].mesh_size == 0.1
+    assert d.tags[0].mesh_size == 0.1 * U.mm
 
 
 def test_entity_tag_name_is_the_part_name_for_a_lone_name_selector() -> None:
