@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from femforge.optimize.objective import NetForceMagnitude, Objective, PhaseResistanceFromPower
-from femforge.optimize.parameterization import GlobalMeshSize, Knob, Parameterization, ParamSpec, RegionMeshSize
+from femforge.optimize.parameterization import BaseKnob, GlobalMeshSize, Knob, LengthKnob, Parameterization, ParamSpec, RegionMeshSize
 from femforge.optimize.search import DriverLike, GridSearch
 from femforge.optimize.study import Study, StudyRecord
 
@@ -11,7 +11,9 @@ from femforge.optimize.study import Study, StudyRecord
 __all__ = [
     "Parameterization",
     "ParamSpec",
+    "BaseKnob",
     "Knob",
+    "LengthKnob",
     "GlobalMeshSize",
     "RegionMeshSize",
     "Objective",

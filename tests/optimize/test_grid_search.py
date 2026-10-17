@@ -38,7 +38,19 @@ class _FakeDriver:
 
 def _parameterization() -> Parameterization:
     base = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step", global_mesh_size=1.0 * U.m))
-    return Parameterization(base=base, knobs=[GlobalMeshSize(name="global", low=0.2, high=1.0)])
+    return Parameterization(base=base, knobs=[GlobalMeshSize(name="global", low=0.2 * U.m, high=1.0 * U.m)])
+
+
+def test_grid_search_reads_points_in_the_knob_unit_and_records_it() -> None:
+    base = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"))
+    param = Parameterization(base=base, knobs=[GlobalMeshSize(name="global", low=200 * U.mm, high=1000 * U.mm)])
+    driver = _FakeDriver()
+
+    study = GridSearch(parameterization=param, grid={"global": [1000.0, 500.0]}, objective=NetForceMagnitude()).run(driver)
+
+    assert driver.seen == pytest.approx([1.0, 0.5])
+    assert study.space["global"].unit == "mm"
+    assert study.to_dataframe().attrs["units"] == {"global": "mm"}
 
 
 def test_grid_search_records_one_point_each_and_finds_best() -> None:

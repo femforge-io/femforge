@@ -42,7 +42,7 @@ class GridSearch:
 
         Each record keeps the ``run_id`` the driver stamped, recomputed with [`run.cache_key`][femforge.run.cache_key] when a stand-in stamps none.
         """
-        study: Study = Study()
+        study: Study = Study(space=self.parameterization.space())
         names: list[str] = list(self.grid.keys())
 
         for combo in itertools.product(*(self.grid[name] for name in names)):

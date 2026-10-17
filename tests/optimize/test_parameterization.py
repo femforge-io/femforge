@@ -1,11 +1,12 @@
 """A Parameterization maps a parameter-space point to a concrete SimulationConfig and reports its free-variable schema; the contract the grid search walks."""
 
 import pytest
+from pydantic import ValidationError
 
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.meshing.config import MeshConfig
-from femforge.optimize.parameterization import GlobalMeshSize, Knob, Parameterization, RegionMeshSize
+from femforge.optimize.parameterization import BaseKnob, GlobalMeshSize, Knob, Parameterization, RegionMeshSize
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import U
 
@@ -18,8 +19,8 @@ def _param() -> Parameterization:
     return Parameterization(
         base=base,
         knobs=[
-            GlobalMeshSize(name="global", low=0.2, high=1.0),
-            RegionMeshSize(name="gap", tag="MaterialAir", low=0.05, high=0.5),
+            GlobalMeshSize(name="global", low=0.2 * U.mm, high=1.0 * U.mm),
+            RegionMeshSize(name="gap", tag="MaterialAir", low=0.05 * U.mm, high=0.5 * U.mm),
         ],
     )
 
@@ -29,6 +30,34 @@ def test_space_keys_match_knob_names() -> None:
     assert set(space) == {"global", "gap"}
     assert space["global"].low == 0.2 and space["global"].high == 1.0
     assert space["gap"].low == 0.05 and space["gap"].high == 0.5
+    assert space["global"].unit == "mm" and space["gap"].unit == "mm"
+
+
+def test_a_length_knob_reports_its_bounds_in_the_unit_of_low() -> None:
+    spec = GlobalMeshSize(name="global", low=200 * U.um, high=1 * U.mm).spec()
+
+    assert spec.unit is not None and U.Unit(spec.unit) == U.um
+    assert spec.low == 200.0
+    assert spec.high == pytest.approx(1000.0)
+
+
+def test_a_dimensionless_knob_has_no_unit() -> None:
+    assert Knob(name="k", low=0.0, high=1.0).spec().unit is None
+
+
+def test_a_length_knob_rejects_a_bare_float() -> None:
+    with pytest.raises(ValidationError, match="bare number"):
+        _ = GlobalMeshSize.model_validate({"name": "global", "low": 0.2, "high": 1.0})
+
+
+def test_a_length_knob_round_trips_with_its_unit() -> None:
+    knob = RegionMeshSize(name="gap", tag="MaterialAir", low=0.05 * U.mm, high=0.5 * U.mm)
+
+    restored = RegionMeshSize.model_validate_json(knob.model_dump_json())
+
+    assert restored == knob
+    assert restored.unit == "mm"
+    assert restored.length(0.1) == 0.1 * U.mm
 
 
 @pytest.mark.parametrize(
@@ -41,9 +70,9 @@ def test_space_keys_match_knob_names() -> None:
 )
 def test_to_config_applies_knobs_at_grid_corners(point: dict[str, float], expected_global: float, expected_gap: float) -> None:
     config = _param().to_config(point)
-    assert config.mesh.global_mesh_size == expected_global * U.m
+    assert config.mesh.global_mesh_size == expected_global * U.mm
     gap_tag = next(tag for tag in config.domain.tags if tag.name == "MaterialAir")
-    assert gap_tag.mesh_size == expected_gap * U.m
+    assert gap_tag.mesh_size == expected_gap * U.mm
     # The non-knob fields come straight from the base.
     assert config.mesh.step == "data/motor.step"
 
@@ -65,7 +94,7 @@ def test_to_config_rejects_mismatched_point_keys() -> None:
 
 def test_region_knob_unknown_tag_raises() -> None:
     base = SimulationConfig(domain=DomainConfig(tags=[EntityTag(selector={TagKey.MATERIAL: "Air"})]))
-    param = Parameterization(base=base, knobs=[RegionMeshSize(name="gap", tag="Magnet", low=0.0, high=1.0)])
+    param = Parameterization(base=base, knobs=[RegionMeshSize(name="gap", tag="Magnet", low=0.0 * U.mm, high=1.0 * U.mm)])
     with pytest.raises(ValueError, match="no region tagged 'Magnet'"):
         param.to_config({"gap": 0.1})
 
@@ -73,6 +102,11 @@ def test_region_knob_unknown_tag_raises() -> None:
 def test_base_knob_apply_is_abstract() -> None:
     with pytest.raises(NotImplementedError):
         _ = Knob(name="k", low=0.0, high=1.0).apply(SimulationConfig(), 0.5)
+
+
+def test_the_knob_root_spec_is_abstract() -> None:
+    with pytest.raises(NotImplementedError):
+        _ = BaseKnob(name="k").spec()
 
 
 def test_knobs_from_another_package_are_accepted_and_dumped_with_their_fields() -> None:

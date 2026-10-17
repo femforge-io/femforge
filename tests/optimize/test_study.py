@@ -7,6 +7,7 @@ import pytest
 
 from femforge.common.frame import Solid
 from femforge.common.vector import Vec3
+from femforge.optimize.parameterization import ParamSpec
 from femforge.optimize.study import Study
 from femforge.physical.units import U, quantity
 from femforge.run.result import Result
@@ -62,3 +63,17 @@ def test_to_dataframe_missing_quantities_are_none() -> None:
     assert row["force"] is None
     assert row["torque"] is None
     assert row["flux_density_max"] is None
+
+
+def test_to_dataframe_keeps_knob_columns_numeric_and_names_their_units() -> None:
+    study = Study(space={"g": ParamSpec(low=0.2, high=2.0, unit="mm"), "scale": ParamSpec(low=0.5, high=2.0)})
+    study.record(point={"g": 0.5, "scale": 1.0}, run_id="run-u", result=Result(frame=Solid(), status="ok"), objective=1.0)
+
+    df = study.to_dataframe()
+
+    assert df.attrs["units"] == {"g": "mm", "scale": None}
+    assert pd.api.types.is_float_dtype(df["g"])
+
+
+def test_to_dataframe_of_a_study_without_a_space_names_no_units() -> None:
+    assert _study().to_dataframe().attrs["units"] == {}

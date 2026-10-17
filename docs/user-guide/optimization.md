@@ -25,14 +25,14 @@ base = ff.SimulationConfig(
 parameterization = ff.optimize.Parameterization(
     base=base,
     knobs=[
-        ff.optimize.GlobalMeshSize(name="global", low=0.001, high=0.004),
-        ff.optimize.RegionMeshSize(name="gap", tag="GAP", low=0.0002, high=0.001),
+        ff.optimize.GlobalMeshSize(name="global", low=1 * ff.U.mm, high=4 * ff.U.mm),
+        ff.optimize.RegionMeshSize(name="gap", tag="GAP", low=0.2 * ff.U.mm, high=1 * ff.U.mm),
     ],
 )
 
 search = ff.optimize.GridSearch(
     parameterization=parameterization,
-    grid={"global": [0.004, 0.002], "gap": [0.001, 0.0005, 0.00025]},
+    grid={"global": [4.0, 2.0], "gap": [1.0, 0.5, 0.25]},
     objective=ff.optimize.NetForceMagnitude(),
 )
 
@@ -43,36 +43,38 @@ print(best.point, best.objective, best.run_id)
 print(study.to_dataframe())
 ```
 
-The grid walks the Cartesian product of its value lists, here six points in grid order. Run the script again and every point returns its finished bundle without solving, because each run id comes from the config alone.
+The grid walks the Cartesian product of its value lists, here six points in grid order. A length knob reads its grid values in the unit you wrote its `low` in, millimetres here. Run the script again and every point returns its finished bundle without solving, because each run id comes from the config alone.
 
 ## The objects
 
 | Object | Role |
 |---|---|
 | [Parameterization][femforge.optimize.Parameterization] | Holds a fixed `base` config and the knobs that perturb it. `to_config(point)` builds one config and raises when the point's keys differ from the knob names; `space()` returns each knob's bounds. |
-| [Knob][femforge.optimize.Knob] | One free variable: a `name`, inclusive `low` and `high` bounds, and an `apply` that returns a changed copy of a config. |
-| [ParamSpec][femforge.optimize.ParamSpec] | The declared bounds of one knob, as `space()` returns them. |
+| [BaseKnob][femforge.optimize.BaseKnob] | The root of every knob: a `name`, a `spec()` that reports its bounds, and an `apply` that returns a changed copy of a config. |
+| [Knob][femforge.optimize.Knob] | A knob over a plain number, with inclusive `low` and `high` float bounds. |
+| [LengthKnob][femforge.optimize.LengthKnob] | A knob over a length, with inclusive `low` and `high` pint lengths. Its point values are numbers in the unit of `low`. |
+| [ParamSpec][femforge.optimize.ParamSpec] | The declared bounds of one knob and their `unit`, as `space()` returns them; `unit` is `None` for a plain-number knob. |
 | [Objective][femforge.optimize.Objective] | A protocol: any callable from a `Result` to a float. |
 | [GridSearch][femforge.optimize.GridSearch] | Walks the grid through a driver and returns a `Study`. |
 | [DriverLike][femforge.optimize.DriverLike] | The protocol `GridSearch.run` takes: anything with `evaluate(config) -> Result`. |
 | [Study][femforge.optimize.Study] | The records in evaluation order, with `best()` and `to_dataframe()`. |
 | [StudyRecord][femforge.optimize.StudyRecord] | One point: its coordinates, run id, objective and the full typed result. |
 
-`best()` takes the largest objective, or the smallest with `maximize=False`. `to_dataframe()` is where units leave: one row per record with the knob columns, `run_id`, `objective`, `status`, the force and torque magnitudes, the force components, `flux_density_max`, `residual` and `wall_time`, all as bare SI floats.
+`best()` takes the largest objective, or the smallest with `maximize=False`. `to_dataframe()` is where units leave: one row per record with the knob columns, `run_id`, `objective`, `status`, the force and torque magnitudes, the force components, `flux_density_max`, `residual` and `wall_time`. The knob columns hold numbers in each knob's unit, which `df.attrs["units"]` names by knob, from the `space` the search recorded on the `Study`. Every result column is a bare SI float.
 
 ## Knobs and objectives
 
 | Knob | What it sets |
 |---|---|
-| [GlobalMeshSize][femforge.optimize.GlobalMeshSize] | `MeshConfig.global_mesh_size`, with the knob value in metres. |
-| [RegionMeshSize][femforge.optimize.RegionMeshSize] | The `mesh_size` of the [EntityTag][femforge.physical.EntityTag] whose `name` equals `tag`, such as `GAP` for a `{Name: "gap"}` selector, with the knob value in metres; it raises when the base config has no such tag. |
+| [GlobalMeshSize][femforge.optimize.GlobalMeshSize] | `MeshConfig.global_mesh_size`, with the knob value in the unit of `low`. |
+| [RegionMeshSize][femforge.optimize.RegionMeshSize] | The `mesh_size` of the [EntityTag][femforge.physical.EntityTag] whose `name` equals `tag`, such as `GAP` for a `{Name: "gap"}` selector, with the knob value in the unit of `low`; it raises when the base config has no such tag. |
 
 | Objective | Score |
 |---|---|
 | [NetForceMagnitude][femforge.optimize.NetForceMagnitude] | The net force magnitude on the moving array, in N; `-inf` when the run produced no force. |
 | [PhaseResistanceFromPower][femforge.optimize.PhaseResistanceFromPower] | The mean per-phase resistance `phases·V²/P` of a current-conduction run, from its Joule power; `nan` without a positive Joule power. |
 
-Write your own knob as a `Knob` subclass with a `kind` literal and an `apply` that copies the config. Never mutate the config passed in: every point starts from the same base.
+Write your own knob as a `Knob` subclass with a `kind` literal and an `apply` that copies the config. For a length, subclass `LengthKnob` instead and build the value with `self.length(value)`, which carries the knob's unit. Never mutate the config passed in: every point starts from the same base.
 
 ```python
 from typing import Literal
@@ -115,7 +117,7 @@ class FakeDriver:
 
 parameterization = ff.optimize.Parameterization(
     base=ff.SimulationConfig(mesh=ff.MeshConfig(step="models/actuator.step", global_mesh_size=1.0 * ff.U.m)),
-    knobs=[ff.optimize.GlobalMeshSize(name="global", low=0.2, high=1.0)],
+    knobs=[ff.optimize.GlobalMeshSize(name="global", low=0.2 * ff.U.m, high=1.0 * ff.U.m)],
 )
 search = ff.optimize.GridSearch(
     parameterization=parameterization,

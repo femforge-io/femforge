@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from femforge.optimize.parameterization import ParamSpec
 from femforge.physical.units import U
 from femforge.run.result import Result
 
@@ -41,6 +42,9 @@ class Study(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, use_attribute_docstrings=True)
 
+    space: dict[str, ParamSpec] = Field(default_factory=dict)
+    """The searched knobs' bounds and units by knob name, as [`Parameterization.space`][femforge.optimize.Parameterization.space] declared them."""
+
     records: list[StudyRecord] = Field(default_factory=list)
     """Every evaluated point, in evaluation order."""
 
@@ -67,7 +71,7 @@ class Study(BaseModel):
     def to_dataframe(self) -> pd.DataFrame:
         """Flatten the records to a pandas DataFrame, the units-stripping analysis boundary.
 
-        One row per record: the knob columns, then ``objective``, ``run_id``, ``status`` and the result quantities as bare SI floats.
+        One row per record: knob columns in the units ``attrs["units"]`` names, then ``objective``, ``run_id``, ``status`` and the result quantities as bare SI floats.
         """
         import pandas as pd
 
@@ -93,4 +97,7 @@ class Study(BaseModel):
             row["residual"] = entry.result.residual
             row["wall_time"] = entry.result.wall_time
             rows.append(row)
-        return pd.DataFrame(rows)
+
+        frame = pd.DataFrame(rows)
+        frame.attrs["units"] = {name: spec.unit for name, spec in self.space.items()}
+        return frame
