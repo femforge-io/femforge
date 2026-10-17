@@ -1,6 +1,6 @@
 [project]
 name = "femforge-workbench"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Interactive workbench for femforge: a trame React shell whose dock holds scene, figure and table panels over runs, artifacts, logs and lab data."
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "femforge[viz]==0.1.0",
+    "femforge[viz]==0.1.0rc1",
     "build123d>=0.13,<0.14",
     "numpy>=2.5",
     "pandas>=3.0",

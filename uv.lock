@@ -862,7 +862,7 @@ wheels = [
 
 [[package]]
 name = "femforge"
-version = "0.1.0"
+version = "0.1.0rc1"
 source = { editable = "." }
 dependencies = [
     { name = "anytree" },
@@ -971,7 +971,7 @@ requires-dist = [{ name = "pygments", specifier = ">=2.12" }]
 
 [[package]]
 name = "femforge-workbench"
-version = "0.1.0"
+version = "0.1.0rc1"
 source = { editable = "packages/femforge-workbench" }
 dependencies = [
     { name = "build123d" },

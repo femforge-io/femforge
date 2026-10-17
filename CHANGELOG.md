@@ -4,9 +4,9 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-14
+## [0.1.0rc1] - 2026-10-17
 
-The first public release.
+The first public release candidate.
 
 ### Added
 
@@ -28,5 +28,5 @@ The first public release.
 - Type information for the whole package, including the lazy `import femforge as ff` namespace.
 - Support for Python 3.12, 3.13 and 3.14.
 
-[Unreleased]: https://github.com/femforge-io/femforge/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/femforge-io/femforge/releases/tag/v0.1.0
+[Unreleased]: https://github.com/femforge-io/femforge/compare/v0.1.0rc1...HEAD
+[0.1.0rc1]: https://github.com/femforge-io/femforge/releases/tag/v0.1.0rc1
