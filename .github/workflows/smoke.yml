@@ -37,7 +37,7 @@ jobs:
         run: uv run magnet-plate/main.py --solve-only 2>&1 | tee solve.log
       - name: Check that the four gaps solved
         run: |
-          forces=$(grep -c " N on the plate, run " solve.log || true)
+          forces=$(grep -c " mm gap: " solve.log || true)
           [ "$forces" -eq 4 ] || { echo "::error::The log holds $forces plate forces, not 4."; exit 1; }
           bundles=$(find magnet-plate/runs -mindepth 2 -maxdepth 2 -name manifest.json | wc -l)
           [ "$bundles" -eq 4 ] || { echo "::error::magnet-plate/runs holds $bundles run bundles, not 4."; exit 1; }
