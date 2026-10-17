@@ -1,7 +1,7 @@
 # femforge
 
-[![PyPI](https://img.shields.io/pypi/v/femforge)](https://pypi.org/project/femforge/)
-[![License](https://img.shields.io/pypi/l/femforge)](https://github.com/femforge-io/femforge/blob/main/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/femforge?include_prereleases)](https://pypi.org/project/femforge/)
+[![License](https://img.shields.io/github/license/femforge-io/femforge)](https://github.com/femforge-io/femforge/blob/main/LICENSE)
 [![Quality](https://github.com/femforge-io/femforge/actions/workflows/quality.yml/badge.svg)](https://github.com/femforge-io/femforge/actions/workflows/quality.yml)
 
 ![Field lines of a magnet holding a steel ball, from the bearing-seat example](https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/bearing-seat.webp)
