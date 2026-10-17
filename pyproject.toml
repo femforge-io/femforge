@@ -1,12 +1,12 @@
 [project]
 name = "femforge"
 version = "0.1.0"
-description = "Typed, provenance-tracked FEA orchestration (CAD -> mesh -> solver -> result) for electromagnetic and thermal design."
+description = "Finite-element analysis as a typed Python API: one config takes a tagged CAD model through meshing and solving to results that carry their units."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
-authors = [{ name = "Nathan Woodward" }]
+authors = [{ name = "Nathan W." }]
 keywords = ["fea", "finite-element", "elmer", "gmsh", "electromagnetics", "thermal", "simulation"]
 classifiers = [
     "Development Status :: 3 - Alpha",

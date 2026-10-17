@@ -1,4 +1,4 @@
-"""Typed, provenance-tracked FEA orchestration: CAD -> mesh -> solver -> result."""
+"""Finite-element analysis as a typed Python API: one config takes a tagged CAD model through meshing and solving to results that carry their units."""
 
 import lazy_loader
 

@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use femforge in your work, cite it as below.
 type: software
 title: femforge
-abstract: Typed, provenance-tracked finite-element orchestration in Python, from a tagged STEP file through pluggable mesh and solver backends, gmsh and Elmer today, to typed results.
+abstract: "Finite-element analysis as a typed Python API: one config takes a tagged CAD model through meshing and solving to results that carry their units."
 authors:
   - family-names: Woodward
     given-names: Nathan
