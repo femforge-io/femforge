@@ -2,8 +2,9 @@
 # requires-python = ">=3.12"
 # dependencies = ["femforge[workbench]~=0.1.0"]
 # ///
-"""A disc magnet pulls on a steel plate across an air gap: solve four gaps, then browse the fields in a workbench."""
+"""A disc magnet pulls on a steel plate across an air gap: solve four gaps, then browse the fields in a workbench (``--solve-only`` skips it)."""
 
+import sys
 from pathlib import Path
 
 import build123d as b3d
@@ -104,5 +105,6 @@ def viewer() -> ff.workbench.Split:
 if __name__ == "__main__":
     solve()
 
-    # A function, not a built dock, so every save of this file rebuilds the workbench.
-    ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
+    if "--solve-only" not in sys.argv[1:]:
+        # A function, not a built dock, so every save of this file rebuilds the workbench.
+        ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
