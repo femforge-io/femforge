@@ -28,7 +28,7 @@ if __name__ == "__main__":
     print(driver.evaluate(config).run_id)
 ```
 
-A mesh size is a pint length: write `0.5 * ff.U.mm` in Python, or `"0.5 mm"` in a JSON config. A bare number such as `0.0005` fails validation, because it carries no unit. gmsh converts the STEP to metres on import, and femforge hands it every size in metres, so a 10 mm magnet meshed at `mesh_size=0.5 * ff.U.mm` gets 0.5 mm elements. The `GmshOptions` clamps `mesh_size_min` and `mesh_size_max` mirror gmsh's own options and stay plain floats in metres.
+A mesh size is a pint length: write `0.5 * ff.U.mm` in Python, or `"0.5 mm"` in a JSON config. A bare number such as `0.0005` fails validation, because it carries no unit. gmsh converts the STEP to metres on import, and femforge hands it every size in metres, so a 10 mm magnet meshed at `mesh_size=0.5 * ff.U.mm` gets 0.5 mm elements. The `GmshOptions` clamps, `mesh_size_min` and `mesh_size_max`, mirror gmsh's own options and stay plain floats in metres.
 
 ## MeshConfig
 
