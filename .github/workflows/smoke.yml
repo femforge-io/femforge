@@ -1,0 +1,66 @@
+name: Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The femforge version on PyPI to try, such as 0.1.0rc1.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  solve:
+    name: solve (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: false
+      - run: uvx "femforge@$VERSION" new magnet-plate
+      - run: head -n 4 magnet-plate/main.py
+      - name: Solve the four gaps in the Elmer image from GHCR
+        run: uv run magnet-plate/main.py --solve-only 2>&1 | tee solve.log
+      - name: Check that the four gaps solved
+        run: |
+          forces=$(grep -c " N on the plate, run " solve.log || true)
+          [ "$forces" -eq 4 ] || { echo "::error::The log holds $forces plate forces, not 4."; exit 1; }
+          bundles=$(find magnet-plate/runs -mindepth 2 -maxdepth 2 -name manifest.json | wc -l)
+          [ "$bundles" -eq 4 ] || { echo "::error::magnet-plate/runs holds $bundles run bundles, not 4."; exit 1; }
+
+  install:
+    name: install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: false
+      - name: Check that the doctor finds Python, gmsh and the CAD kernel working
+        run: |
+          status=0
+          uvx "femforge@$VERSION" doctor --json > doctor.json || status=$?
+          cat doctor.json
+          [ "$status" -le 1 ] || { echo "::error::femforge doctor exited with $status."; exit 1; }
+          jq -e '[.checks[] | select(.name == "Python" or .name == "gmsh" or .name == "CAD kernel") | .status] == ["ok", "ok", "ok"]' doctor.json
+      - run: uvx "femforge@$VERSION" new magnet-plate
+      - run: head -n 4 magnet-plate/main.py
+      - name: Import femforge and the workbench from the script environment
+        run: |
+          uv sync --script magnet-plate/main.py
+          python=$(uv python find --script magnet-plate/main.py)
+          "$python" -c "import os, femforge, femforge_workbench; assert femforge.__version__ == os.environ['VERSION'], femforge.__version__"
