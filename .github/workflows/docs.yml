@@ -68,6 +68,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           if [ "$GITHUB_REF_NAME" = next ]; then
+            {
+              echo "/*"
+              echo "  X-Robots-Tag: noindex, nofollow"
+            } > site/_headers
             npx --yes wrangler@4 deploy --env next
           else
             npx --yes wrangler@4 deploy

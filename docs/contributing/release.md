@@ -147,7 +147,7 @@ The base-image workflow (`.github/workflows/base-image.yml`) runs on the first o
 
 ## Docs deploy
 
-The `deploy` job of `.github/workflows/docs.yml` publishes the site after each push to `main` in `femforge-io/femforge`. It takes the site the `docs` job built and runs `npx wrangler@4 deploy` with the Cloudflare credentials of the `docs` environment. `wrangler.jsonc` names the Worker `femforge-docs`, serves `./site` with its 404 page, and routes `docs.femforge.io` to it. A push to the `next` branch deploys the same way through the `docs-next` environment with `wrangler deploy --env next`, to the Worker `femforge-docs-next` at `next.docs.femforge.io`. The `next` environment in `wrangler.jsonc` sets only its name and route and inherits the assets and the compatibility date.
+The `deploy` job of `.github/workflows/docs.yml` publishes the site after each push to `main` in `femforge-io/femforge`. It takes the site the `docs` job built and runs `npx wrangler@4 deploy` with the Cloudflare credentials of the `docs` environment. `wrangler.jsonc` names the Worker `femforge-docs`, serves `./site` with its 404 page, and routes `docs.femforge.io` to it. A push to the `next` branch deploys the same way through the `docs-next` environment with `wrangler deploy --env next`, to the Worker `femforge-docs-next` at `next.docs.femforge.io`. The `next` environment in `wrangler.jsonc` sets only its name and route and inherits the assets and the compatibility date. The `next` deploy also writes `site/_headers` with `X-Robots-Tag: noindex, nofollow`, so search engines leave the preview out of their index, and `workers_dev` and `preview_urls` are off, so each Worker answers only on its custom domain.
 
 ## The placeholder releases
 
