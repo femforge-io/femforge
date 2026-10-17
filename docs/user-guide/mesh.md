@@ -67,7 +67,7 @@ Refine where the field changes fast: an air gap, a thin conductor, the surface o
 
 ## Mesh backends
 
-Meshing runs through the [MeshBackend][femforge.meshing.MeshBackend] seam, and gmsh is the backend implemented today, in two forms:
+Meshing runs through the [MeshBackend][femforge.meshing.MeshBackend] interface, and gmsh is the backend implemented today, in two forms:
 
 | Backend | Where gmsh runs | Choose it when |
 | --- | --- | --- |

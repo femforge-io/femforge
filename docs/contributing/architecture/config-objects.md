@@ -34,7 +34,7 @@ A backend reads a Protocol slice or plain data, never `SimulationConfig`, so the
 
 Two comments guard the same direction inside the core: `physical/conditions.py` must not import `meshing.config` or `elmer.sim` (`src/femforge/physical/conditions.py:2`), and `physics_config.py` must not import `elmer.sim` (`src/femforge/elmer/config/common/physics_config.py:2`).
 
-## The geometry seam
+## The geometry interface
 
 A [GeometryArea][femforge.geometry.GeometryArea] is a parametric geometry with one method, `build_step(path)`, which writes the model as a STEP in the authored frame (`src/femforge/geometry/config.py:12-20`). [Build123dGeometry][femforge.geometry.Build123dGeometry] implements it for a build123d assembly: a subclass returns its tagged assembly from `model()`, and `build_step` exports it (`src/femforge/geometry/build123d_geometry.py:16-26`). A config without a geometry meshes the STEP at `mesh.step` instead, which any CAD can write as long as the tagged body names reach the file.
 
@@ -62,7 +62,7 @@ large = ff.SimulationConfig(geometry=MagnetInAir(magnet_size=12.0))
 assert ff.run.step_key(small) != ff.run.step_key(large)
 ```
 
-The seam has three rules:
+The interface has three rules:
 
 - **The parameters are the identity.** The STEP spec hashes the geometry model itself, so two configs with equal parameters and an equal frame share one STEP, and a changed parameter makes a new one (`src/femforge/run/kinds.py:97-100`). The STEP file is derived output.
 - **Subclass fields survive a round trip.** The `geometry` field is `SerializeAsAny[GeometryArea]`, so a dump carries the subclass's fields (`src/femforge/config.py:43`), and `GeometryArea` sets `extra="allow"`, so a manifest loaded back as the base class keeps them readable (`src/femforge/geometry/config.py:15-16`).
@@ -173,6 +173,6 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 |---|---|
 | `Mesher` and `MeshEntity` stay submodule imports, because both import gmsh at module level; `femforge.meshing` re-exports neither | `src/femforge/meshing/mesher.py:8`, `src/femforge/meshing/mesh_entity.py:3`, `src/femforge/meshing/__init__.py:5-13` |
 | Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:137`, `src/femforge/meshing/gmsh_options.py:58` |
-| The geometry seam names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
+| The geometry interface names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
 | `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
 | Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:365-374`, `src/femforge/common/log.py:205-210` |

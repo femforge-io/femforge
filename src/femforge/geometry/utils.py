@@ -267,7 +267,7 @@ class NestedRect:
 
 
 def _tree_nodes(root: b3d.Compound, iterator: Callable[[b3d.Compound], object]) -> list[b3d.Compound]:
-    """The assembly-tree nodes under ``root`` via an anytree iterator (untyped upstream; single cast seam)."""
+    """The assembly-tree nodes under ``root`` via an anytree iterator (untyped upstream; single cast site)."""
     return cast("list[b3d.Compound]", list(iterator(root)))  # pyright: ignore[reportArgumentType]
 
 

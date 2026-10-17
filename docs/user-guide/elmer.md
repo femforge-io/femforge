@@ -1,6 +1,6 @@
 # Elmer: native and Docker
 
-Solving runs through the [ExecutionBackend][femforge.elmer.ExecutionBackend] seam, and Elmer is the solver implemented today. femforge writes the solver input, runs Elmer's two programs, ElmerGrid and ElmerSolver, as separate processes, and reads the results. The backend decides where they run: [NativeElmer][femforge.elmer.NativeElmer] runs an Elmer install on this machine, and [DockerElmer][femforge.elmer.DockerElmer] runs each command in a container of the femforge Elmer image. The backend is a driver setting, never part of the config, so a run solved natively and the same run solved in Docker share one run id.
+Solving runs through the [ExecutionBackend][femforge.elmer.ExecutionBackend] interface, and Elmer is the solver implemented today. femforge writes the solver input, runs Elmer's two programs, ElmerGrid and ElmerSolver, as separate processes, and reads the results. The backend decides where they run: [NativeElmer][femforge.elmer.NativeElmer] runs an Elmer install on this machine, and [DockerElmer][femforge.elmer.DockerElmer] runs each command in a container of the femforge Elmer image. The backend is a driver setting, never part of the config, so a run solved natively and the same run solved in Docker share one run id.
 
 ## Pick a backend
 

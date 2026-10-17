@@ -1,6 +1,6 @@
 # Optimization
 
-The optimization seam turns free parameters into an objective number through ordinary driver runs. A [Parameterization][femforge.optimize.Parameterization] maps a point in parameter space to a [SimulationConfig][femforge.config.SimulationConfig], the driver solves it, an [Objective][femforge.optimize.Objective] reduces the [Result][femforge.run.Result] to a float, and a [Study][femforge.optimize.Study] records every point. The pipeline knows nothing about optimization, so every point is a normal run with its own bundle, run id and provenance.
+The optimization interface turns free parameters into an objective number through ordinary driver runs. A [Parameterization][femforge.optimize.Parameterization] maps a point in parameter space to a [SimulationConfig][femforge.config.SimulationConfig], the driver solves it, an [Objective][femforge.optimize.Objective] reduces the [Result][femforge.run.Result] to a float, and a [Study][femforge.optimize.Study] records every point. The pipeline knows nothing about optimization, so every point is a normal run with its own bundle, run id and provenance.
 
 ## Run a grid search
 

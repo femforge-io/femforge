@@ -1,7 +1,7 @@
 """
 The driver: assemble one run end-to-end (identity, reuse, mesh + sif + solve, parse, bundle, publish, retention); the generators (``Mesher``, ``Sim``) stay run-ignorant.
 
-``evaluate(config) -> Result`` is the seam the optimization layer calls once per evaluation; the solve is isolated behind
+``evaluate(config) -> Result`` is the interface the optimization layer calls once per evaluation; the solve is isolated behind
 an injectable ``solver``, so tests exercise the identity → parse → manifest → bundle path without gmsh/Elmer.
 """
 

@@ -1,4 +1,4 @@
-"""Optimization seam: a ``Parameterization`` turns a point into a ``SimulationConfig``, an ``Objective`` scores its ``Result``, and ``GridSearch`` records each point in a ``Study``."""
+"""Optimization interface: a ``Parameterization`` turns a point into a ``SimulationConfig``, an ``Objective`` scores its ``Result``, and ``GridSearch`` records each point in a ``Study``."""
 
 from __future__ import annotations
 

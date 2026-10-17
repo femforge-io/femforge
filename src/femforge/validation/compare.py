@@ -65,7 +65,7 @@ class FieldComparison(BaseModel):
 
 
 def _row_norms(rows: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Per-row Euclidean norm of an `(N, 3)` array — the single seam where numpy's `Any`-typed `linalg.norm` is pinned back to a concrete type."""
+    """Per-row Euclidean norm of an `(N, 3)` array — the single site where numpy's `Any`-typed `linalg.norm` is pinned back to a concrete type."""
     return cast("NDArray[np.float64]", np.linalg.norm(rows, axis=1))
 
 

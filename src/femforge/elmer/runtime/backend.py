@@ -1,4 +1,4 @@
-"""The execution seam: where ElmerGrid and ElmerSolver run, whether natively, in Docker, or on a remote host."""
+"""The execution interface: where ElmerGrid and ElmerSolver run, whether natively, in Docker, or on a remote host."""
 
 from __future__ import annotations
 

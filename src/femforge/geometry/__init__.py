@@ -1,4 +1,4 @@
-"""Tagged CAD infrastructure: the ``GeometryArea`` seam, tagged build123d shapes, cross-sections, frame conversion and the winding packer."""
+"""Tagged CAD infrastructure: the ``GeometryArea`` interface, tagged build123d shapes, cross-sections, frame conversion and the winding packer."""
 
 from __future__ import annotations
 

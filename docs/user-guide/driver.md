@@ -55,7 +55,7 @@ Every parameter is keyword-only.
 
 ## Execution backends
 
-Solving runs through the [ExecutionBackend][femforge.elmer.ExecutionBackend] seam, and Elmer is the solver implemented today:
+Solving runs through the [ExecutionBackend][femforge.elmer.ExecutionBackend] interface, and Elmer is the solver implemented today:
 
 | Backend | Runs Elmer | Partitioned |
 |---|---|---|
@@ -88,7 +88,7 @@ Set `mpi_processes` above 1 to solve on several ranks. The driver checks at cons
 
 ## Meshers
 
-Meshing runs through the [MeshBackend][femforge.meshing.MeshBackend] seam, and gmsh is the mesher implemented today:
+Meshing runs through the [MeshBackend][femforge.meshing.MeshBackend] interface, and gmsh is the mesher implemented today:
 
 | Mesher | Where gmsh runs |
 |---|---|

@@ -1,4 +1,4 @@
-"""The mesh seam: what a meshing job carries and reports, and the backends that mesh it in this process or in a worker."""
+"""The mesh interface: what a meshing job carries and reports, and the backends that mesh it in this process or in a worker."""
 
 from __future__ import annotations
 
