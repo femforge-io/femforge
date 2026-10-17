@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "femforge[viz]==0.1.0rc1",
     "build123d>=0.13,<0.14",
-    "numpy>=2.5",
+    "numpy>=2.5.4",
     "pandas>=3.0",
     "platformdirs>=4.11.5",
     "plotly>=7.1",
