@@ -1,8 +1,8 @@
 site_name: femforge
 site_url: https://docs.femforge.io/
 site_description: "Typed finite-element orchestration in Python: a tagged STEP file in, typed results out, with gmsh and Elmer as the first backends."
-site_author: Nathan Woodward
-copyright: Copyright &copy; 2026 Nathan Woodward. Apache-2.0.
+site_author: Nathan W.
+copyright: Copyright &copy; 2026 Nathan W. Apache-2.0.
 repo_url: https://github.com/femforge-io/femforge
 repo_name: femforge-io/femforge
 edit_uri: edit/main/docs/
@@ -33,6 +33,9 @@ theme:
     - navigation.tracking
     - search.highlight
     - toc.follow
+
+extra_javascript:
+  - overrides/preview.js
 
 extra_css:
   - overrides/extra.css
@@ -81,7 +84,7 @@ plugins:
             summary: true
             unwrap_annotated: true
   - llmstxt:
-      markdown_description: femforge drives finite-element analysis from Python. One typed SimulationConfig takes a tagged STEP file through meshing and a solve to a typed, provenance-tracked Result; gmsh and Elmer are the backends implemented today.
+      markdown_description: "Finite-element analysis as a typed Python API: one config takes a tagged CAD model through meshing and solving to results that carry their units. gmsh and Elmer are the backends implemented today."
       full_output: llms-full.txt
       sections:
         Overview: [index.md, overview/*.md]
@@ -93,6 +96,9 @@ markdown_extensions:
   - abbr
   - admonition
   - attr_list
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
+      emoji_index: !!python/name:zensical.extensions.emoji.twemoji
   - def_list
   - footnotes
   - md_in_html
@@ -125,6 +131,7 @@ nav:
       - Quickstart: overview/quickstart.md
       - Concepts: overview/concepts.md
       - Compatibility: overview/compatibility.md
+      - Status: overview/status.md
   - User guide:
       - user-guide/index.md
       - Geometry and tags: user-guide/geometry.md

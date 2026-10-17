@@ -1,8 +1,11 @@
+---
+title: Overview
+---
 # femforge
 
 ![Field lines of a magnet holding a steel ball, from the bearing-seat example](assets/bearing-seat.webp)
 
-femforge drives finite-element analysis from Python. You describe a simulation as one typed [SimulationConfig][femforge.config.SimulationConfig]: the geometry, the mesh settings, the materials and conditions of each region, and the physics to solve. The geometry is a STEP file whose bodies are named with their tags, exported from any CAD or scripted in build123d with femforge's helpers. A [Driver][femforge.run.Driver] meshes the config through the mesh backend, gmsh today, solves it through the solver backend, Elmer today, and returns a typed [Result][femforge.run.Result] whose quantities carry their units. Every run lands in a bundle named after the content hash of its inputs, so an identical config reuses the finished run instead of solving again. The workbench shows the fields and the runs in a browser, and everything it shows is also scriptable.
+femforge is finite-element analysis as a typed Python API. You describe a simulation as one typed [SimulationConfig][femforge.config.SimulationConfig]: the geometry, the mesh settings, the materials and conditions of each region, and the physics to solve. The geometry is a STEP file whose bodies are named with their tags, exported from any CAD or scripted in build123d with femforge's helpers. A [Driver][femforge.run.Driver] meshes the config through the mesh backend, gmsh today, solves it through the solver backend, Elmer today, and returns a typed [Result][femforge.run.Result] whose quantities carry their units. Every run lands in a bundle named after the content hash of its inputs, so an identical config reuses the finished run instead of solving again. The workbench shows the fields and the runs in a browser, and everything it shows is also scriptable.
 
 femforge is pre-alpha. The API will change between 0.x releases, and the [changelog](changelog.md) records each change.
 
@@ -21,6 +24,7 @@ femforge is pre-alpha. The API will change between 0.x releases, and the [change
 - [Install](overview/install.md) femforge and an Elmer solver.
 - Run a first simulation with the [Quickstart](overview/quickstart.md).
 - Read [Concepts](overview/concepts.md) for the pipeline on one page.
+- Check [Status](overview/status.md) for what works today and which tasks are open.
 - Work through the [User guide](user-guide/index.md), one task per page.
 - Look up a class or function in the [API reference](reference/index.md).
 - Set up a development checkout with [Contributing](contributing/index.md).
