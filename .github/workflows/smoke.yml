@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      - name: Install the Linux system libraries that gmsh loads, as the Install page lists
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: false

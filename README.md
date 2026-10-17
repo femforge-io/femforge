@@ -25,7 +25,7 @@ You describe a simulation once, as one config, and a `Driver` meshes it, solves 
 
 ## Try it
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and either [Docker](https://docs.docker.com/get-started/get-docker/), which is recommended, or a native [Elmer](https://github.com/ElmerCSC/elmerfem) install.
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and either [Docker](https://docs.docker.com/get-started/get-docker/), which is recommended, or a native [Elmer](https://github.com/ElmerCSC/elmerfem) install. On Linux, also install the system libraries gmsh loads, as [Install](https://docs.femforge.io/overview/install/#linux-system-libraries) lists.
 
 ```console
 uvx femforge new magnet-plate

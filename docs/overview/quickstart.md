@@ -4,7 +4,7 @@ This page creates a project from the femforge template, solves it and opens the 
 
 ## Before you start
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs Python and the packages, and either [Docker](https://docs.docker.com/get-started/get-docker/), which runs the Elmer solver, or a native Elmer install. [Install](install.md) covers all three.
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs Python and the packages, and either [Docker](https://docs.docker.com/get-started/get-docker/), which runs the Elmer solver, or a native Elmer install. On Linux, also install the [system libraries](install.md#linux-system-libraries) gmsh loads. [Install](install.md) covers all four.
 
 ## Create the project
 
