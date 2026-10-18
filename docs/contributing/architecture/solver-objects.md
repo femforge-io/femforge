@@ -116,13 +116,13 @@ Two class variables carry the cross-object rules, and as class variables they ne
 | [Constants][femforge.elmer.config.Constants] | the `Constants` block | Every constant is unset until a preset activates it, and an unset one stays out of the sif (`src/femforge/elmer/config/common/constants.py:15-25`). |
 | [OperatingPoint][femforge.elmer.config.OperatingPoint] | no block | The temperature material property functions are evaluated at when they are stripped to SI floats (`src/femforge/elmer/config/common/operating_point.py:10-25`). |
 
-`CoordinateSystem.per_radian` marks the two symmetric 2D systems, where Elmer integrates per radian and lumped outputs need a 2π factor (`src/femforge/elmer/config/common/simulation.py:30-33`).
+`CoordinateSystem.per_radian` marks the two symmetric 2D systems, where Elmer integrates per radian and lumped outputs need a 2π factor (`src/femforge/elmer/config/common/simulation.py:33-36`). `CARTESIAN_2D` integrates per metre of depth instead, and `Cartesian2D.total` scales by the thickness.
 
 ### PhysicsConfig and the presets
 
 [PhysicsConfig][femforge.elmer.config.PhysicsConfig] is the whole stack: the ordered solvers, the simulation block, the constants and the operating point (`src/femforge/elmer/config/common/physics_config.py:47-62`). `solvers` is a list of `SolverUnion`, a union discriminated on `kind`, so every concrete field survives a dump and a reload. A plain `list[SolverBase]` would drop them, and the stack could not ride inside `SimulationConfig`, the run identity or the manifest (`src/femforge/elmer/config/common/physics_config.py:28-44`). `solver(kind)` returns the live instance of one solver class for typed editing (`src/femforge/elmer/config/common/physics_config.py:64-69`).
 
-[physics_config][femforge.elmer.config.physics_config] builds the preset for one [Physics][femforge.elmer.Physics] with an exhaustive `match`, so a new physics is a type error until it has a preset (`src/femforge/elmer/config/common/presets.py:35-140`). The table lists each preset as `physics_config` builds it. `magnetostatics_2d` is the form `magnetostatics` solves as under `Axisymmetric`, never an authored choice, and `solved_stack` switches the thermal preset to `Axi Symmetric` under that frame (`src/femforge/elmer/config/common/presets.py:24-31`).
+[physics_config][femforge.elmer.config.physics_config] builds the preset for one [Physics][femforge.elmer.Physics] with an exhaustive `match`, so a new physics is a type error until it has a preset (`src/femforge/elmer/config/common/presets.py:35-140`). The table lists each preset as `physics_config` builds it. `magnetostatics_2d` is the form `magnetostatics` solves as under a 2D frame, never an authored choice. `solved_stack` sets every preset to the frame's coordinate system, `Axi Symmetric` or `Cartesian 2D`, and calls each solver's `fit_frame`, which gives `StressSolver` two displacement components and the frame's `Plane Stress` under `Cartesian2D` (`src/femforge/elmer/config/common/presets.py:29-35`).
 
 ```python exec="true" session="solvers"
 print("| Physics | Solvers, in order | Coordinate system | Constants set |")

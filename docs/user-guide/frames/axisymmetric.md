@@ -52,16 +52,16 @@ frame = ff.Axisymmetric(
 print(frame.label, frame.plane)
 ```
 
-[Axisymmetric.plane][femforge.frames.Axisymmetric.plane] is the [SolvePlane][femforge.frames.SolvePlane] that rule picks: the authored origin of the section and the authored directions of its +X (radial) and +Y (axis). The section and the workbench's expansion both read it.
+[Axisymmetric.plane][femforge.frames.Axisymmetric.plane] is the [SolvePlane][femforge.frames.SolvePlane] that rule picks: the authored origin of the section and the authored directions of its +X, `x_dir` (radial), and its +Y, `y_dir` (axis). The section and the workbench's expansion both read it.
 
 ## How femforge sections the model
 
 The driver converts the STEP in its first stage, `prepare_geometry`, through [Axisymmetric.prepare_geometry][femforge.frames.Axisymmetric.prepare_geometry]:
 
 1. It builds the parametric geometry when the config has one, else it reads the authored STEP.
-2. [import_tagged_step][femforge.geometry.step.import_tagged_step] imports the STEP as tagged parts, one per named solid. Every body needs a `key=value` name, and a STEP that holds only faces is rejected: author the 3D model and let the frame section it.
-3. [axisymmetric_cross_section][femforge.geometry.section.axisymmetric_cross_section] places the parts in the solve frame through `plane`, then intersects each solid with the X >= 0 half of the Z = 0 plane. Each face keeps its solid's tags and color.
-4. It writes the section to `geometry.step` in the run directory, and the mesher meshes it in 2D.
+2. [import_tagged_step][femforge.geometry.step.import_tagged_step] imports the STEP as tagged parts, one per named solid, and its named faces as markers. Every body needs a `key=value` name, and a STEP that holds only faces is rejected: author the 3D model and let the frame section it.
+3. [axisymmetric_cross_section][femforge.geometry.section.axisymmetric_cross_section] places the parts in the solve frame through `plane`, then intersects each solid with the X >= 0 half of the Z = 0 plane. Each face keeps its solid's tags and color, and each named face becomes a named edge of the section.
+4. It writes the section to `geometry.step` in the run directory and its named edges to `geometry.boundaries.json` beside it, and the mesher meshes it in 2D.
 
 The section raises when a solid does not reach the half-plane, and when a section reaches X < 0, which Elmer's axisymmetric solve would reject silently. The mesher names each body's edge on the symmetry axis `<BODY>__AXIS`, and magnetostatics pins the potential to zero there.
 

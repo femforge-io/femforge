@@ -24,6 +24,7 @@ Results stay in the solve frame, and [Result.frame][femforge.run.Result.frame] r
 |---|---|---|---|
 | [Solid](solid.md) | `"solid"` | 3 | Solves the authored 3D model as-is. |
 | [Axisymmetric](axisymmetric.md) | `"axisymmetric"` | 2 | Solves the r-z half-plane of a model symmetric about an axis. |
+| [Cartesian 2D](cartesian-2d.md) | `"cartesian_2d"` | 2 | Solves the planar section of a prismatic model, scaled by its thickness. |
 
 ## How a frame plugs into each stage
 
@@ -32,7 +33,7 @@ Each stage asks the frame one question rather than naming a frame. The frame's p
 | Stage | What the frame decides | Hook |
 |---|---|---|
 | Geometry | Whether the solve meshes the authored STEP or a converted one, and the conversion. | [prepare_geometry][femforge.frames.Frame.prepare_geometry], [rewrites_geometry][femforge.frames.Frame.rewrites_geometry] |
-| Mesh | The body dimension the mesher meshes, and whether the section has a symmetry axis to name. | [model_dim][femforge.frames.Frame.model_dim], [revolves][femforge.frames.Frame.revolves] |
+| Mesh | The body dimension the mesher meshes, and whether the section has a symmetry axis to name. The named edges of a section reach the mesher from the file beside its STEP. | [model_dim][femforge.frames.Frame.model_dim], [revolves][femforge.frames.Frame.revolves] |
 | Physics | The form each selected physics solves as, the Elmer coordinate system of the stack, and the plane state of a 2D elasticity solve. | [solves][femforge.frames.Frame.solves], [coordinate_system][femforge.frames.Frame.coordinate_system], [plane_stress][femforge.frames.Frame.plane_stress] |
 | Conditions | Which conditions the frame can drive: a vector condition must have a form in solve coordinates, and torque needs a frame that lumps one. | [solve_vector][femforge.frames.Frame.solve_vector], [supports][femforge.frames.Frame.supports], [lumps_torque][femforge.frames.Frame.lumps_torque] |
 | Results | The whole model's total of what Elmer integrated over the solve domain, the solve domain's share of a whole-model total, and a force's component along an authored axis. | [total][femforge.frames.Frame.total], [solve_share][femforge.frames.Frame.solve_share], [along][femforge.frames.Frame.along] |

@@ -77,8 +77,9 @@ The model stays in the frame you author it in. `SimulationConfig.frame` maps it 
 | [TaggedPart][femforge.geometry.tags.TaggedPart] | `build123d.Part` | A body of a 3D model: one material, one region. |
 | [TaggedCompound][femforge.geometry.tags.TaggedCompound] | `build123d.Compound` | A group of tagged parts. Its tags pass down to every tagged leaf on export. |
 | [TaggedFace][femforge.geometry.tags.TaggedFace] | `build123d.Face` | A body of a planar 2D model, or a named face of a 3D body that boundary conditions target. |
+| [TaggedEdge][femforge.geometry.tags.TaggedEdge] | `build123d.Edge` | A named edge of a 2D section; a 2D frame makes one from each named face it sections. |
 
-Each takes build123d shapes and the keyword `tags=`: `TaggedPart(shapes)` the solids it holds, such as `[box]` or a build123d part, `TaggedCompound(children=...)` the tagged shapes below it, and `TaggedFace(face)` one build123d face. `TaggedPart` and `TaggedFace` also take `name=`. The tags set the label, which the STEP file carries as the part name.
+Each takes build123d shapes and the keyword `tags=`: `TaggedPart(shapes)` the solids it holds, such as `[box]` or a build123d part, `TaggedCompound(children=...)` the tagged shapes below it, and `TaggedFace(face)` one build123d face. `TaggedPart`, `TaggedFace` and `TaggedEdge` also take `name=`. The tags set the label, which the STEP file carries as the part name. On export a compound keeps its leaves down to one dimension below the highest: a 3D model keeps its solids and their named faces, a section its faces and their named edges, and an edge under a solid is dropped as construction geometry.
 
 ## Tag keys
 

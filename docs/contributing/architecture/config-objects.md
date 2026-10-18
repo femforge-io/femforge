@@ -72,16 +72,16 @@ The interface has three rules:
 
 ## The frame area
 
-The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-163`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`) and [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
+The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-163`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`), [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`) and [Cartesian2D][femforge.frames.Cartesian2D] (`src/femforge/frames/cartesian_2d.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
 
-`FrameUnion`, the discriminated union on `kind`, types every serialized frame field: `SimulationConfig.frame`, `Result.frame`, `StepSpec.frame` and `MeshJob.frame` (`src/femforge/frames/__init__.py:12`). Every function and attribute that only calls the hooks takes the base `Frame`.
+`FrameUnion`, the discriminated union on `kind`, types every serialized frame field: `SimulationConfig.frame`, `Result.frame`, `StepSpec.frame` and `MeshJob.frame` (`src/femforge/frames/__init__.py:13`). Every function and attribute that only calls the hooks takes the base `Frame`. `default_frame(model_dim)`, the frame of a bundle whose manifest names none, takes the first shipped frame of that dimension that builds from defaults alone, so `Cartesian2D`, whose `thickness` is required, follows `Axisymmetric` in the union and a 2D bundle without a manifest reads as axisymmetric.
 
 | Hook | What it answers | Called by |
 |---|---|---|
 | `label` | a short name for messages and the UI | condition errors, the workbench |
 | `model_dim` | the body dimension the mesher meshes | `Mesher.body_dim` (`src/femforge/meshing/mesher.py:93-95`), `mesh_spec`, the run index |
 | `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-35`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-82`) |
-| `plane` | the solve plane in the authored model, None for a whole-model solve | `axisymmetric_cross_section`, the workbench's symmetry expansion |
+| `plane` | the solve plane in the authored model, None for a whole-model solve; its `x_dir` and `y_dir` are the authored solve +X and +Y, and `normal` their cross product | `axisymmetric_cross_section`, `planar_cross_section`, the workbench's symmetry expansion |
 | `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:70-91`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:69-72`) |
 | `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:75-85`) |
 | `solves` | the form a physics solves as, raising when it has none | `SimulationConfig.solved_physics`, `PhysicsSelection.check_frame`, `solved_stack`, `Sim` |
@@ -91,14 +91,14 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 | `total` | the whole-model total of a vector Elmer integrated over the solve domain | `parse_result` (`src/femforge/run/parse.py:213-216`) |
 | `solve_share` | the share of a whole-model total the solve domain carries, the inverse of `total` | `Condition.on_boundary` overrides that take a whole-model load |
 | `revolves` | whether the section stands for a model revolved about an axis; defaults to False | the mesher's `<BODY>__AXIS` groups, the field viewer's symmetry basis |
-| `plane_stress` | whether a 2D elasticity solve is plane stress or plane strain; defaults to None, no plane state | a solver's `fit_frame` |
+| `plane_stress` | whether a 2D elasticity solve is plane stress or plane strain; defaults to None, no plane state, and `Cartesian2D` answers from its `state` | a solver's `fit_frame` |
 | `along` | a solve-frame vector's component along an authored axis | `Result.axial_force` (`src/femforge/run/result.py:105-109`) |
 
-The config checks the frame on construction and on assignment through `SimulationConfig`'s three validators, each condition's `check_frame` and `PhysicsSelection.check_frame`, and `Sim` repeats the condition check, over the tags of the body groups and the boundary groups, for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:110-118`). `PhysicsSelection.selected` rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum, because it is the form `MAGNETOSTATICS` solves as under `Axisymmetric` (`src/femforge/elmer/config/common/selection.py:18-38`).
+The config checks the frame on construction and on assignment through `SimulationConfig`'s three validators, each condition's `check_frame` and `PhysicsSelection.check_frame`, and `Sim` repeats the condition check, over the tags of the body groups and the boundary groups, for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:110-118`). `PhysicsSelection.selected` rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum, because it is the form `MAGNETOSTATICS` solves as under a 2D frame (`src/femforge/elmer/config/common/selection.py:18-38`).
 
 Solvers fit the frame too: `solved_stack` replaces every solver with its `fit_frame(frame)`, and `PhysicsConfig.check_frame` requires the frame's coordinate system exactly and calls every solver's `check_frame`. Both solver hooks are no-ops on `SolverBase`.
 
-A frame imports `femforge.elmer.physics` and nothing else from the solver side: `coordinate_system` imports `CoordinateSystem` in its body, and `Axisymmetric.prepare_geometry` imports the geometry stack in its body, so `femforge.elmer.config` and `femforge.physical` can import the frame without a cycle.
+A frame imports `femforge.elmer.physics` and nothing else from the solver side: `coordinate_system` imports `CoordinateSystem` in its body, and each sectioning frame's `prepare_geometry` imports the geometry stack in its body, so `femforge.elmer.config` and `femforge.physical` can import the frame without a cycle.
 
 To add a frame:
 
