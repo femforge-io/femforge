@@ -10,7 +10,7 @@ from rich.tree import Tree
 
 from femforge.common.files import MSH_SUFFIX
 from femforge.common.log import get_console, log
-from femforge.common.tags import TagKey
+from femforge.common.tags import TagKey, parse_tags
 from femforge.common.utils import COLORS, title
 from femforge.meshing.backend import MeshError
 from femforge.meshing.boundary import BoundaryGroup, axis_entity_tags, partition_boundary_faces, read_face_adjacency
@@ -19,7 +19,8 @@ from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.groups import PhysicalGroup, format_boundary_groups, format_physical_groups, raise_on_duplicate_names
 from femforge.meshing.mesh_entity import MeshEntity
 from femforge.meshing.mesh_sizing import apply_mesh_sizing, gmsh_set_global_size, gmsh_set_region_size, resolve_region_sizes
-from femforge.meshing.naming import compose_group_name, name_fragment
+from femforge.meshing.naming import compose_group_name, face_group_name, name_fragment
+from femforge.physical.domain import EntityTag
 
 
 # A linear-motor domain is centimetre-scale; an extent past this many metres almost certainly means the
@@ -156,7 +157,8 @@ class Mesher:
         gmsh.clear()
         options.apply()
 
-        gmsh.model.occ.importShapes(self.input_filename)
+        # Every dimension, so a TaggedFace that shares no shape with a body (a patch) still reaches the fragment.
+        gmsh.model.occ.importShapes(self.input_filename, highestDimOnly=False)
         gmsh.model.occ.synchronize()
 
         # Conformal mesh is REQUIRED: build123d STEPs carry independent, possibly overlapping solids, which gmsh meshes
@@ -171,7 +173,7 @@ class Mesher:
                 log.info("It is a KNOWN OCCT bug that if you do not assign a color to a solid in build123d, the STEP export may not carry a name for that solid, check that first.")
             raise MeshError("All entities must have an associated material before conforming. Please check the error messages above.")
 
-        self._make_conformal()
+        named_faces: dict[int, str] = self._make_conformal()
 
         entity_count: int = len(gmsh.model.getEntities(dim=body_dim))
         self.Entities = [MeshEntity(*entity, config.domain) for entity in gmsh.model.getEntities(dim=body_dim)]
@@ -237,7 +239,7 @@ class Mesher:
 
         # Derive the boundary physical groups from body adjacency, once all body groups exist.
         # Mirrors physical_groups so the sif writer can attach boundary conditions to real boundary ids.
-        self._boundary_groups = self._build_boundary_groups()
+        self._boundary_groups = self._build_boundary_groups(named_faces)
 
         # Set global + per-region element sizes, then mesh and write the .msh.
         apply_mesh_sizing(
@@ -260,17 +262,28 @@ class Mesher:
         _, element_tags, _ = gmsh.model.mesh.getElements(dim=body_dim)
         self._element_count = sum(len(tags) for tags in element_tags)
 
-    def _make_conformal(self) -> None:  # pragma: no cover - mutates a live gmsh OCC model
+    def _make_conformal(self) -> dict[int, str]:  # pragma: no cover - mutates a live gmsh OCC model
         """
-        OCC-``fragment`` every body against every other so touching/overlapping bodies become one conformal decomposition with shared interfaces (no-op for a single body).
+        OCC-``fragment`` the bodies against each other and the tagged faces, so tagged faces join the body boundaries they lie on; returns each tagged face child mapped to its raw STEP name.
 
         ``fragment`` discards STEP entity names, so each input's name + mass is captured first and re-applied via the
-        input->children map; a child claimed by several inputs goes to the smallest-mass claimant.
+        input->children map, a child claimed by several inputs going to the smallest-mass claimant.
         """
         body_dim: int = self.body_dim
+        boundary_dim: int = self.boundary_dim
         volumes: list[tuple[int, int]] = gmsh.model.getEntities(dim=body_dim)
-        if len(volumes) < 2:
-            return
+
+        # A TaggedFace imports as a named body face when it shares its shape with the body, else as a free face (one bounding no body).
+        face_names: dict[int, str] = {tag: gmsh.model.getEntityName(boundary_dim, tag) for _, tag in gmsh.model.getEntities(dim=boundary_dim)}
+        untagged: list[int] = [tag for tag, name in face_names.items() if not parse_tags(name) and len(gmsh.model.getAdjacencies(boundary_dim, tag)[0]) == 0]
+        if untagged:
+            log.bind(faces=untagged).warning("Free boundary entities without a key=value name are ignored.")
+
+        tagged: list[tuple[int, int]] = [(boundary_dim, tag) for tag, name in face_names.items() if parse_tags(name)]
+        if len(volumes) < 2 and not tagged:
+            return {}
+
+        face_masses: dict[int, float] = {tag: gmsh.model.occ.getMass(boundary_dim, tag) for _, tag in tagged}
 
         # Capture (name, mass) before fragmenting: fragment renumbers/replaces volumes and drops their STEP names.
         info: dict[int, tuple[str, float]] = {}
@@ -279,14 +292,13 @@ class Mesher:
             mass = gmsh.model.occ.getMass(body_dim, tag)
             info[tag] = (name, mass)
 
-        # Fragment all volumes against each other (empty tool list = mutually fragment the object set).
-        # out_map[i] is the list of child (dim, tag) entities the i-th input volume became.
-        _out, out_map = gmsh.model.occ.fragment(volumes, [])
+        # out_map[i] is the list of child (dim, tag) entities the i-th input (volumes, then tagged faces) became.
+        _out, out_map = gmsh.model.occ.fragment(volumes, tagged)
         gmsh.model.occ.synchronize()
 
         # Resolve each child volume to its smallest-mass claimant, so an air<->magnet overlap region is named for the magnet.
         claims: dict[int, tuple[float, str]] = {}
-        for (_, in_tag), children in zip(volumes, out_map):
+        for (_, in_tag), children in zip(volumes, out_map[: len(volumes)]):
             name, mass = info[in_tag]
             for child_dim, child_tag in children:
                 if child_dim != body_dim:
@@ -300,30 +312,74 @@ class Mesher:
             if name:
                 gmsh.model.setEntityName(body_dim, child_tag, name)
 
-    def _build_boundary_groups(self) -> list[BoundaryGroup]:  # pragma: no cover - reads adjacency from a live gmsh model
+        # The same rule for faces: a patch tagged on part of a larger tagged face keeps its own name.
+        face_claims: dict[int, tuple[float, str]] = {}
+        for (_, in_tag), children in zip(tagged, out_map[len(volumes) :]):
+            mass = face_masses[in_tag]
+            for child_dim, child_tag in children:
+                if child_dim != boundary_dim:
+                    continue
+
+                current = face_claims.get(child_tag)
+                if current is None or mass < current[0]:
+                    face_claims[child_tag] = (mass, face_names[in_tag])
+
+        named_faces: dict[int, str] = {}
+        for child_tag, (_, name) in face_claims.items():
+            named_faces[child_tag] = name
+            gmsh.model.setEntityName(boundary_dim, child_tag, name)
+
+        return named_faces
+
+    def _build_boundary_groups(self, named_faces: dict[int, str]) -> list[BoundaryGroup]:  # pragma: no cover - reads adjacency from a live gmsh model
         """
-        Emit one boundary-dimension physical group per adjacency-derived boundary set (surfaces in 3D, curves in 2D).
+        Emit one boundary-dimension physical group per adjacency-derived boundary set (surfaces in 3D, curves in 2D), with each tagged face's children carved out into a group of its own.
 
         The partition is *total*: under gmsh's all-or-nothing rule, only faces in some boundary group survive into the mesh, so every boundary Elmer might target must be covered.
         """
         boundary_dim: int = self.boundary_dim
+        domain = self.config.domain
+
+        group_by_face: dict[int, str] = {}
+        faces_by_group: dict[str, list[MeshEntity]] = {}
+        for face_tag in named_faces:
+            entity = MeshEntity(boundary_dim, face_tag, domain)
+            group_name: str | None = face_group_name(entity.tags.get(TagKey.NAME), entity.entity_tags)
+            if group_name is None:
+                log.bind(face=face_tag, name=entity.name_raw).warning("Tagged face has no Name and matches no tag; it stays in its body's boundary groups.")
+                continue
+
+            group_by_face[face_tag] = group_name
+            faces_by_group.setdefault(group_name, []).append(entity)
 
         body_groups = ((group.name, group.entity_tags) for group in self.physical_groups)
         adjacency: dict[int, set[str]] = read_face_adjacency(body_groups, body_dim=self.body_dim)
         # The symmetry axis exists only in a revolving frame (X = radial >= 0); 3D output must stay byte-identical.
         axis_faces: frozenset[int] = axis_entity_tags(adjacency.keys(), dim=boundary_dim) if self.config.frame.revolves else frozenset()
 
+        for group_name, entities in faces_by_group.items():
+            off_body: list[int] = [entity.tag for entity in entities if entity.tag not in adjacency]
+            if len(off_body) == len(entities):
+                raise MeshError(f"The tagged face {group_name!r} lies on no body boundary; author it from a face of the body it loads.")
+
+            if off_body:
+                log.bind(group=group_name, faces=off_body).warning("Part of a tagged face lies on no body boundary and is left out of its group.")
+
         boundary_groups: list[BoundaryGroup] = []
-        # lines = ["", f"{len(adjacency)} boundary faces → {len(adjacency)} physical groups:"]
-        for partition in partition_boundary_faces(adjacency, axis_faces=axis_faces):
+        for partition in partition_boundary_faces(adjacency, axis_faces=axis_faces, named_faces=group_by_face):
             gid: int = gmsh.model.addPhysicalGroup(
                 boundary_dim,
                 list(partition.face_tags),
                 name=partition.name,
             )
             gmsh.model.setPhysicalName(boundary_dim, gid, partition.name)
-            # lines.append(f"  - {partition.name} ({len(partition.face_tags)} face(s)) -> id {gid}")
-            # log.debug(f"Boundary: {partition.name} ({len(partition.face_tags)} face(s)) -> id {gid}")
+
+            tags: list[EntityTag] = []
+            measure: float | None = None
+            if partition.named:
+                matched: list[EntityTag] = [tag for entity in faces_by_group[partition.name] for tag in entity.entity_tags]
+                tags = [tag for tag in domain.tags if any(tag is match for match in matched)]
+                measure = sum(gmsh.model.occ.getMass(boundary_dim, face_tag) for face_tag in partition.face_tags)
 
             group = BoundaryGroup(
                 gmsh_id=gid,
@@ -332,6 +388,9 @@ class Mesher:
                 face_tags=list(partition.face_tags),
                 dim=boundary_dim,
                 on_axis=partition.on_axis,
+                tags=tags,
+                measure=measure,
+                named=partition.named,
             )
             boundary_groups.append(group)
 

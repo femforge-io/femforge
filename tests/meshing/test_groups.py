@@ -164,6 +164,18 @@ def test_format_boundary_groups_aligns_each_group_with_its_id() -> None:
     ]
 
 
+def test_format_boundary_groups_shows_the_measure_of_named_groups() -> None:
+    groups = [
+        BoundaryGroup(gmsh_id=3, name="BEAM__EXT", bodies=("BEAM",), face_tags=[10, 11]),
+        BoundaryGroup(gmsh_id=4, name="TIP", bodies=("BEAM",), face_tags=[12], measure=1e-4, named=True),
+    ]
+
+    lines = format_boundary_groups(groups).split("\n")
+
+    assert lines[2] == "  BEAM__EXT    2  → id 3"
+    assert lines[3] == "  TIP          1  → id 4  (0.0001 m²)"
+
+
 def test_duplicate_body_names_raise_and_name_the_clash() -> None:
     seat = PhysicalGroup(
         dim=3,
@@ -225,8 +237,18 @@ def test_groups_file_captures_the_mesher_groups_and_round_trips(tmp_path: Path) 
         dim=1,
         on_axis=True,
     )
+    tip = BoundaryGroup(
+        gmsh_id=5,
+        name="TIP",
+        bodies=("MAGNET",),
+        face_tags=[14, 15],
+        dim=1,
+        tags=[EntityTag(selector={TagKey.NAME: "Tip"})],
+        measure=0.004,
+        named=True,
+    )
 
-    groups = MeshGroupsFile.capture([air, magnet], [external, axis], element_count=4067)
+    groups = MeshGroupsFile.capture([air, magnet], [external, axis, tip], element_count=4067)
     path = groups.write(tmp_path)
 
     assert groups.bodies[1] == BodyGroupRecord(
@@ -245,6 +267,15 @@ def test_groups_file_captures_the_mesher_groups_and_round_trips(tmp_path: Path) 
             bodies=("AIR",),
             face_tags=[13],
             on_axis=True,
+        ),
+        BoundaryGroupRecord(
+            dim=1,
+            name="TIP",
+            bodies=("MAGNET",),
+            face_tags=[14, 15],
+            named=True,
+            selectors=[{"Name": "Tip"}],
+            measure=0.004,
         ),
     ]
     assert groups.element_count == 4067

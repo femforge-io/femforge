@@ -106,6 +106,9 @@ class GmshOptions(BaseModel):
     smoothing: Annotated[int | None, Map("Mesh.Smoothing")] = None
     """Number of mesh smoothing steps (Mesh.Smoothing); None inherits gmsh's default."""
 
+    element_order: Annotated[int | None, Map("Mesh.ElementOrder")] = None
+    """Polynomial order of the elements (Mesh.ElementOrder), such as 2 for the quadratic tetrahedra bending needs; None inherits gmsh's linear default."""
+
     num_threads: Annotated[int | None, Map("General.NumThreads"), HashExclude()] = Field(default_factory=_default_num_threads)
     """Meshing threads (General.NumThreads): every physical core by default, None for gmsh's own default of one, and never part of an identity."""
 

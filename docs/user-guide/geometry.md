@@ -76,7 +76,7 @@ The model stays in the frame you author it in. `SimulationConfig.frame` maps it 
 | --- | --- | --- |
 | [TaggedPart][femforge.geometry.tags.TaggedPart] | `build123d.Part` | A body of a 3D model: one material, one region. |
 | [TaggedCompound][femforge.geometry.tags.TaggedCompound] | `build123d.Compound` | A group of tagged parts. Its tags pass down to every tagged leaf on export. |
-| [TaggedFace][femforge.geometry.tags.TaggedFace] | `build123d.Face` | A body of a planar 2D model. |
+| [TaggedFace][femforge.geometry.tags.TaggedFace] | `build123d.Face` | A body of a planar 2D model, or a named face of a 3D body that boundary conditions target. |
 
 Each takes build123d shapes and the keyword `tags=`: `TaggedPart(shapes)` the solids it holds, such as `[box]` or a build123d part, `TaggedCompound(children=...)` the tagged shapes below it, and `TaggedFace(face)` one build123d face. `TaggedPart` and `TaggedFace` also take `name=`. The tags set the label, which the STEP file carries as the part name.
 
@@ -112,7 +112,7 @@ An [EntityTag][femforge.physical.EntityTag] selects bodies by a `selector`. A bo
 
 A body can match several tags. It collects the conditions of all of them, and the finest `mesh_size` wins. Select by a shared tag such as `Magnetization=N` to reach many bodies at once, or by `Name` to reach one.
 
-You never tag faces. A boundary condition on a body's tag lands on the surfaces that body borders. See [Conditions and physics](conditions.md#where-conditions-land).
+A boundary condition on a body's tag lands on the surfaces that body borders. To reach one face, tag the face itself as a `TaggedFace`. See [Conditions and physics](conditions.md#named-faces).
 
 ## Body and boundary names
 
@@ -133,13 +133,14 @@ Boundary groups take the names of the bodies they border:
 | Interface between two bodies | `<A>__<B>`, sorted | `AIR__MAGNET` |
 | A body's outer shell, shared with no other body | `<BODY>__EXT` | `AIR__EXT` |
 | A body's edge on the symmetry axis of a 2D axisymmetric model | `<BODY>__AXIS` | `AIR__AXIS` |
+| A tagged face of a 3D body | The authored name, uppercased, else its matched tags' names | `TIP` |
 
 Keep the names unique and short:
 
 - Two body groups with the same name raise an error, for example one `Name` on parts of two materials.
 - Elmer reads names into 128-character buffers, and an interface name joins two body names. The mesher warns when a body name passes 60 characters.
 
-If a body arrives at the mesher without a name, give the build123d solid a `color`. The STEP export can drop the name of an uncoloured solid.
+If a body or a tagged face arrives at the mesher without a name, give the build123d shape a `color`. The STEP export can drop the name of an uncoloured shape.
 
 ## Reference
 

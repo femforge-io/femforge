@@ -50,6 +50,7 @@ class _FakeBoundaryGroup:
     name: str
     bodies: tuple[str, ...]
     on_axis: bool = False
+    named: bool = False
 
 
 def _write_sample_entities(tmp_path: Path) -> None:
@@ -62,6 +63,7 @@ def _write_sample_entities(tmp_path: Path) -> None:
         _FakeBoundaryGroup(id=4, name="AIR__EXT", bodies=("AIR",)),
         _FakeBoundaryGroup(id=5, name="AIR__N42_MAGNETIZATIONN", bodies=("AIR", "N42_MAGNETIZATIONN")),
         _FakeBoundaryGroup(id=6, name="AIR__AXIS", bodies=("AIR",), on_axis=True),
+        _FakeBoundaryGroup(id=7, name="RIGHTFACE", bodies=("N42_MAGNETIZATIONN",), named=True),
     ]
     write_entities(tmp_path, body_groups, boundary_groups)
 
@@ -77,6 +79,7 @@ def test_write_entities_round_trips_ids_materials_and_tags(tmp_path: Path) -> No
     # An empty material tag is recorded as absent, not as "".
     assert data.bodies[3].material is None
     assert data.boundaries[6].on_axis is True
+    assert data.boundaries[7].named is True and data.boundaries[6].named is False
 
 
 def test_load_entities_from_the_sidecar_resolves_kinds_and_sif_indices(tmp_path: Path) -> None:
@@ -102,6 +105,11 @@ def test_load_entities_from_the_sidecar_resolves_kinds_and_sif_indices(tmp_path:
     assert interface.sif_index is None
 
     assert entities.boundaries["AIR__AXIS"].kind is BoundaryKind.AXIS
+
+    face = entities.boundaries.face("RightFace")
+    assert face.kind is BoundaryKind.NAMED
+    assert face.bodies == ("N42_MAGNETIZATIONN",)
+    assert face.mesh_id == 7
 
 
 def _manifest(tmp_path: Path) -> RunManifest:
@@ -133,6 +141,7 @@ $ MYSTERY_MAGNETIZATIONN = 4
 $ AIR__EXT = 5
 $ AIR__N42_MAGNETIZATIONN = 6
 $ AIR__AXIS = 7
+$ TIP = 8
 """
 
 
@@ -184,6 +193,10 @@ def test_load_entities_bare_mesh_names_when_no_manifest(tmp_path: Path) -> None:
     assert body.mesh_id == 2
     assert body.material is None
     assert body.tags == {}
+
+    tip = entities.boundaries["TIP"]
+    assert tip.kind is BoundaryKind.NAMED
+    assert tip.bodies == ()
 
 
 def test_load_entities_empty_when_no_files(tmp_path: Path) -> None:

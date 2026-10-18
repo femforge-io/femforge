@@ -74,7 +74,7 @@ A body condition applies to every body its tag matches, and its `section` names 
 - `CoilDrive` and `CalculateMagneticForce` become Elmer Components. One condition instance gathers every body it matches into one Component.
 - The rest become one Body Force block per body.
 
-You never tag a surface. A boundary condition on a body's tag lands on every boundary group that body borders, both its interfaces with other bodies and its outer shell. `Convection` and `CoilTerminal` land on the outer shell only (`<BODY>__EXT`): a film coefficient on an interior interface would bypass the conduction path, and a coil terminal is the electrode's exposed end face. When several conditions reach one surface, they merge into one boundary block.
+A boundary condition on a body's tag lands on every boundary group that body borders, both its interfaces with other bodies and its outer shell. `Convection` and `CoilTerminal` land on the outer shell only (`<BODY>__EXT`): a film coefficient on an interior interface would bypass the conduction path, and a coil terminal is the electrode's exposed end face. When several conditions reach one surface, they merge into one boundary block.
 
 For example, with a copper body named `Trace` on an FR4 body named `Board`:
 
@@ -82,6 +82,31 @@ For example, with a copper body named `Trace` on an FR4 body named `Board`:
 | --- | --- | --- |
 | `FixedTemperature` | yes | yes |
 | `Convection` | no | yes |
+
+### Named faces
+
+To load one face rather than a whole shell, tag the face. A [TaggedFace][femforge.geometry.tags.TaggedFace] laid on a face of a 3D body becomes a boundary group of its own, named after the face, such as `TIP` for `name="Tip"`. The mesher carves it out of the shell or interface it lies on, so `BEAM__EXT` keeps the rest of the shell. A face smaller than the body face it lies on splits that face.
+
+```python
+import build123d as b3d
+
+import femforge as ff
+
+box = b3d.Box(100, 10, 10)
+beam = ff.TaggedPart([box], tags={ff.TagKey.MATERIAL: "Steel316"}, name="Beam")
+x_faces = box.faces().filter_by(b3d.Axis.X).sort_by(b3d.Axis.X)
+root = ff.TaggedFace(x_faces[0], name="Root")
+model = ff.TaggedCompound(children=[beam, root])
+
+cold_root = ff.EntityTag(selector={ff.TagKey.NAME: "Root"}, conditions=[ff.FixedTemperature(value=300 * ff.U.K)])
+```
+
+Take the face from the body's own `faces()`, so it coincides with the body face exactly, and sort by position: build123d does not order `faces()` along an axis.
+
+- An `EntityTag` whose selector matches the face puts its boundary conditions on the face's group.
+- The bordering body's boundary conditions still reach the face, `Convection` included when the face lies on the outer shell. Where the face and the body set the same keyword, the face's value wins.
+- A face that lies on no body boundary stops the mesh with an error.
+- `SurfaceForce` spreads its total force over the face's area, so it needs a named face; on a body's tag it raises.
 
 Some conditions need no authoring:
 

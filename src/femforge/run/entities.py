@@ -36,11 +36,12 @@ class BodyRecord(BaseModel):
 
 
 class BoundaryRecord(BaseModel):
-    """One boundary group in ``entities.json``: its Elmer name, the body names it borders, and the symmetry-axis flag."""
+    """One boundary group in ``entities.json``: its Elmer name, the body names it borders, and the symmetry-axis and named-face flags."""
 
     name: str
     bodies: tuple[str, ...] = ()
     on_axis: bool = False
+    named: bool = False
 
 
 class EntitiesFile(BaseModel):
@@ -88,6 +89,8 @@ class _BoundaryGroupLike(Protocol):
     def bodies(self) -> tuple[str, ...]: ...
     @property
     def on_axis(self) -> bool: ...
+    @property
+    def named(self) -> bool: ...
 
 
 def write_entities(sim_dir: str | Path, physical_groups: Iterable[_BodyGroupLike], boundary_groups: Iterable[_BoundaryGroupLike]) -> Path:
@@ -114,6 +117,7 @@ def write_entities(sim_dir: str | Path, physical_groups: Iterable[_BodyGroupLike
             name=group.name,
             bodies=tuple(group.bodies),
             on_axis=group.on_axis,
+            named=group.named,
         )
         for group in boundary_groups
     }
@@ -124,7 +128,7 @@ def write_entities(sim_dir: str | Path, physical_groups: Iterable[_BodyGroupLike
 
 
 class BoundaryKind(StrEnum):
-    """What a boundary group separates: two bodies, a body's external shell, or its trace on the 2D symmetry axis."""
+    """What a boundary group separates: two bodies, a body's external shell, its trace on the 2D symmetry axis, or a tagged face."""
 
     INTERFACE = "Interface"
     """The interface between two bodies (``A__B``)."""
@@ -134,6 +138,9 @@ class BoundaryKind(StrEnum):
 
     AXIS = "Axis"
     """A body's trace on the 2D symmetry axis (``A__AXIS``)."""
+
+    NAMED = "Named"
+    """A tagged face's own group, named after the face (``TIP``)."""
 
 
 @dataclass(frozen=True)
@@ -254,6 +261,10 @@ class Boundaries:
         """The body's external shell boundary (``<BODY>__EXT``)."""
         return self[f"{_name_of(body)}{BOUNDARY_SEP}{EXTERNAL_SUFFIX}"]
 
+    def face(self, name: str) -> Boundary:
+        """The named group of the tagged face authored as ``name``, such as ``"RightFace"`` for ``RIGHTFACE``."""
+        return self[name_fragment(name)]
+
     def axis(self, body: Body | str) -> Boundary | None:
         """The body's symmetry-axis boundary (``<BODY>__AXIS``), or None when it has none."""
         return self.get(f"{_name_of(body)}{BOUNDARY_SEP}{AXIS_SUFFIX}")
@@ -275,8 +286,11 @@ class Entities:
     """The named boundaries."""
 
 
-def _boundary_kind(name: str, on_axis: bool) -> BoundaryKind:
-    """A boundary's kind from its name suffix (or the recorded axis flag)."""
+def _boundary_kind(name: str, on_axis: bool, named: bool = False) -> BoundaryKind:
+    """A boundary's kind from the recorded flags, else its name: an adjacency name always carries the separator."""
+    if named or BOUNDARY_SEP not in name:
+        return BoundaryKind.NAMED
+
     if on_axis or name.endswith(BOUNDARY_SEP + AXIS_SUFFIX):
         return BoundaryKind.AXIS
 
@@ -287,7 +301,10 @@ def _boundary_kind(name: str, on_axis: bool) -> BoundaryKind:
 
 
 def _bodies_from_name(name: str) -> tuple[str, ...]:
-    """The bordering body names encoded in an ``A__B`` / ``A__EXT`` / ``A__AXIS`` boundary name."""
+    """The bordering body names encoded in an ``A__B`` / ``A__EXT`` / ``A__AXIS`` boundary name; a named group's name encodes none."""
+    if BOUNDARY_SEP not in name:
+        return ()
+
     parts: list[str] = name.split(BOUNDARY_SEP)
     if parts[-1] in (EXTERNAL_SUFFIX, AXIS_SUFFIX):
         return tuple(parts[:-1])
@@ -371,7 +388,7 @@ def load_entities(sim_dir: str | Path, manifest: RunManifest | None = None) -> E
                 name=record.name,
                 mesh_id=mesh_id,
                 bodies=tuple(record.bodies),
-                kind=_boundary_kind(record.name, record.on_axis),
+                kind=_boundary_kind(record.name, record.on_axis, record.named),
                 sif_index=sif_by_group.get(record.name),
             )
             for mesh_id, record in data.boundaries.items()

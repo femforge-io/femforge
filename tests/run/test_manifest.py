@@ -96,7 +96,7 @@ def test_cache_key_of_a_fixed_config_is_pinned() -> None:
     """A fixed config hashes to a pinned key, so a change that moves run identities fails here first."""
     config = _config(materials=[Steel_1080(), N42()])
 
-    assert cache_key(config) == "484583fe0a4f855e411adf17f65e2d92d3d31981baa0b86329307e38ce030e7c"
+    assert cache_key(config) == "16846472b4bfcbf2f9049c1cf1f895aa703965dbff833d8ecabadd5acbe2a887"
 
 
 def test_cache_key_distinguishes_permeability_mode() -> None:

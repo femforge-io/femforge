@@ -30,3 +30,15 @@ def compose_group_name(material: MaterialProperties, tags: list[EntityTag], warn
     if len(name) > MAX_SAFE_GROUP_NAME:
         warn(f"Group name {name!r} is {len(name)} chars; boundary pair names may exceed Elmer's 128-char MAX_NAME_LEN. Shorten tag keys/values (see compose_group_name).")
     return name
+
+
+def face_group_name(authored: str | None, tags: list[EntityTag]) -> str | None:
+    """A named face group's name: the ``authored`` face name, else the names of the matched tags that select something, else None for a face nothing names."""
+    if authored:
+        return name_fragment(authored)
+
+    selecting: list[str] = [tag.name for tag in tags if tag.selector]
+    if selecting:
+        return name_fragment("_".join(selecting))
+
+    return None

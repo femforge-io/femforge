@@ -21,7 +21,7 @@ from .elmer.config.common.selection import PhysicsSelection as PhysicsSelection
 from .elmer.physics import Physics as Physics
 from .frames import Axis as Axis, Axisymmetric as Axisymmetric, Frame as Frame, Solid as Solid
 from .geometry.build123d_geometry import Build123dGeometry as Build123dGeometry
-from .geometry.tags import TaggedCompound as TaggedCompound, TaggedPart as TaggedPart
+from .geometry.tags import TaggedCompound as TaggedCompound, TaggedFace as TaggedFace, TaggedPart as TaggedPart
 from .geometry.utils import boundary_box as boundary_box
 from .meshing.backend import GmshMesher as GmshMesher, WorkerMesher as WorkerMesher
 from .meshing.config import MeshConfig as MeshConfig

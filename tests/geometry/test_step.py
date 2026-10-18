@@ -1,4 +1,4 @@
-"""Tagged STEP import: assembly names and placements, and the rejected unnamed body."""
+"""Tagged STEP import: assembly names and placements, named faces, and the rejected entries."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import build123d as b3d
 import pytest
 
 from femforge.geometry.step import import_tagged_step
-from femforge.geometry.tags import TaggedCompound, TaggedPart
+from femforge.geometry.tags import TaggedCompound, TaggedEdge, TaggedFace, TaggedPart
 
 
 def test_import_inherits_assembly_names_and_placements(tmp_path: Path) -> None:
@@ -29,3 +29,32 @@ def test_an_unnamed_body_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="no key=value name"):
         _ = import_tagged_step(tmp_path / "bare.step")
+
+
+def _beam_with(leaf: TaggedFace | TaggedEdge) -> TaggedCompound:
+    box = b3d.Box(10, 2, 2)
+    beam = TaggedPart([box], tags={"Material": "Steel316"}, name="Beam")
+    beam.color = b3d.Color("gray")
+    leaf.color = b3d.Color("red")
+    return TaggedCompound(children=[beam, leaf])
+
+
+def test_a_named_sheet_face_imports_as_a_tagged_face(tmp_path: Path) -> None:
+    root = TaggedFace(b3d.Box(10, 2, 2).faces().sort_by(b3d.Axis.X)[0], name="Root")
+    _beam_with(root).export_step(str(tmp_path / "faces.step"))
+
+    children = cast("tuple[object, ...]", import_tagged_step(tmp_path / "faces.step").children)
+
+    assert [type(child).__name__ for child in children] == ["TaggedPart", "TaggedFace"]
+    face = cast("TaggedFace", children[1])
+    assert face.current_tags == {"Name": "Root"}
+    assert face.area == pytest.approx(4.0)
+    assert face.center().X == pytest.approx(-5.0)
+
+
+def test_an_entry_with_neither_solid_nor_face_raises(tmp_path: Path) -> None:
+    wire = TaggedEdge(b3d.Box(10, 2, 2).edges()[0], tags={"Name": "Wire"})
+    _beam_with(wire).export_step(str(tmp_path / "edge.step"), flatten=False)
+
+    with pytest.raises(ValueError, match="neither a solid nor a face"):
+        _ = import_tagged_step(tmp_path / "edge.step")

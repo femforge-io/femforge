@@ -1,4 +1,4 @@
-"""Boundary physical groups derived from body adjacency: the mesh surfaces (3D) or curves (2D) boundary conditions attach to without hand-labelling."""
+"""Boundary physical groups: the mesh surfaces (3D) or curves (2D) boundary conditions attach to, derived from body adjacency and tagged faces."""
 
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ AXIS_TOLERANCE_M = 1e-6
 
 class BoundaryGroup:
     """
-    A single gmsh boundary physical group derived from body adjacency — the one-dimension-down sibling of ``PhysicalGroup``, targeted by Elmer as ``Target Boundaries``.
+    A single gmsh boundary physical group — the one-dimension-down sibling of ``PhysicalGroup``, targeted by Elmer as ``Target Boundaries``.
 
-    Names encode the bordering bodies: ``<BODYA>__<BODYB>`` (interface), ``<BODY>__EXT`` (external shell), or ``<BODY>__AXIS`` (symmetry axis).
+    Names encode the bordering bodies, ``<BODYA>__<BODYB>``, ``<BODY>__EXT`` or ``<BODY>__AXIS``, or carry a tagged face's own name, such as ``TIP``.
     """
 
     def __init__(
@@ -68,7 +68,7 @@ class BoundaryGroup:
         """The integer the sif targets this boundary by: the gmsh tag until [`reconcile_ids`][femforge.elmer.mesh_names.reconcile_ids] sets the id ElmerGrid assigned."""
 
         self.name = name
-        """The compound ``BODYA__BODYB``, ``BODY__EXT`` or ``BODY__AXIS`` name, shared verbatim with Elmer."""
+        """The compound ``BODYA__BODYB``, ``BODY__EXT`` or ``BODY__AXIS`` name, or a named group's face name, shared verbatim with Elmer."""
 
         self.bodies = bodies
         """The 1 (external or axis) or 2 (interface) body group names this boundary borders."""
@@ -90,7 +90,7 @@ class BoundaryGroup:
 
     @property
     def is_external(self) -> bool:
-        """True when this is a body's true external (far-field) shell: bordered by exactly one body and not on the symmetry axis."""
+        """True when the group is bordered by exactly one body and not on the symmetry axis: a body's external shell or a named face on it."""
         return len(self.bodies) == 1 and not self.on_axis
 
     @property
@@ -122,17 +122,37 @@ class BoundaryPartition:
     on_axis: bool = False
     """Whether the group is a single body's boundary on the symmetry axis."""
 
+    named: bool = False
+    """Whether the group is a tagged face's own group."""
 
-def partition_boundary_faces(face_to_bodies: Mapping[int, set[str]], *, axis_faces: frozenset[int] = frozenset()) -> list[BoundaryPartition]:
-    """Group every boundary face by the bodies it borders into sorted interface (``A__B``), external (``A__EXT``) and symmetry-axis (``A__AXIS``) partitions.
 
-    A face in ``axis_faces`` becomes an axis partition only when it borders a single body.
+def partition_boundary_faces(
+    face_to_bodies: Mapping[int, set[str]],
+    *,
+    axis_faces: frozenset[int] = frozenset(),
+    named_faces: Mapping[int, str] | None = None,
+) -> list[BoundaryPartition]:
+    """Group every boundary face by the bodies it borders into sorted interface (``A__B``), external (``A__EXT``) and symmetry-axis (``A__AXIS``) partitions, then one partition per named face group.
+
+    Args:
+        face_to_bodies: Each boundary face mapped to the bodies it bounds.
+        axis_faces: The faces on the symmetry axis; one becomes an axis partition only when it borders a single body.
+        named_faces: Each tagged face mapped to its group name; such a face leaves its adjacency group for the named one, sorted after the adjacency groups.
     """
+    names: Mapping[int, str] = named_faces or {}
+
     grouped: dict[tuple[tuple[str, ...], bool], list[int]] = defaultdict(list)
+    named_tags: dict[str, list[int]] = defaultdict(list)
+    named_bodies: dict[str, set[str]] = defaultdict(set)
     for face_tag, bodies in face_to_bodies.items():
         key = tuple(sorted(bodies))
         if not key:
             continue  # a face bounding no known body can't be named; skip rather than invent a group.
+
+        if face_tag in names:
+            named_tags[names[face_tag]].append(face_tag)
+            named_bodies[names[face_tag]].update(key)
+            continue
         on_axis: bool = len(key) == 1 and face_tag in axis_faces
         grouped[(key, on_axis)].append(face_tag)
 
@@ -151,6 +171,15 @@ def partition_boundary_faces(face_to_bodies: Mapping[int, set[str]], *, axis_fac
             bodies=bodies,
             face_tags=face_tags,
             on_axis=on_axis,
+        )
+        partitions.append(partition)
+
+    for name in sorted(named_tags):
+        partition = BoundaryPartition(
+            name=name,
+            bodies=tuple(sorted(named_bodies[name])),
+            face_tags=tuple(sorted(named_tags[name])),
+            named=True,
         )
         partitions.append(partition)
 
