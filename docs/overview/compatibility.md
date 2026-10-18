@@ -43,7 +43,7 @@ The workbench pins the minor versions of its 3D client stack, because it works a
 | `trame-vtklocal` | `>=1.7.1,<1.8` | `tolerate_dropped_objects` in `panels/scene.py` patches a status request that raises on 1.7.1 |
 | `pyvista` | `>=0.49.0,<0.50` | `mirror_friendly` moves the 64-bit cell arrays that 0.49 filters such as `clip_box` leave to 32-bit storage |
 
-femforge itself pins `build123d` to the 0.13 minor and `polars` to the 2.x major. The workbench needs trame 4 and its React client (`trame>=4.0.0`, `trame-client>=4.1`). The workbench `ocp` extra pins `ocp_vscode` to the 4.1 minor.
+femforge itself pins `build123d` to the 0.13 minor and `polars` to the 2.x major. The workbench needs trame 4 and its React client (`trame>=4.0.0`, `trame-client>=4.1`). The workbench `ocp` extra pins `ocp_vscode` to the 4.1 and 4.2 minors.
 
 ## Report a problem
 
