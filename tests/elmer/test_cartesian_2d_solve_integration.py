@@ -30,6 +30,7 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import U, quantity
 from femforge.run.driver import Driver
 from femforge.run.fields import FieldMesh
+from femforge.run.mechanical import clapeyron_energy, strain_energy
 from femforge.run.result import Result
 
 from tests.elmer.test_thermal_solve_integration import _find_elmer
@@ -193,6 +194,24 @@ def test_a_tip_loaded_cantilever_matches_timoshenko(tmp_path: Path) -> None:
     tip = _bar(tmp_path, _planar(), Vec3(0, force, 0))
 
     assert tip[1] == pytest.approx(expected, rel=0.05)
+
+
+def test_the_planar_strain_energy_is_per_metre_and_balances_the_work_of_the_per_metre_share(tmp_path: Path) -> None:
+    """Observed on Elmer 26.2: 0.13297 J/m stored against 0.13308 J/m of work, 1.3297e-3 J over the prism against 1.3348e-3 J."""
+    force = Vec3(0, 100, 0)
+    frame: Cartesian2D = _planar()
+    load = SurfaceForce(force=quantity(force, "N"))
+    _, mesh = _solve(tmp_path, frame, Physics.LINEAR_ELASTICITY, [], [FixedDisplacement()], [load])
+
+    stored: float = strain_energy(mesh, BODY.upper())
+    work: float = clapeyron_energy(mesh, "RIGHT", frame.solve_share(force))
+    length = LENGTH * 1e-3
+    inertia = DEPTH * HEIGHT**3 * 1e-12 / 12
+    shear_modulus = YOUNGS / (2 * (1 + POISSON))
+    deflection: float = force.y * length**3 / (3 * YOUNGS * inertia) + force.y * length / (5 / 6 * shear_modulus * HEIGHT * DEPTH * 1e-6)
+
+    assert stored == pytest.approx(work, rel=0.03)
+    assert stored * frame.thickness_m == pytest.approx(0.5 * force.y * deflection, rel=0.05)
 
 
 def test_the_planar_cantilever_matches_its_solid_solve(tmp_path: Path) -> None:
