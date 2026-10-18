@@ -22,7 +22,7 @@ from femforge.run.manifest import RunManifest
 
 
 # Three id spaces coexist in a bundle and are deliberately never conflated:
-#   mesh_id   -- ElmerGrid's mesh.names numbering (one continuing sequence: bodies then boundaries); the VTU's GeometryIds values.
+#   mesh_id   -- ElmerGrid's mesh.names numbering; a body's is its cells' VTU GeometryIds value, a boundary's cells carry BC_ID_OFFSET + sif_index instead.
 #   sif_index -- per-section 1..N block numbers: boundaries.yml for Boundary Condition blocks, components.yml for Component blocks.
 # No attribute here is ever a bare ``id``.
 
@@ -168,7 +168,7 @@ class Boundary:
     """The boundary group's name, such as ``A__B`` or ``A__EXT``."""
 
     mesh_id: int
-    """The boundary's ``GeometryIds`` value in the VTU."""
+    """The boundary's id in ``mesh.names``; its VTU cells carry its ``sif_index`` plus an offset instead."""
 
     bodies: tuple[str, ...]
     """The names of the bodies the boundary borders."""

@@ -7,7 +7,7 @@ import pytest
 
 from femforge.common.tags import TagKey
 from femforge.elmer.variables import ElmerVariable
-from femforge.run.entities import Bodies, Body
+from femforge.run.entities import Bodies, Body, Boundaries, Boundary, BoundaryKind
 from femforge.run.fields import FieldMesh, select_array
 
 
@@ -245,3 +245,86 @@ def test_2d_grid_falls_back_to_area_measure() -> None:
     mesh = FieldMesh.from_grid(grid)
     assert mesh.measure.tolist() == pytest.approx([2.0])
     assert mesh.get("joule heating").integrate() == pytest.approx(10.0)
+
+
+# --- boundary selection and surface means -------------------------------------
+
+
+def _faces() -> Boundaries:
+    return Boundaries(
+        [
+            Boundary(name="AIR__EXT", mesh_id=3, bodies=("AIR",), kind=BoundaryKind.EXTERNAL, sif_index=1),
+            Boundary(name="AIR__N42_MAGNETIZATIONN", mesh_id=4, bodies=("AIR", "N42_MAGNETIZATIONN"), kind=BoundaryKind.INTERFACE, sif_index=2),
+            Boundary(name="N42_MAGNETIZATIONN__EXT", mesh_id=5, bodies=("N42_MAGNETIZATIONN",), kind=BoundaryKind.EXTERNAL),
+        ]
+    )
+
+
+def _faced(**overrides: object) -> FieldMesh:
+    return _mesh(boundaries=_faces(), geometry_ids=np.array([1, 1, 2, 2, 101, 102], dtype=np.int64), **overrides)
+
+
+def test_where_boundary_keeps_the_zero_volume_overlay_cells() -> None:
+    mesh = _faced()
+
+    assert mesh.get("joule heating").where_boundary("AIR__EXT").values.tolist() == [100.0]
+    assert mesh.get("joule heating").where_boundary(_faces()["AIR__N42_MAGNETIZATIONN"], "AIR__EXT").values.tolist() == [100.0, 50.0]
+
+
+def test_surface_mean_weighs_by_area() -> None:
+    mesh = _faced(area=np.array([0.0, 0.0, 0.0, 0.0, 1.0, 3.0]))
+    both = mesh.get("joule heating").where_boundary("AIR__EXT", "AIR__N42_MAGNETIZATIONN")
+
+    assert both.surface_mean() == pytest.approx((100.0 * 1.0 + 50.0 * 3.0) / 4.0)
+    flux = mesh.get("magnetic flux density e").where_boundary("AIR__EXT", "AIR__N42_MAGNETIZATIONN")
+    assert np.asarray(flux.surface_mean()).tolist() == pytest.approx([6.0, 2.25, 2.25])
+
+    with pytest.raises(ValueError, match="zero total area"):
+        mesh.get("joule heating").where_body("AIR").surface_mean()
+
+
+def test_boundary_queries_name_what_the_mesh_lacks() -> None:
+    with pytest.raises(RuntimeError, match="no boundary names"):
+        _mesh().get("joule heating").where_boundary("AIR__EXT")
+
+    with pytest.raises(KeyError, match="AIR__EXT"):
+        _faced().get("joule heating").where_boundary("TIP")
+
+    with pytest.raises(ValueError, match="no Boundary Condition block"):
+        _faced().get("joule heating").where_boundary("N42_MAGNETIZATIONN__EXT")
+
+    with pytest.raises(RuntimeError, match="no cell areas"):
+        _faced().get("joule heating").where_boundary("AIR__EXT").surface_mean()
+
+
+def test_the_boundary_id_offset_grows_past_the_largest_body_id() -> None:
+    mesh = _mesh(boundaries=_faces(), geometry_ids=np.array([100, 100, 2, 2, 1001, 101], dtype=np.int64))
+
+    assert mesh.get("joule heating").where_boundary("AIR__EXT").values.tolist() == [100.0]
+
+
+def test_from_grid_carries_face_areas_boundaries_and_the_strain_energy_density() -> None:
+    pytest.importorskip("pyvista")
+    grid = _synthetic_grid()
+    grid.point_data["stress"] = np.tile([2.0, 0.0, 0.0, 0.0, 0.0, 0.0], (grid.n_points, 1))
+    grid.point_data["strain"] = np.tile([0.5, 0.0, 0.0, 0.0, 0.0, 0.0], (grid.n_points, 1))
+    grid.cell_data["GeometryIds"] = np.array([1, 2, 101], dtype=np.int32)
+    faces = Boundaries([Boundary(name="LEFT__EXT", mesh_id=3, bodies=("LEFT",), kind=BoundaryKind.EXTERNAL, sif_index=1)])
+
+    mesh = FieldMesh.from_grid(grid, boundaries=faces)
+
+    assert mesh.area is not None and mesh.area.tolist() == pytest.approx([0.0, 0.0, 1.0])
+    assert mesh.get("potential").where_boundary("LEFT__EXT").surface_mean() == pytest.approx(0.0)
+    assert mesh.get(ElmerVariable.STRAIN_ENERGY_DENSITY).values.tolist() == pytest.approx([0.5, 0.5, 0.5])
+
+
+def test_2d_grid_measures_its_boundary_edges_by_length() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    points = np.array([(0.0, 0, 0), (2.0, 0, 0), (2.0, 1, 0), (0.0, 1, 0)], dtype=np.float64)
+    grid = pv.UnstructuredGrid(np.array([4, 0, 1, 2, 3, 2, 1, 2]), np.array([pv.CellType.QUAD, pv.CellType.LINE]), points)
+
+    mesh = FieldMesh.from_grid(grid)
+
+    assert mesh.area is not None and mesh.area.tolist() == pytest.approx([0.0, 1.0])

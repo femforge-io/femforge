@@ -3,7 +3,7 @@
 import pytest
 
 from femforge.elmer.physics import Physics
-from femforge.elmer.variables import ElmerVariable, elemental, variable_unit
+from femforge.elmer.variables import ElmerVariable, elemental, variable_of, variable_unit
 
 
 def test_every_variable_but_the_potential_names_its_unit() -> None:
@@ -21,6 +21,10 @@ def test_every_variable_but_the_potential_names_its_unit() -> None:
         ("potential", Physics.MAGNETOSTATICS_2D, "T·m"),
         ("potential", Physics.ELECTROSTATICS, "V"),
         ("GeometryIds", Physics.MAGNETOSTATICS, None),
+        ("stress", Physics.LINEAR_ELASTICITY, "Pa"),
+        ("vonmises", None, "Pa"),
+        ("principal strain", None, "-"),
+        ("strain energy density", None, "J/m³"),
     ],
 )
 def test_a_vtu_array_resolves_to_its_unit(name: str, physics: Physics | None, unit: str | None) -> None:
@@ -30,3 +34,9 @@ def test_a_vtu_array_resolves_to_its_unit(name: str, physics: Physics | None, un
 def test_the_elemental_name_takes_the_suffix_the_unit_lookup_strips() -> None:
     assert elemental(ElmerVariable.MAGNETIC_FLUX_DENSITY) == "Magnetic Flux Density e"
     assert variable_unit(elemental("Joule Heating")) == "W/m³"
+
+
+def test_a_vtu_array_name_resolves_to_its_variable() -> None:
+    assert variable_of("principal stress") is ElmerVariable.PRINCIPAL_STRESS
+    assert variable_of("Stress e") is ElmerVariable.STRESS
+    assert variable_of("GeometryIds") is None

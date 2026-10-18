@@ -11,6 +11,8 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - Frame hooks `Frame.solve_share`, the inverse of `Frame.total`, `Frame.revolves` and `Frame.plane_stress`, and solver hooks `SolverBase.fit_frame` and `SolverBase.check_frame`.
 - Named faces: a `TaggedFace` on a face of a 3D body becomes a boundary group of its own, such as `TIP`, carved out of the shell or interface it lies on, with its area recorded. The boundary conditions of the tags it matches land there, `Boundaries.face(name)` finds it in a run, and `import_tagged_step` reads named faces back. `TaggedFace` is now exported from `femforge`.
 - `GmshOptions.element_order` sets the element order (`Mesh.ElementOrder`), such as 2 for quadratic elements.
+- `Physics.LINEAR_ELASTICITY` solves: the `FixedDisplacement` and `SurfaceForce` boundary conditions, a Poisson ratio on the shipped solid materials, and `StressSolver` writing strains and principal stresses on an undeformed output mesh.
+- `Run.strain_energy()` and `femforge.run` `strain_energy`, `clapeyron_energy` and `strain_energy_density` read the elastic strain energy back; `FieldQuery.where_boundary` and `surface_mean` select a boundary and average a field over its area.
 
 ### Changed
 

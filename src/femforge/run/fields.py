@@ -10,7 +10,7 @@ import numpy as np
 
 from femforge.common.tags import TagKey
 from femforge.elmer.variables import ElmerVariable, elemental
-from femforge.run.entities import Bodies, Body, load_entities
+from femforge.run.entities import Bodies, Body, Boundaries, Boundary, Entities, load_entities
 from femforge.run.parse import result_vtu
 
 
@@ -24,7 +24,10 @@ type BoolArray = np.typing.NDArray[np.bool_]
 type Bounds = tuple[float | None, float | None]
 
 GEOMETRY_IDS_ARRAY = "GeometryIds"
-"""The Int cell array ``ResultOutputSolver`` (Save Geometry Ids) writes: each cell's mesh id, bodies and boundaries alike."""
+"""The Int cell array ``ResultOutputSolver`` (Save Geometry Ids) writes: a body cell's mesh id, a boundary cell's Boundary Condition block number plus ``BC_ID_OFFSET``."""
+
+BC_ID_OFFSET = 100
+"""What Elmer adds to a boundary cell's Boundary Condition block number in ``GeometryIds``, grown tenfold until it exceeds every body id."""
 
 
 def select_array(names: Iterable[str], variable: ElmerVariable | str) -> str:
@@ -55,6 +58,8 @@ class FieldMesh:
         centers: FloatArray | None = None,
         bodies: Bodies | None = None,
         grid: pv.UnstructuredGrid | None = None,
+        area: FloatArray | None = None,
+        boundaries: Boundaries | None = None,
     ) -> None:
         """Wrap cell-space arrays already extracted from a solved VTU.
 
@@ -65,6 +70,8 @@ class FieldMesh:
             centers: Per-cell center coordinates; None disables position filters and revolved integrals.
             bodies: The run's named bodies; None disables selection by body, material or tag.
             grid: The source pyvista grid; None disables extracting cells for plotting.
+            area: Per-cell boundary measure: area in 3D, length times one metre of depth in 2D; None disables surface means.
+            boundaries: The run's named boundaries; None disables selection by boundary.
         """
         self.arrays: dict[str, FloatArray] = dict(arrays)
         self.measure: FloatArray = measure
@@ -72,24 +79,45 @@ class FieldMesh:
         self.centers: FloatArray | None = centers
         self.bodies: Bodies | None = bodies
         self._grid: pv.UnstructuredGrid | None = grid
+        self.area: FloatArray | None = area
+        self.boundaries: Boundaries | None = boundaries
 
     @classmethod
-    def load(cls, sim_dir: str | Path, bodies: Bodies | None = None) -> FieldMesh:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
-        """Read the bundle's newest VTU (via ``result_vtu``), attaching body names from the bundle's sidecars when not given."""
+    def load(cls, sim_dir: str | Path, bodies: Bodies | None = None, boundaries: Boundaries | None = None) -> FieldMesh:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+        """Read the bundle's newest VTU (via ``result_vtu``), attaching body and boundary names from the bundle's sidecars when not given.
+
+        Args:
+            sim_dir: The run bundle directory.
+            bodies: The run's named bodies; None reads them from the bundle.
+            boundaries: The run's named boundaries; None reads them from the bundle.
+        """
         import pyvista as pv
 
         vtu: Path | None = result_vtu(sim_dir)
         if vtu is None:
             raise FileNotFoundError(f"no .vtu/.pvtu output in {sim_dir}")
-        if bodies is None:
-            bodies = load_entities(sim_dir).bodies
+
+        if bodies is None or boundaries is None:
+            entities: Entities = load_entities(sim_dir)
+            bodies = entities.bodies if bodies is None else bodies
+            boundaries = entities.boundaries if boundaries is None else boundaries
 
         grid = cast("pv.UnstructuredGrid", pv.read(str(vtu)))
-        return cls.from_grid(grid, bodies=bodies)
+        return cls.from_grid(grid, bodies=bodies, boundaries=boundaries)
 
     @classmethod
-    def from_grid(cls, grid: pv.UnstructuredGrid, bodies: Bodies | None = None) -> FieldMesh:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
-        """Extract every field array to cell space (nodal ones projected once), the cell measure, GeometryIds, and cell centers."""
+    def from_grid(
+        cls, grid: pv.UnstructuredGrid, bodies: Bodies | None = None, boundaries: Boundaries | None = None
+    ) -> FieldMesh:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+        """Extract every field array to cell space (nodal ones projected once) plus the arrays derived there, the cell measures, GeometryIds, and cell centers.
+
+        Args:
+            grid: The solved VTU grid.
+            bodies: The run's named bodies; None disables selection by body.
+            boundaries: The run's named boundaries; None disables selection by boundary.
+        """
+        from femforge.run.mechanical import derived_arrays
+
         arrays: dict[str, FloatArray] = {}
         for name in grid.cell_data.keys():
             if name != GEOMETRY_IDS_ARRAY:
@@ -103,17 +131,32 @@ class FieldMesh:
                 converted = cast("pv.DataSet", grid.point_data_to_cell_data())
             arrays[name] = np.asarray(converted.cell_data[name], dtype=np.float64)
 
+        arrays.update(derived_arrays(arrays))
+
         # The cell measure is volume in a 3D model; a 2D (axisymmetric) model's body cells all have zero volume, so area steps in.
-        sized: pv.DataSet = cast("pv.DataSet", grid.compute_cell_sizes(length=False, area=True, volume=True))
+        sized: pv.DataSet = cast("pv.DataSet", grid.compute_cell_sizes(length=True, area=True, volume=True))
         volume: FloatArray = np.abs(np.asarray(sized.cell_data["Volume"], dtype=np.float64))
-        measure: FloatArray = volume if bool(np.any(volume > 0.0)) else np.abs(np.asarray(sized.cell_data["Area"], dtype=np.float64))
+        area: FloatArray = np.abs(np.asarray(sized.cell_data["Area"], dtype=np.float64))
+        length: FloatArray = np.abs(np.asarray(sized.cell_data["Length"], dtype=np.float64))
+        solid: bool = bool(np.any(volume > 0.0))
+        measure: FloatArray = volume if solid else area
+        boundary_measure: FloatArray = area if solid else length
 
         geometry_ids: IntArray | None = None
         if GEOMETRY_IDS_ARRAY in grid.cell_data:
             geometry_ids = np.asarray(grid.cell_data[GEOMETRY_IDS_ARRAY], dtype=np.int64)
 
         centers: FloatArray = np.asarray(cast("pv.DataSet", grid.cell_centers()).points, dtype=np.float64)
-        return cls(arrays=arrays, measure=measure, geometry_ids=geometry_ids, centers=centers, bodies=bodies, grid=grid)
+        return cls(
+            arrays=arrays,
+            measure=measure,
+            geometry_ids=geometry_ids,
+            centers=centers,
+            bodies=bodies,
+            grid=grid,
+            area=boundary_measure,
+            boundaries=boundaries,
+        )
 
     @property
     def array_names(self) -> list[str]:
@@ -167,6 +210,13 @@ class FieldQuery:
             raise RuntimeError(f"the VTU carries no {GEOMETRY_IDS_ARRAY} cell array (ResultOutputSolver.save_geometry_ids was off)")
         return geometry_ids
 
+    def _boundary_catalog(self) -> Boundaries:
+        boundaries: Boundaries | None = self._mesh.boundaries
+        if boundaries is None or len(boundaries) == 0:
+            raise RuntimeError("no boundary names attached; open via Run(...).mesh() or pass boundaries= to FieldMesh.load")
+
+        return boundaries
+
     def _body_cells(self, bodies: list[Body]) -> FieldQuery:
         ids: list[int] = [body.mesh_id for body in bodies]
         return self._refine(np.isin(self._geometry_ids(), ids) & (self._mesh.measure > 0.0))
@@ -177,6 +227,30 @@ class FieldQuery:
         """Keep the named bodies' own cells (boundary overlay cells excluded)."""
         resolved: list[Body] = [body if isinstance(body, Body) else self._catalog()[body] for body in bodies]
         return self._body_cells(resolved)
+
+    def where_boundary(self, *boundaries: Boundary | str) -> FieldQuery:
+        """Keep the named boundaries' own cells, the zero-volume overlay cells a surface mean weighs by area.
+
+        The VTU marks a boundary's cells by its Boundary Condition block, so a boundary no condition landed on raises.
+        """
+        resolved: list[Boundary] = [boundary if isinstance(boundary, Boundary) else self._boundary_catalog()[boundary] for boundary in boundaries]
+        geometry_ids: IntArray = self._geometry_ids()
+        body_ids: IntArray = geometry_ids[self._mesh.measure > 0.0]
+        largest_body: int = int(body_ids.max()) if len(body_ids) else 0
+        offset: int = BC_ID_OFFSET
+
+        while offset <= largest_body:
+            offset *= 10
+
+        ids: list[int] = []
+
+        for boundary in resolved:
+            if boundary.sif_index is None:
+                raise ValueError(f"boundary {boundary.name!r} carries no Boundary Condition block, so the VTU does not mark its cells")
+
+            ids.append(offset + boundary.sif_index)
+
+        return self._refine(np.isin(geometry_ids, ids))
 
     def where_material(self, tag: str) -> FieldQuery:
         """Keep the cells of every body with this material tag (case-insensitive)."""
@@ -278,6 +352,23 @@ class FieldQuery:
             raise ValueError(f"mean() of {self.name!r} over cells with zero total measure")
         if values.ndim == 2:
             return cast("FloatArray", (values * weights[:, None]).sum(axis=0) / total_weight)
+        return float((values * weights).sum() / total_weight)
+
+    def surface_mean(self) -> float | FloatArray:
+        """Area-weighted mean over the selection, for a [`where_boundary`][] query whose cells carry no volume; raises when the mesh has no areas or the selection none."""
+        area: FloatArray | None = self._mesh.area
+        if area is None:
+            raise RuntimeError("no cell areas available; load via FieldMesh.load / FieldMesh.from_grid")
+
+        values: FloatArray = self._require_values("surface_mean")
+        weights: FloatArray = area[self._mask]
+        total_weight: float = float(weights.sum())
+        if total_weight <= 0.0:
+            raise ValueError(f"surface_mean() of {self.name!r} over cells with zero total area")
+
+        if values.ndim == 2:
+            return cast("FloatArray", (values * weights[:, None]).sum(axis=0) / total_weight)
+
         return float((values * weights).sum() / total_weight)
 
     def integrate(self) -> float | FloatArray:

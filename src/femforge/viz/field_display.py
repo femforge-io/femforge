@@ -210,7 +210,7 @@ def titled(name: str, unit: str | None) -> str:
 
 
 def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, AnyArray], physics: Physics | None = None) -> list[FieldInfo]:
-    """Every displayable array of a VTU as a [`FieldInfo`][], ``GeometryIds`` excluded, sorted by display name.
+    """Every displayable array of a VTU as a [`FieldInfo`][], sorted by display name; ``GeometryIds`` and arrays neither scalar nor 3-vector (tensors) are left out.
 
     Args:
         point_arrays: The VTU's point arrays by name.
@@ -226,6 +226,10 @@ def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, 
             array: AnyArray = np.asarray(values)
             shape: tuple[int, ...] = array.shape
             components: int = shape[-1] if array.ndim > 1 else 1
+
+            if components not in (1, 3):
+                continue
+
             infos.append(FieldInfo(name=name, association=association, components=components, dtype=str(array.dtype), unit=variable_unit(name, physics)))
 
     return sorted(infos, key=lambda info: info.display_name)
@@ -726,7 +730,10 @@ class FieldScene:
         if not len(bodies):
             raise FileNotFoundError(f"{run.path}: no named bodies ({BundleFile.ENTITIES} missing); re-solve the run so the bundle carries its entities")
 
+        from femforge.run.mechanical import add_derived_fields
+
         grid: pv.UnstructuredGrid = cast("pv.UnstructuredGrid", pv.read(str(run.vtu_path)))
+        add_derived_fields(grid)
         blocks: pv.MultiBlock = split_by_body(grid, bodies)
         manifest: RunManifest | None = run_manifest(run)
         fields: list[FieldInfo] = list_fields(grid, manifest.physics if manifest is not None else None)

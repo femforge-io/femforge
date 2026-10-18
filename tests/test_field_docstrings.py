@@ -26,6 +26,7 @@ DOCUMENTED_MODULES: tuple[str, ...] = (
     "femforge.optimize.max_current",
     "femforge.run.result",
     "femforge.run.convergence",
+    "femforge.run.mechanical",
     "femforge.elmer.solver_log",
     "femforge.config",
     "femforge.meshing.config",

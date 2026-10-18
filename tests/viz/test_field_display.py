@@ -115,6 +115,14 @@ def test_field_infos_excludes_geometry_ids_and_sorts_by_display_name() -> None:
     assert infos[1].dtype == "float64"
 
 
+def test_field_infos_leave_out_tensor_arrays() -> None:
+    point_arrays: dict[str, np.typing.NDArray[np.generic]] = {"stress": np.zeros((4, 6)), "displacement": np.zeros((4, 3)), "vonmises": np.zeros(4)}
+
+    infos = field_infos(point_arrays, {})
+
+    assert [info.name for info in infos] == ["displacement", "vonmises"]
+
+
 # --- DisplaySpec.fitted -----------------------------------------------------
 
 
