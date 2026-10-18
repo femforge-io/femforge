@@ -77,7 +77,7 @@ The rows follow the chapters of the Elmer Models Manual. The femforge column nam
 | `SpringAssembly` | Point springs and masses added to a structural model. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | `RigidBodyReduction` | A displacement problem reduced by treating some blocks as rigid. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 
-`Physics.LINEAR_ELASTICITY` is a scaffold: no condition targets it, and the material model has no Poisson ratio.
+`Physics.LINEAR_ELASTICITY` solves in the `Solid` frame with `FixedDisplacement` and `SurfaceForce` boundary conditions, and `Run.strain_energy()` reads back the stored strain energy. Volume forces such as gravity, thermal strain and 2D frames are not wired yet.
 
 ### Fluids
 
@@ -168,7 +168,7 @@ The rows follow the chapters of the ElmerSolver Manual that describe a capabilit
 | Parallel runs | Mesh partitioning and MPI solves. | [DockerElmer][femforge.elmer.DockerElmer] with `mpi_processes`; see [Elmer: Native and Docker](../user-guide/elmer.md) | :material-check-circle:{ .ff-done title="Implemented" } |
 | Restart | A run that starts from saved solutions. | `SimulationSettings.output_file` writes a restart file; nothing reads one back | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | Time integration | Transient solves with BDF, Newmark and other schemes. | `SimulationType.TRANSIENT` and `TimesteppingMethod`; every preset is steady state | :material-circle-half-full:{ .ff-partial title="Partial" } |
-| Dirichlet conditions and limiters | Fixed values on boundaries, and soft limits on a solution. | Fixed values through `FixedTemperature` and `FixedPotential`; no limiters | :material-circle-half-full:{ .ff-partial title="Partial" } |
+| Dirichlet conditions and limiters | Fixed values on boundaries, and soft limits on a solution. | Fixed values through `FixedTemperature`, `FixedPotential` and `FixedDisplacement`; no limiters | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | Generic solver utilities | Solver activation, variable naming, exported variables and passive elements. | `exec_solver` and `variable` fields on [SolverBase][femforge.elmer.config.SolverBase] | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | Eigenvalue problems | Modes and eigenfrequencies of a system. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Shared boundary conditions | Periodic, mortar and conforming conditions between boundaries. | | :material-circle-outline:{ .ff-todo title="Not started" } |
@@ -197,6 +197,8 @@ Every condition and material below is implemented. [Conditions and physics](../u
 | [HeatSource][femforge.physical.HeatSource] | `THERMAL`, `JOULE_HEATING` | body |
 | [FixedPotential][femforge.physical.FixedPotential] | `CURRENT_CONDUCTION`, `JOULE_HEATING` | boundary |
 | [JouleHeat][femforge.physical.JouleHeat] | `JOULE_HEATING` | body |
+| [FixedDisplacement][femforge.physical.FixedDisplacement] | `LINEAR_ELASTICITY` | boundary |
+| [SurfaceForce][femforge.physical.SurfaceForce] | `LINEAR_ELASTICITY` | named face |
 
 | Material | Tag | Notable properties |
 | --- | --- | --- |

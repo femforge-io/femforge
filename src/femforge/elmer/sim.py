@@ -14,7 +14,7 @@ from femforge.elmer.sections import SifSection
 from femforge.elmer.variables import ElmerVariable
 from femforge.frames import Frame, Solid
 from femforge.materials.properties import MATERIAL_KEY_EQUIVALENTS, ElmerMaterialKeyword, MaterialProperties
-from femforge.physical.conditions import BoundarySite, CalculateMagneticForce, Condition, ConditionTarget
+from femforge.physical.conditions import BoundarySite, CalculateMagneticForce, Condition, ConditionTarget, FixedDisplacement
 from femforge.physical.domain import EntityTag, conditions_for
 from femforge.physical.units import Quantity
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 # Physics ill-posed without at least one boundary condition (a pure-Neumann problem has no unique solution).
 # Magnetostatics is excluded — its far-field BC is auto-emitted on the external shell.
-PHYSICS_NEEDS_BOUNDARY_CONDITION: frozenset[Physics] = frozenset({Physics.THERMAL, Physics.ELECTROSTATICS, Physics.CURRENT_CONDUCTION, Physics.JOULE_HEATING})
+PHYSICS_NEEDS_BOUNDARY_CONDITION: frozenset[Physics] = frozenset({Physics.THERMAL, Physics.ELECTROSTATICS, Physics.CURRENT_CONDUCTION, Physics.JOULE_HEATING, Physics.LINEAR_ELASTICITY})
 
 
 class BoundaryKind(StrEnum):
@@ -203,7 +203,14 @@ class Sim:
         if self.physics in PHYSICS_NEEDS_BOUNDARY_CONDITION and not sim.boundaries:
             warnings.warn(
                 f"Physics '{self.physics.value}' resolved no boundary conditions from {len(self.boundary_groups)} boundary group(s); "
-                f"the solve is likely ill-posed (does a region need a FixedTemperature / HeatFlux / Convection / FixedPotential?).",
+                f"the solve is likely ill-posed (does a region need a FixedTemperature / HeatFlux / Convection / FixedPotential / FixedDisplacement / SurfaceForce?).",
+                SolverConfigWarning,
+                stacklevel=2,
+            )
+        elif self.physics is Physics.LINEAR_ELASTICITY and not self._has_fixed_displacement():
+            warnings.warn(
+                f"Physics '{self.physics.value}' resolved no FixedDisplacement on any of {len(self.boundary_groups)} boundary group(s); "
+                "nothing holds the model against rigid-body motion, so the solve is singular (fix a face with FixedDisplacement).",
                 SolverConfigWarning,
                 stacklevel=2,
             )
@@ -255,7 +262,12 @@ class Sim:
         conduction solve: the ~21-decade σ contrast makes the matrix singular for a direct factorization and a stall
         for preconditioned CG.
         """
-        equation = sif.Equation(sim, "Main Equation", solvers, {"Name": '"Main Equation"'})
+        keywords: dict[str, SifValue] = {}
+
+        for spec in self.config.solvers:
+            keywords.update(spec.equation_keywords())
+
+        equation = sif.Equation(sim, "Main Equation", solvers, {"Name": '"Main Equation"', **keywords})
         everywhere: list[sif.Solver] = [solver for spec, solver in zip(self.config.solvers, solvers) if not spec.conductor_only]
 
         if self.physics is Physics.COIL_MAGNETOSTATICS:
@@ -263,12 +275,12 @@ class Sim:
             # WhitneyAV and CalcFields must stay in BOTH equations: splitting THOSE across bodies corrupts CalcFields' DOF mapping (SIGSEGV + silently wrong energy).
             if all(self._coil_drives(group.tags) for group in self.physical_groups):
                 return equation, None
-            return equation, sif.Equation(sim, "Field Equation", everywhere, {"Name": '"Field Equation"'})
+            return equation, sif.Equation(sim, "Field Equation", everywhere, {"Name": '"Field Equation"', **keywords})
 
         at: Mapping[str, Quantity] = self.config.operating_point.as_mapping()
         if len(everywhere) == len(solvers) or all(group.material.is_conductor(at) for group in self.physical_groups):
             return equation, None
-        return equation, sif.Equation(sim, "Dielectric Equation", everywhere, {"Name": '"Dielectric Equation"'})
+        return equation, sif.Equation(sim, "Dielectric Equation", everywhere, {"Name": '"Dielectric Equation"', **keywords})
 
     @staticmethod
     def _coil_drives(tags: list[EntityTag]) -> list[Condition]:
@@ -354,8 +366,6 @@ class Sim:
                 self._wire_magnet_body(sim, body, group)
             else:
                 body.material = materials[group.material.name]
-                if self.physics is Physics.LINEAR_ELASTICITY:
-                    self._wire_elasticity_body(body, group)
 
             forces: list[Condition] = self._force_conditions(group.tags)
 
@@ -442,6 +452,13 @@ class Sim:
 
         return [cond for cond in resolved_conditions if bg.is_external or not cond.external_only]
 
+    def _has_fixed_displacement(self) -> bool:
+        """Whether any boundary group resolves a ``FixedDisplacement``."""
+        tags_by_body: dict[str, list[EntityTag]] = {group.name: group.tags for group in self.physical_groups}
+        resolved: list[Condition] = [cond for bg in self.boundary_groups for cond in self._boundary_conditions(bg, tags_by_body)]
+
+        return any(isinstance(cond, FixedDisplacement) for cond in resolved)
+
     def _boundary_specs(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[tuple[str, dict[str, SifValue]]]:
         """
         The ``(kind, sif-data)`` specs one surface group resolves: its conditions in ``_boundary_conditions`` order, so a face
@@ -503,14 +520,6 @@ class Sim:
 
         # Named per body (group.name is unique), so each Halbach slot is its own Material; the sif registry guards name clashes.
         body.material = sif.Material(sim, group.name, data=data)
-
-    def _wire_elasticity_body(self, body: sif.Body, group: "PhysicalGroup") -> None:
-        """
-        SCAFFOLD: linear-elasticity per-region wiring. A real run still needs a Poisson Ratio material keyword
-        (not yet stored on MechanicalProperties) and load/support boundary conditions.
-        """
-        # No body-level extras yet; material + equation are already attached.
-        return
 
     # -- output --------------------------------------------------------------
 

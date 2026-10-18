@@ -17,14 +17,17 @@ from femforge.elmer.variables import ElmerVariable
 from femforge.physical.units import (
     Current,
     CurrentDensity as CurrentDensityQuantity,
+    Force,
     HeatFlux as HeatFluxQuantity,
     HeatTransferCoefficient,
+    Length,
     PowerDensity,
     Quantity,
     Temperature,
     U,
     Unit,
     Voltage,
+    quantity,
 )
 
 
@@ -47,6 +50,8 @@ __all__ = [
     "CoilDrive",
     "CoilTerminal",
     "CalculateMagneticForce",
+    "FixedDisplacement",
+    "SurfaceForce",
     "ConditionUnion",
     "shipped_conditions",
 ]
@@ -458,9 +463,100 @@ class CalculateMagneticForce(Condition):
             raise ValueError(f"CalculateMagneticForce torque has no form in the {frame.label} frame; drop calculate_magnetic_torque, torque_origin and torque_axis.")
 
 
+class FixedDisplacement(Condition):
+    """Prescribed displacement on a boundary, clamped to zero in every direction by default (linear elasticity, boundary target)."""
+
+    kind: Literal["fixed_displacement"] = "fixed_displacement"
+    """Discriminator that names this condition type in a serialized config."""
+
+    physics: Physics = Physics.LINEAR_ELASTICITY
+    """The physics whose solve this condition feeds."""
+
+    target: ConditionTarget = ConditionTarget.BOUNDARY
+    """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
+    x: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 1", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
+    """`u_x` `[m]`: Prescribed x displacement; None leaves x free."""
+
+    y: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 2", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
+    """`u_y` `[m]`: Prescribed y displacement; None leaves y free."""
+
+    z: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 3", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
+    """`u_z` `[m]`: Prescribed z displacement; None leaves z free."""
+
+    def check_frame(self, frame: Frame) -> None:
+        """Raise when a nonzero prescribed component lies along a direction ``frame`` has no solve coordinate for."""
+        components: tuple[tuple[str, Length | None, Vec3], ...] = (
+            ("x", self.x, Vec3(1.0, 0.0, 0.0)),
+            ("y", self.y, Vec3(0.0, 1.0, 0.0)),
+            ("z", self.z, Vec3(0.0, 0.0, 1.0)),
+        )
+
+        for name, value, direction in components:
+            if value is None or _si(value, U.m) == 0.0:
+                continue
+
+            try:
+                _ = frame.solve_vector(direction)
+            except ValueError:
+                raise ValueError(f"FixedDisplacement prescribes a nonzero {name}, which has no form in the {frame.label} frame; set {name}=None.") from None
+
+
+class SurfaceForce(Condition):
+    """A total force spread uniformly over a named face as a traction (linear elasticity, boundary target).
+
+    Attach it to a ``TaggedFace``'s tag: the traction is the force over the face's measured area, which an adjacency group does not carry.
+    """
+
+    kind: Literal["surface_force"] = "surface_force"
+    """Discriminator that names this condition type in a serialized config."""
+
+    physics: Physics = Physics.LINEAR_ELASTICITY
+    """The physics whose solve this condition feeds."""
+
+    target: ConditionTarget = ConditionTarget.BOUNDARY
+    """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
+    force: Force
+    """`F⃗` `[N]`: Total force spread uniformly over the face, in the authored frame."""
+
+    def _solve_force(self, frame: Frame) -> tuple[float, ...]:
+        total: Vec3 = self.force.to(U.N).magnitude
+
+        return frame.solve_vector(frame.solve_share(total))
+
+    def to_elmer(self) -> dict[str, float | str]:
+        """Raise: the traction needs the face area, which only [`on_boundary`][femforge.physical.conditions.SurfaceForce.on_boundary] knows."""
+        raise ValueError("SurfaceForce needs the area of the face it lands on; it emits through on_boundary only.")
+
+    def on_boundary(self, site: BoundarySite) -> dict[str, float | str]:
+        """The ``Force i`` traction components, the solve-frame force share over the measured area of ``site``."""
+        measure: float | None = site.measure
+
+        if measure is None or measure <= 0.0:
+            raise ValueError(f"SurfaceForce on boundary group {site.name} has no measured area; attach SurfaceForce to a TaggedFace's EntityTag.")
+
+        components: tuple[float, ...] = self._solve_force(site.frame)
+
+        return {f"Force {index}": component / measure for index, component in enumerate(components, start=1)}
+
+    def check_frame(self, frame: Frame) -> None:
+        """Raise when ``frame`` has no form for the force direction."""
+        try:
+            _ = self._solve_force(frame)
+        except ValueError as error:
+            raise ValueError(f"SurfaceForce has no form in the {frame.label} frame: {error}") from None
+
+
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.
 ConditionUnion = Annotated[
-    Union[Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, JouleHeat, CoilDrive, CoilTerminal, CalculateMagneticForce],
+    Union[
+        Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, JouleHeat, CoilDrive, CoilTerminal, CalculateMagneticForce, FixedDisplacement, SurfaceForce
+    ],
     Field(discriminator="kind"),
 ]
 """Any concrete condition, discriminated by its ``kind``."""

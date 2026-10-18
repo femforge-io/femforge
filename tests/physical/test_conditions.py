@@ -21,15 +21,17 @@ from femforge.physical.conditions import (
     Convection,
     CurrentDensity,
     ElmerKeyword,
+    FixedDisplacement,
     FixedPotential,
     FixedTemperature,
     HeatFlux,
     HeatSource,
     JouleHeat,
     Magnetization,
+    SurfaceForce,
     shipped_conditions,
 )
-from femforge.physical.units import Temperature, U
+from femforge.physical.units import Temperature, U, quantity
 
 MU0 = 1.25663706212e-6
 
@@ -57,6 +59,8 @@ def test_the_shipped_conditions_are_the_union_members_in_order() -> None:
         CoilDrive,
         CoilTerminal,
         CalculateMagneticForce,
+        FixedDisplacement,
+        SurfaceForce,
     )
 
 
@@ -256,13 +260,15 @@ def test_condition_list_round_trips_via_discriminator() -> None:
         Convection(coefficient=12 * U.W / (U.m**2 * U.K), ext_temperature=300 * U.K),
         HeatSource(power_density=1e6 * U.W / U.m**3),
         FixedPotential(value=1 * U.mV),
+        FixedDisplacement(z=None),
+        SurfaceForce(force=quantity(Vec3(0, 0, 100), "N")),
     ]
     dumped: list[dict[str, object]] = cast("list[dict[str, object]]", adapter.dump_python(conditions))
     # The discriminator is present so model_validate can reconstruct types.
-    assert [c["kind"] for c in dumped] == ["magnetization", "current_density", "fixed_temperature", "heat_flux", "convection", "heat_source", "fixed_potential"]
+    assert [c["kind"] for c in dumped] == ["magnetization", "current_density", "fixed_temperature", "heat_flux", "convection", "heat_source", "fixed_potential", "fixed_displacement", "surface_force"]
 
     restored: list[ConditionUnion] = adapter.validate_python(dumped)
-    assert [type(c) for c in restored] == [Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential]
+    assert [type(c) for c in restored] == [Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, FixedDisplacement, SurfaceForce]
     # Values survive the round trip.
     first: Condition = restored[0]
     assert isinstance(first, Magnetization)
@@ -273,6 +279,62 @@ def test_condition_list_round_trips_via_discriminator() -> None:
     third: Condition = restored[2]
     assert isinstance(third, FixedTemperature)
     assert third.to_elmer()["Temperature"] == pytest.approx(350.0)
+    roller: Condition = restored[7]
+    assert isinstance(roller, FixedDisplacement)
+    assert roller.to_elmer() == {"Displacement 1": 0.0, "Displacement 2": 0.0}
+
+
+# --- linear elasticity -------------------------------------------------------
+
+
+def test_a_fixed_displacement_clamps_every_direction_by_default() -> None:
+    clamp = FixedDisplacement()
+
+    assert clamp.physics is Physics.LINEAR_ELASTICITY and clamp.target is ConditionTarget.BOUNDARY
+    assert clamp.to_elmer() == {"Displacement 1": 0.0, "Displacement 2": 0.0, "Displacement 3": 0.0}
+    assert clamp.on_boundary(BoundarySite(name="ROOT", measure=None, frame=Solid())) == clamp.to_elmer()
+
+
+def test_a_free_fixed_displacement_component_is_left_out() -> None:
+    roller = FixedDisplacement(x=None, y=quantity(2.0, "mm"))
+
+    assert roller.to_elmer() == {"Displacement 2": pytest.approx(0.002), "Displacement 3": 0.0}
+
+
+def test_a_fixed_displacement_rejects_a_nonzero_component_the_frame_cannot_express() -> None:
+    FixedDisplacement().check_frame(Axisymmetric())
+    FixedDisplacement(z=quantity(1.0, "mm")).check_frame(Axisymmetric())
+
+    with pytest.raises(ValueError, match="x=None"):
+        FixedDisplacement(x=quantity(1.0, "mm")).check_frame(Axisymmetric())
+
+
+def test_a_surface_force_spreads_its_total_over_the_measured_face() -> None:
+    load = SurfaceForce(force=quantity(Vec3(0, 0, 100), "N"))
+
+    traction = load.on_boundary(BoundarySite(name="TIP", measure=1e-4, frame=Solid()))
+
+    assert traction == {"Force 1": 0.0, "Force 2": 0.0, "Force 3": pytest.approx(1.0e6)}
+
+
+@pytest.mark.parametrize("measure", [None, 0.0])
+def test_a_surface_force_needs_a_measured_face(measure: float | None) -> None:
+    load = SurfaceForce(force=quantity(Vec3(0, 0, 100), "N"))
+
+    with pytest.raises(ValueError, match="TaggedFace"):
+        _ = load.on_boundary(BoundarySite(name="BEAM__EXT", measure=measure, frame=Solid()))
+
+
+def test_a_surface_force_has_no_area_free_emission() -> None:
+    with pytest.raises(ValueError, match="on_boundary"):
+        _ = SurfaceForce(force=quantity(Vec3(1, 0, 0), "N")).to_elmer()
+
+
+def test_a_surface_force_checks_its_direction_against_the_frame() -> None:
+    SurfaceForce(force=quantity(Vec3(1, 0, 0), "N")).check_frame(Solid())
+
+    with pytest.raises(ValueError, match="no form"):
+        SurfaceForce(force=quantity(Vec3(1, 0, 0), "N")).check_frame(Axisymmetric())
 
 
 def test_a_magnetization_without_a_direction_has_nothing_to_emit() -> None:

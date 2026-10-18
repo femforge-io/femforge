@@ -121,6 +121,9 @@ _STRESS: dict[str, SifValue] = {
     "Linear System Convergence Tolerance": 1.0e-8,
     "Linear System Preconditioning": "ILU0",
     "Calculate Stresses": True,
+    "Calculate Strains": True,
+    "Calculate Principal": True,
+    "Displace Mesh": False,
 }
 
 
@@ -196,7 +199,7 @@ def test_required_material_keys_are_declared_on_the_solver() -> None:
     # Post-processors and the linear-elasticity solver declare no per-body required property (the base default).
     assert MagnetoDynamicsCalcFieldsSolver.required_material_keys == frozenset()
     assert ResultOutputSolver.required_material_keys == frozenset()
-    assert StressSolver.required_material_keys == frozenset()
+    assert StressSolver.required_material_keys == frozenset({ElmerMaterialKeyword.YOUNGS_MODULUS, ElmerMaterialKeyword.POISSON_RATIO})
 
 
 def test_solver_base_is_the_shared_supertype() -> None:

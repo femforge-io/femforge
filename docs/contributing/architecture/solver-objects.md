@@ -138,7 +138,7 @@ The comments in the presets record why each stack looks the way it does. Three m
 
 - `COIL_MAGNETOSTATICS` chains CoilSolver into WhitneyAV and drives the field solve from CoilSolver's elemental current, because a nodal current source dilutes the drive about twofold on thin conductors (`src/femforge/elmer/config/common/presets.py:97-105`).
 - `MAGNETOSTATICS_2D` pins CalcFields' potential variable and keeps nodal fields on, because turning them off also suppresses the nodal force variable the force reduction reads (`src/femforge/elmer/config/common/presets.py:46-56`).
-- `LINEAR_ELASTICITY` has a complete stack, but its per-body wiring in `Sim` is a stub (`src/femforge/elmer/config/common/presets.py:133`, `src/femforge/elmer/sim.py:507-513`).
+- `LINEAR_ELASTICITY` fits `StressSolver` to the frame: `fit_frame` sets `Variable Dofs` to the frame's dimension and `plane_stress` to its plane state, and `plane_stress` is an `EquationScope()` field, so its keyword lands in the Equation block rather than the Solver block (`src/femforge/elmer/config/mechanics/stress.py:63-73`). `displace_mesh` stays off so the VTU keeps the undeformed coordinates that position filters and face means read.
 
 Three functions adjust or read a whole stack:
 
@@ -175,7 +175,7 @@ assert block["Linear System Max Iterations"] == 2000
 assert "Variable" not in block
 ```
 
-A keyword several solvers share is declared once as a module-level `Annotated` alias, such as `LinearMaxIterationsField`, and every solver that overrides its default reuses the alias (`src/femforge/elmer/config/common/solver_base.py:103-139`). The alias also carries the field description, because a concrete override would reset a description that came from a docstring (`src/femforge/elmer/config/common/solver_base.py:147`). `kind` has no `Map`: it names the solver in the `SolverUnion` and doubles as the sif Solver block's label (`src/femforge/elmer/sim.py:244-249`).
+A keyword several solvers share is declared once as a module-level `Annotated` alias, such as `LinearMaxIterationsField`, and every solver that overrides its default reuses the alias (`src/femforge/elmer/config/common/solver_base.py:103-139`). The alias also carries the field description, because a concrete override would reset a description that came from a docstring (`src/femforge/elmer/config/common/solver_base.py:147`). `kind` has no `Map`: it names the solver in the `SolverUnion` and doubles as the sif Solver block's label (`src/femforge/elmer/sim.py:251-256`).
 
 The mesh side follows the same rule: `GmshOptions.apply` reflects the same `Map` tags into gmsh option setters (`src/femforge/meshing/gmsh_options.py:114-133`).
 
@@ -239,7 +239,7 @@ keyword_table(GenericSolver)
 
 1. **The constructor is cheap.** It maps the physics through the frame, takes the given stack or the preset, and checks the stack and the conditions of every body group and boundary group against the frame. It builds no sif objects (`src/femforge/elmer/sim.py:79-121`).
 2. **`generate()` builds the sif graph** from the possibly edited stack: the simulation and constants blocks, then solvers, equations, materials, bodies and boundaries in dependency order, then `validate()` (`src/femforge/elmer/sim.py:125-146`).
-3. **`write(dir)`** writes the start-info file, the sif and the two id maps, and requires `generate()` first (`src/femforge/elmer/sim.py:517-534`).
+3. **`write(dir)`** writes the start-info file, the sif and the two id maps, and requires `generate()` first (`src/femforge/elmer/sim.py:526-543`).
 
 The driver's `build_sim` stage constructs `Sim` from the resolved stack and applies `prepare_for_mpi` for a partitioned solve; `write_sif` calls `generate().write()` (`src/femforge/run/driver.py:636-662`). `Sim` takes no config object: its bodies come from the mesh groups, and it owns only its solver stack.
 
@@ -247,22 +247,22 @@ The driver's `build_sim` stage constructs `Sim` from the resolved stack and appl
 
 | Source | sif block | Where |
 |---|---|---|
-| each physical group | one `Body` targeting the group's id | `src/femforge/elmer/sim.py:336-337` |
-| the stack | `Main Equation` with every solver, plus a second equation without the `conductor_only` solvers when a non-conductor body exists | `src/femforge/elmer/sim.py:251-271` |
-| a coil stack | CoilSolver's equation covers only the bodies with a `CoilDrive`, because CoilSolver fails on a body outside every Component; WhitneyAV and CalcFields stay in both equations, because splitting them corrupts CalcFields' degree-of-freedom mapping | `src/femforge/elmer/sim.py:261-266` |
-| each distinct material | one shared `Material` | `src/femforge/elmer/sim.py:294-318` |
-| a magnet body | a `Material` of its own carrying the `Magnetization` vector, because WhitneyAV reads it from the material; a missing remanence or direction leaves a commented marker for `validate()` to raise on | `src/femforge/elmer/sim.py:480-505` |
-| body-target conditions whose `section` is `BODY_FORCE` | one `Body Force` per body | `src/femforge/elmer/sim.py:370-382` |
-| each `CoilDrive` instance | one coil `Component` over every body that carries it | `src/femforge/elmer/sim.py:327-328`, `src/femforge/elmer/sim.py:384-386` |
-| each `CalculateMagneticForce` instance, and each magnet without one | one force `Component`; the automatic one is named after the group | `src/femforge/elmer/sim.py:330-334`, `src/femforge/elmer/sim.py:388-395` |
-| boundary-target conditions of the bordering bodies, then of the group's own tags, each tag once | one merged `Boundary Condition` per surface group, because Elmer gives each boundary element one section and silently ignores a second; a group tag's keyword wins a clash, and each condition emits through `on_boundary` with the group's `BoundarySite` | `src/femforge/elmer/sim.py:407-427` |
-| a magnetic stack's external shell | the far field `AV {e} = 0`, or `Potential = 0` in 2D; the 2D symmetry axis gets the exact `Potential = 0` | `src/femforge/elmer/sim.py:462-474` |
+| each physical group | one `Body` targeting the group's id | `src/femforge/elmer/sim.py:348-349` |
+| the stack | `Main Equation` with every solver, plus a second equation without the `conductor_only` solvers when a non-conductor body exists; every solver's `equation_keywords()` merge into each equation | `src/femforge/elmer/sim.py:258-283` |
+| a coil stack | CoilSolver's equation covers only the bodies with a `CoilDrive`, because CoilSolver fails on a body outside every Component; WhitneyAV and CalcFields stay in both equations, because splitting them corrupts CalcFields' degree-of-freedom mapping | `src/femforge/elmer/sim.py:273-278` |
+| each distinct material | one shared `Material` | `src/femforge/elmer/sim.py:306-330` |
+| a magnet body | a `Material` of its own carrying the `Magnetization` vector, because WhitneyAV reads it from the material; a missing remanence or direction leaves a commented marker for `validate()` to raise on | `src/femforge/elmer/sim.py:497-522` |
+| body-target conditions whose `section` is `BODY_FORCE` | one `Body Force` per body | `src/femforge/elmer/sim.py:380-392` |
+| each `CoilDrive` instance | one coil `Component` over every body that carries it | `src/femforge/elmer/sim.py:339-340`, `src/femforge/elmer/sim.py:394-396` |
+| each `CalculateMagneticForce` instance, and each magnet without one | one force `Component`; the automatic one is named after the group | `src/femforge/elmer/sim.py:342-346`, `src/femforge/elmer/sim.py:398-405` |
+| boundary-target conditions of the bordering bodies, then of the group's own tags, each tag once | one merged `Boundary Condition` per surface group, because Elmer gives each boundary element one section and silently ignores a second; a group tag's keyword wins a clash, and each condition emits through `on_boundary` with the group's `BoundarySite` | `src/femforge/elmer/sim.py:417-437` |
+| a magnetic stack's external shell | the far field `AV {e} = 0`, or `Potential = 0` in 2D; the 2D symmetry axis gets the exact `Potential = 0` | `src/femforge/elmer/sim.py:479-491` |
 
 A condition's `section` names the block it lands in, so `Sim` routes conditions without naming their classes: `Magnetization` is the one `MATERIAL` condition, `CoilDrive` and `CalculateMagneticForce` are `COMPONENT` conditions, and every boundary-target condition is a `BOUNDARY_CONDITION` one. A component groups bodies by condition identity, so one `CoilDrive` authored on a phase's tag reaches every body of that phase as one Component.
 
 ## Checks before the solve
 
-`validate()` runs at the end of `generate()` and covers what pydantic cannot see across objects (`src/femforge/elmer/sim.py:150-240`). It collects every error into one `ValueError` and issues each smell as a `SolverConfigWarning` (`src/femforge/elmer/sim.py:48-49`).
+`validate()` runs at the end of `generate()` and covers what pydantic cannot see across objects (`src/femforge/elmer/sim.py:150-247`). It collects every error into one `ValueError` and issues each smell as a `SolverConfigWarning` (`src/femforge/elmer/sim.py:48-49`).
 
 | Check | Outcome | Where |
 |---|---|---|
@@ -270,8 +270,8 @@ A condition's `section` names the block it lands in, so `Sim` routes conditions 
 | No emitted material value is still a pint quantity | error | `src/femforge/elmer/sim.py:179-184` |
 | Every magnet under a magnet-driven physics has a `Magnetization` with a direction | error | `src/femforge/elmer/sim.py:186-191` |
 | A coil solve has at least one `CoilDrive` | warning | `src/femforge/elmer/sim.py:193-200` |
-| A physics that needs a boundary condition to be well posed resolved one | warning | `src/femforge/elmer/sim.py:28-30`, `src/femforge/elmer/sim.py:202-209` |
-| A force Component has CalcFields with nodal forces on, and a SaveScalars to export it | warning | `src/femforge/elmer/sim.py:211-236` |
+| A physics that needs a boundary condition to be well posed resolved one | warning | `src/femforge/elmer/sim.py:28-30`, `src/femforge/elmer/sim.py:202-216` |
+| A force Component has CalcFields with nodal forces on, and a SaveScalars to export it | warning | `src/femforge/elmer/sim.py:218-243` |
 
 The constructor raises earlier for an unknown physics and for a stack or condition that cannot solve the frame (`src/femforge/elmer/sim.py:100-118`). Before a partitioned solve, the driver also warns when a coil stack computes nodal forces, because the halo elements it then partitions with corrupt the Component force lumping (`src/femforge/run/driver.py:671-680`).
 

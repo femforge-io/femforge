@@ -1,5 +1,6 @@
 """Sim.validate() (run inside Sim.generate()) catches solver misconfig before the solve, so a broken config fails in CI rather than at ElmerSolver runtime. Pure-logic: fake groups / material."""
 
+import re
 import warnings
 from typing import Mapping
 
@@ -11,12 +12,12 @@ from femforge.elmer.physics import Physics
 from femforge.elmer.sim import Sim, SolverConfigWarning
 from femforge.physical.domain import EntityTag
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import Convection, FixedTemperature, Magnetization
+from femforge.physical.conditions import Convection, FixedDisplacement, FixedTemperature, Magnetization, SurfaceForce
 from femforge.materials.air import Air
 from femforge.materials.neodymium import N52
 from femforge.materials.pcb import FR4
 from femforge.materials.properties import MaterialProperties
-from femforge.physical.units import Quantity, U
+from femforge.physical.units import Quantity, U, quantity
 
 
 class FakePhysicalGroup (PhysicalGroup):
@@ -188,3 +189,30 @@ def test_magnetostatics_emits_no_solver_warning() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", SolverConfigWarning)
         _generate(groups, Physics.MAGNETOSTATICS)
+
+
+# --- linear elasticity ------------------------------------------------------
+
+
+def test_air_under_elasticity_misses_the_elastic_constants() -> None:
+    groups: list[PhysicalGroup] = [FakePhysicalGroup(1, "AIR", Air(), [])]
+
+    with pytest.warns(SolverConfigWarning), pytest.raises(ValueError, match=re.escape("missing ['Poisson Ratio', 'Youngs Modulus']")):
+        _generate(groups, Physics.LINEAR_ELASTICITY)
+
+
+def test_a_load_without_a_fixed_face_warns_of_rigid_body_modes() -> None:
+    tip = FakeBoundaryGroup(12, "TIP", ("FR4",), [102])
+    tip.tags = [EntityTag(selector={TagKey.NAME: "Tip"}, conditions=[SurfaceForce(force=quantity(Vec3(1, 0, 0), "N"))])]
+    tip.measure = 1e-4
+
+    with pytest.warns(SolverConfigWarning, match="rigid-body motion"):
+        _generate([FakePhysicalGroup(1, "FR4", FR4(), [])], Physics.LINEAR_ELASTICITY, boundary_groups=[tip])
+
+
+def test_a_fixed_face_silences_the_rigid_body_warning() -> None:
+    clamp = EntityTag(selector={TagKey.MATERIAL: "FR4"}, conditions=[FixedDisplacement()])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SolverConfigWarning)
+        _generate([FakePhysicalGroup(1, "FR4", FR4(), [clamp])], Physics.LINEAR_ELASTICITY, boundary_groups=[FakeBoundaryGroup(11, "FR4__EXT", ("FR4",), [101])])
