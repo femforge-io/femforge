@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
@@ -43,19 +44,30 @@ def step_digest(path: str | Path) -> str:
         return hashlib.sha256(str(path).encode("utf-8")).hexdigest()
 
     # Keyed on the bytes, not the mtime: a re-export within one clock tick must not hit a stale entry.
-    return _file_digest(file.resolve(), hashlib.sha256(file.read_bytes()).hexdigest())
+    return _file_digest(_StepBytes(hashlib.sha256(file.read_bytes()).hexdigest(), file))
+
+
+@dataclass(frozen=True)
+class _StepBytes:
+    """A STEP file compared and hashed by the SHA-256 of its bytes alone."""
+
+    content: str
+    """The SHA-256 of the file's bytes."""
+
+    file: Path = field(compare=False)
+    """Where the bytes are read from."""
 
 
 @lru_cache(maxsize=64)
-def _file_digest(file: Path, content: str) -> str:
-    """The digest of ``file`` while its bytes hash to ``content``, falling back to its timestamp-masked bytes when it does not import."""
+def _file_digest(step: _StepBytes) -> str:
+    """The digest of the STEP bytes, falling back to their timestamp-masked hash when they do not import."""
     from femforge.geometry.step import import_tagged_step
 
     try:
-        return import_tagged_step(file).fingerprint()
+        return import_tagged_step(step.file).fingerprint()
     except Exception as error:
-        log.bind(path=str(file), content=content, error=str(error)).warning("STEP did not import; keying it on its bytes.")
-        return hashlib.sha256(_FILE_NAME_HEADER.sub(b"FILE_NAME();", file.read_bytes())).hexdigest()
+        log.bind(path=str(step.file), content=step.content, error=str(error)).warning("STEP did not import; keying it on its bytes.")
+        return hashlib.sha256(_FILE_NAME_HEADER.sub(b"FILE_NAME();", step.file.read_bytes())).hexdigest()
 
 
 class AuthoredStep(BaseModel):

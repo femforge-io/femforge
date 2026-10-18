@@ -67,13 +67,13 @@ class TaggedCompound(b3d.Compound, HasTags):
         return leaves
 
     def fingerprint(self) -> str:
-        """SHA-256 of every placed leaf's kind, tags, RGB color, mass properties, faces and vertices, each quantized to a billionth of the leaf's size, so it ignores leaf order.
+        """Order-independent SHA-256 of the placed leaves: kind, tags, color, size and quantized mass properties, faces and vertices.
 
-        Two imports of one STEP agree; an authored compound and its import agree only as closely as OCCT integrates them alike.
+        Two imports of one STEP agree; an authored compound and its import agree as closely as OCCT integrates them alike.
         """
 
         def rounded(value: float, scale: float) -> float:
-            # A quantum relative to the leaf's size drops integration noise that significant digits would keep; + 0.0 turns -0.0 into 0.0.
+            # + 0.0 folds -0.0 into 0.0, which json.dumps tells apart.
             return round(value / scale, 9) + 0.0
 
         def point(vector: b3d.Vector, scale: float) -> list[float]:
@@ -90,7 +90,6 @@ class TaggedCompound(b3d.Compound, HasTags):
             area: float | None = None if isinstance(leaf, TaggedEdge) else rounded(leaf.area, scale**2)
             length: float | None = rounded(leaf.length, scale) if isinstance(leaf, TaggedEdge) else None
             tags: list[list[str]] = sorted([str(key), value] for key, value in leaf.tags.items())
-            # Whole-leaf mass properties cannot tell a rotated hole or a symmetric hole pattern apart.
             faces: list[list[float]] = sorted([rounded(face.area, scale**2), *point(face.center(b3d.CenterOf.MASS), scale)] for face in leaf.faces())
             vertices: list[list[float]] = sorted(point(vertex.center(), scale) for vertex in leaf.vertices())
 
@@ -99,6 +98,7 @@ class TaggedCompound(b3d.Compound, HasTags):
                 leaf.tags.get(TagKey.NAME),
                 tags,
                 color,
+                float(f"{scale:.9g}"),
                 volume,
                 area,
                 length,

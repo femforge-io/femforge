@@ -87,6 +87,19 @@ def test_step_digest_moves_with_names_colors_placement_and_tags(tmp_path: Path) 
     assert len(digests) == len(variants)
 
 
+def test_step_digest_moves_with_a_resized_magnet_in_the_same_air(tmp_path: Path) -> None:
+    import build123d as b3d
+
+    def export(radius: float, height: float) -> str:
+        magnet = TaggedPart([b3d.Cylinder(radius, height)], tags={TagKey.MATERIAL: "N52"}, name="Magnet")
+        air = TaggedPart([b3d.Box(100, 100, 100)], tags={TagKey.MATERIAL: "Air"}, name="Air")
+        step = tmp_path / f"magnet_{radius}.step"
+        TaggedCompound(children=[magnet, air]).export_step(str(step))
+        return step_digest(step)
+
+    assert export(5.0, 2.0) != export(6.0, 2.4)
+
+
 def test_step_digest_of_a_missing_file_hashes_its_path() -> None:
     assert step_digest("data/missing.step") == step_digest("data/missing.step")
     assert step_digest("data/missing.step") != step_digest("data/other.step")

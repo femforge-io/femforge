@@ -1,4 +1,4 @@
-"""TaggedCompound.fingerprint: leaf order, the STEP round trip, edge leaves, integration noise and symmetric changes."""
+"""TaggedCompound.fingerprint: leaf order, the STEP round trip, edge leaves, integration noise, scale and symmetric changes."""
 
 from pathlib import Path
 
@@ -69,3 +69,12 @@ def test_the_fingerprint_moves_with_changes_that_keep_the_mass_properties() -> N
 
     assert plate([b3d.Box(8, 8, 5)]) != plate([b3d.Box(8, 8, 5).rotate(b3d.Axis.Z, 30)])
     assert plate(holes(8, 0)) != plate(holes(0, 8))
+
+
+def test_the_fingerprint_moves_with_a_leaf_scaled_about_the_origin() -> None:
+    def scaled(factor: float) -> str:
+        bar = b3d.Pos(5, 1, 2) * b3d.Box(20, 4, 6)
+        return TaggedCompound(children=[TaggedPart([bar.scale(factor)], tags={"Material": "Steel316"}, name="Bar")]).fingerprint()
+
+    assert scaled(1.0) != scaled(2.0)
+    assert scaled(1.0) != scaled(1.1)
