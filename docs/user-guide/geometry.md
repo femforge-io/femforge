@@ -107,12 +107,12 @@ An [EntityTag][femforge.physical.EntityTag] selects bodies by a `selector`. A bo
 | Field | What it applies |
 | --- | --- |
 | `selector` | The `key=value` pairs a body must carry. |
-| `conditions` | Body forces and boundary conditions. See [Conditions and physics](conditions.md). |
+| `conditions` | Body forces and boundary conditions. See [Conditions and physics](conditions/index.md). |
 | `mesh_size` | A target element size, as a length such as `0.5 * ff.U.mm`. See [Mesh](mesh.md#size-regions-by-tag). |
 
 A body can match several tags. It collects the conditions of all of them, and the finest `mesh_size` wins. Select by a shared tag such as `Magnetization=N` to reach many bodies at once, or by `Name` to reach one.
 
-A boundary condition on a body's tag lands on the surfaces that body borders. To reach one face, tag the face itself as a `TaggedFace`. See [Conditions and physics](conditions.md#named-faces).
+A boundary condition on a body's tag lands on the surfaces that body borders. To reach one face, tag the face itself as a `TaggedFace`. See [Conditions and physics](conditions/index.md#named-faces).
 
 ## Body and boundary names
 

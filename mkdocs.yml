@@ -91,7 +91,7 @@ plugins:
       sections:
         Overview: [index.md, overview/*.md]
         Examples: [examples/*.md]
-        User guide: [user-guide/*.md]
+        User guide: [user-guide/*.md, user-guide/conditions/*.md, user-guide/frames/*.md]
         API reference: [reference/*.md, reference/workbench/*.md]
         Contributing: [contributing/*.md, contributing/architecture/*.md]
 
@@ -146,7 +146,15 @@ nav:
       - user-guide/index.md
       - Geometry and tags: user-guide/geometry.md
       - Materials: user-guide/materials.md
-      - Conditions and physics: user-guide/conditions.md
+      - Conditions and physics:
+          - user-guide/conditions/index.md
+          - Magnetostatics: user-guide/conditions/magnetostatics.md
+          - Thermal: user-guide/conditions/thermal.md
+          - Electrostatics: user-guide/conditions/electrostatics.md
+          - Current conduction: user-guide/conditions/current-conduction.md
+          - Joule heating: user-guide/conditions/joule-heating.md
+          - Coil magnetostatics: user-guide/conditions/coil-magnetostatics.md
+          - Linear elasticity: user-guide/conditions/linear-elasticity.md
       - Mesh: user-guide/mesh.md
       - Frames:
           - user-guide/frames/index.md
