@@ -84,14 +84,24 @@ def test_none_fields_are_skipped() -> None:
     assert "Mesh.MeshSizeMin" not in calls
     assert "Mesh.MeshSizeMax" not in calls
     assert "Mesh.Smoothing" not in calls
+    assert "Mesh.ElementOrder" not in calls
 
 
 def test_optional_numeric_fields_emit_when_set() -> None:
-    calls: dict[str, float | str] = _capture(GmshOptions(mesh_size_min=0.1 * U.m, mesh_size_max=2.5 * U.m, smoothing=3, num_threads=8))
+    calls: dict[str, float | str] = _capture(
+        GmshOptions(
+            mesh_size_min=0.1 * U.m,
+            mesh_size_max=2.5 * U.m,
+            smoothing=3,
+            num_threads=8,
+            element_order=2,
+        )
+    )
     assert calls["Mesh.MeshSizeMin"] == pytest.approx(0.1)
     assert calls["Mesh.MeshSizeMax"] == pytest.approx(2.5)
     assert calls["Mesh.Smoothing"] == 3.0
     assert calls["General.NumThreads"] == 8.0
+    assert calls["Mesh.ElementOrder"] == 2.0
 
 
 def test_target_units_emits_via_set_string() -> None:

@@ -7,7 +7,7 @@ from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.spec import MeshSpec, TagSelectorSpec
 from femforge.run.kinds import ELMER_MESH
 
-PINNED_MESH_KEY = "f70155b03f7f7e09c7b266da1bfd1ecd9f67cec8138745bd7df6b26e6f68c4e8"
+PINNED_MESH_KEY = "c628ac923dc0ccfd1e36a62a0e5d3889b66414704b8bedcfe23fa17e964a4f46"
 """The mesh key of the fixed spec below; it moves only when mesh identity changes on purpose, which re-meshes every cached mesh."""
 
 
