@@ -103,7 +103,7 @@ class BoundarySite:
 
 
 class Condition(BaseModel):
-    """Base condition: subclasses pin ``physics``/``target`` defaults and implement ``to_elmer``. Never instantiated directly (no ``kind`` discriminator)."""
+    """A source or constraint of one physics on the bodies or boundaries a tag selects; each subclass is one shipped condition."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, use_attribute_docstrings=True)
 
@@ -146,10 +146,9 @@ class Condition(BaseModel):
 
 
 class Magnetization(Condition):
-    """
-    Permanent-magnet body force (magnetostatics, body target).
+    """The magnetization direction of a permanent magnet.
 
-    The direction is per-region and lives here; the magnitude ``|M| = Bᵣ/μ₀`` is a material property passed into ``to_elmer``.
+    The magnitude ``|M| = Bᵣ/μ₀`` comes from the magnet's material.
     """
 
     kind: Literal["magnetization"] = "magnetization"
@@ -190,7 +189,7 @@ class Magnetization(Condition):
 
 
 class CurrentDensity(Condition):
-    """Uniform signed azimuthal current density J = N·I/A over a winding window (axisymmetric magnetostatics, body target), the homogenized stranded-coil drive."""
+    """A uniform signed azimuthal current density J = N·I/A over a winding window, the homogenized drive of a stranded coil in an axisymmetric solve."""
 
     kind: Literal["current_density"] = "current_density"
     """Discriminator that names this condition type in a serialized config."""
@@ -213,7 +212,7 @@ class CurrentDensity(Condition):
 
 
 class FixedTemperature(Condition):
-    """Dirichlet temperature boundary condition (thermal, boundary target)."""
+    """A fixed temperature on a boundary."""
 
     kind: Literal["fixed_temperature"] = "fixed_temperature"
     """Discriminator that names this condition type in a serialized config."""
@@ -231,7 +230,7 @@ class FixedTemperature(Condition):
 
 
 class HeatFlux(Condition):
-    """Prescribed heat flux boundary condition (thermal, boundary target)."""
+    """A prescribed heat flux through a boundary."""
 
     kind: Literal["heat_flux"] = "heat_flux"
     """Discriminator that names this condition type in a serialized config."""
@@ -249,7 +248,10 @@ class HeatFlux(Condition):
 
 
 class Convection(Condition):
-    """Convective (Newton-cooling) boundary condition (thermal, boundary target); ``external_only`` — a film BC on an interior interface would bypass the conduction path."""
+    """Newton cooling of an outer surface to an ambient temperature.
+
+    It lands on the outer shell only, since a film coefficient on an interior interface would bypass the conduction path.
+    """
 
     kind: Literal["convection"] = "convection"
     """Discriminator that names this condition type in a serialized config."""
@@ -272,7 +274,7 @@ class Convection(Condition):
 
 
 class HeatSource(Condition):
-    """Volumetric heat source in W/m³ (thermal, body target).
+    """A volumetric heat source in a body.
 
     With ``temperature_coefficient`` set, the source scales linearly with the local temperature, the σ(T) Joule feedback of a prescribed-current winding.
     """
@@ -310,7 +312,10 @@ class HeatSource(Condition):
 
 
 class FixedPotential(Condition):
-    """Dirichlet electric-potential boundary condition (current conduction, boundary target), one electrode of a phase's terminal pair."""
+    """A fixed electric potential on an electrode, one end of a phase's terminal pair.
+
+    The run also integrates the current through the electrode.
+    """
 
     kind: Literal["fixed_potential"] = "fixed_potential"
     """Discriminator that names this condition type in a serialized config."""
@@ -335,10 +340,9 @@ class FixedPotential(Condition):
 
 
 class JouleHeat(Condition):
-    """
-    Joule heat source body force (coupled current->thermal, body target): HeatSolve integrates StatCurrentSolve's loss density as the heat source.
+    """Heats a body with the Joule losses of its solved current.
 
-    Carries no value — the magnitude is the solved current field itself.
+    It takes no value: HeatSolve integrates the loss density StatCurrentSolve solves for.
     """
 
     kind: Literal["joule_heat"] = "joule_heat"
@@ -358,7 +362,7 @@ class JouleHeat(Condition):
 
 
 class CoilDrive(Condition):
-    """A driven coil under ``COIL_MAGNETOSTATICS`` (body target): bodies sharing this condition become one massive CoilSolver ``Component`` normalized to ``current``.
+    """A driven massive coil: the bodies that share one ``CoilDrive`` form one coil that carries ``current``.
 
     Reverse the drive by swapping the terminal roles, not with a negative current.
     """
@@ -387,7 +391,7 @@ class CoilDrive(Condition):
 
 
 class CoilTerminal(Condition):
-    """One end of an open coil's terminal pair, Elmer's ``Coil Start`` or ``Coil End`` marker (``COIL_MAGNETOSTATICS``, boundary target).
+    """One end of an open coil, its start or end electrode.
 
     The electrode's end face must lie on the domain boundary (``GeometryConfig.terminate_electrodes``); positive coil current flows from start to end.
     """
@@ -414,7 +418,7 @@ class CoilTerminal(Condition):
 
 
 class CalculateMagneticForce(Condition):
-    """An Elmer ``Component`` lumping CalcFields' magnetic force and torque over the bodies this condition's tag matches (magnetic physics, body target)."""
+    """Lumps the magnetic force, and optionally the torque, over the bodies its tag matches into one Elmer ``Component``."""
 
     kind: Literal["calculate_magnetic_force"] = "calculate_magnetic_force"
     """Discriminator that names this condition type in a serialized config."""
@@ -464,7 +468,7 @@ class CalculateMagneticForce(Condition):
 
 
 class FixedDisplacement(Condition):
-    """Prescribed displacement on a boundary, clamped to zero in every direction by default (linear elasticity, boundary target)."""
+    """A prescribed displacement on a boundary, clamped to zero in every direction by default."""
 
     kind: Literal["fixed_displacement"] = "fixed_displacement"
     """Discriminator that names this condition type in a serialized config."""
@@ -505,7 +509,7 @@ class FixedDisplacement(Condition):
 
 
 class SurfaceForce(Condition):
-    """A total force spread uniformly over a named face as a traction (linear elasticity, boundary target).
+    """A total force spread uniformly over a named face as a traction.
 
     Attach it to a ``TaggedFace``'s tag: the traction is the force over the face's measured area, which an adjacency group does not carry.
     """

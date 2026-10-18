@@ -20,6 +20,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - A customized solver stack must use the frame's coordinate system exactly, not only one that integrates the same way.
 - A boundary group bordered twice by one tag gets that tag's conditions once.
 - Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
+- The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
 
 ## [0.1.0] - 2026-10-17
 

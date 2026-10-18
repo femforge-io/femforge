@@ -4,7 +4,7 @@ The user guide covers one task per page, in the order a simulation flows through
 
 - [Geometry and tags](geometry.md): tag the bodies of the STEP file, in your CAD or in a build123d script.
 - [Materials](materials.md): the material models, their property functions and units.
-- [Conditions and physics](conditions.md): body forces, boundary conditions and the physics presets femforge solves.
+- [Conditions and physics](conditions/index.md): body forces, boundary conditions and the physics presets femforge solves.
 - [Mesh](mesh.md): element sizes, gmsh options, deterministic meshing and the mesh backends.
 - [Frames](frames/index.md): map the authored model onto the solve, whole or as a section.
 - [Driver and runs](driver.md): how the driver stages, reuses and records each run.

@@ -34,7 +34,7 @@ Elmer names eight coordinate systems. femforge maps two of them to a frame; see 
 
 ## Physics modules
 
-The rows follow the chapters of the Elmer Models Manual. The femforge column names the [Physics][femforge.elmer.Physics] preset or the module that wires the Elmer module. A `Not started` module can still run through [GenericSolver][femforge.elmer.config.GenericSolver], which writes a hand-built solver block whose keywords femforge does not check. [Conditions and physics](../user-guide/conditions.md) documents each preset.
+The rows follow the chapters of the Elmer Models Manual. The femforge column names the [Physics][femforge.elmer.Physics] preset or the module that wires the Elmer module. A `Not started` module can still run through [GenericSolver][femforge.elmer.config.GenericSolver], which writes a hand-built solver block whose keywords femforge does not check. [Conditions and physics](../user-guide/conditions/index.md) documents each preset.
 
 ### Heat and thermal
 
@@ -63,7 +63,7 @@ The rows follow the chapters of the Elmer Models Manual. The femforge column nam
 | `ElectricForce` | The electrostatic force on a surface from a solved potential. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | `StatMagSolve` | Axisymmetric magnetoquasistatics; Elmer marks it obsolete. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 
-`Physics.ELECTROSTATICS` has a preset and documentation. `FixedPotential` feeds it only when its `physics` field is set to `ELECTROSTATICS`, and no guide page, example or test exercises that path.
+`Physics.ELECTROSTATICS` has a preset and documentation. `FixedPotential` feeds it only when its `physics` field is set to `ELECTROSTATICS`, and no example or test solves that path; the [Electrostatics](../user-guide/conditions/electrostatics.md) guide page shows the setup.
 
 ### Structural mechanics
 
@@ -182,23 +182,7 @@ The rows follow the chapters of the ElmerSolver Manual that describe a capabilit
 
 ## Conditions and materials
 
-Every condition and material below is implemented. [Conditions and physics](../user-guide/conditions.md) and [Materials](../user-guide/materials.md) document them.
-
-| Condition | Feeds | Target |
-| --- | --- | --- |
-| [Magnetization][femforge.physical.Magnetization] | `MAGNETOSTATICS`, `MAGNETOSTATICS_2D`, `COIL_MAGNETOSTATICS` | body |
-| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | `MAGNETOSTATICS`, `MAGNETOSTATICS_2D`, `COIL_MAGNETOSTATICS` | body |
-| [CurrentDensity][femforge.physical.CurrentDensity] | `MAGNETOSTATICS_2D` | body |
-| [CoilDrive][femforge.physical.CoilDrive] | `COIL_MAGNETOSTATICS` | body |
-| [CoilTerminal][femforge.physical.CoilTerminal] | `COIL_MAGNETOSTATICS` | outer shell |
-| [FixedTemperature][femforge.physical.FixedTemperature] | `THERMAL`, `JOULE_HEATING` | boundary |
-| [HeatFlux][femforge.physical.HeatFlux] | `THERMAL`, `JOULE_HEATING` | boundary |
-| [Convection][femforge.physical.Convection] | `THERMAL`, `JOULE_HEATING` | outer shell |
-| [HeatSource][femforge.physical.HeatSource] | `THERMAL`, `JOULE_HEATING` | body |
-| [FixedPotential][femforge.physical.FixedPotential] | `CURRENT_CONDUCTION`, `JOULE_HEATING` | boundary |
-| [JouleHeat][femforge.physical.JouleHeat] | `JOULE_HEATING` | body |
-| [FixedDisplacement][femforge.physical.FixedDisplacement] | `LINEAR_ELASTICITY` | boundary |
-| [SurfaceForce][femforge.physical.SurfaceForce] | `LINEAR_ELASTICITY` | named face |
+Every shipped condition is implemented; [Shipped conditions](../user-guide/conditions/index.md#shipped-conditions) lists each one with the physics that read it. Every material below is implemented too, and [Materials](../user-guide/materials.md) documents them.
 
 | Material | Tag | Notable properties |
 | --- | --- | --- |

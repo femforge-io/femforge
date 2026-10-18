@@ -136,7 +136,7 @@ config = ff.SimulationConfig(mesh=ff.MeshConfig(step="motor.step"))
 config.customize_physics().operating_point.temperature = ff.quantity(353.15, "kelvin")
 ```
 
-See [Conditions and physics](conditions.md#customize-the-solver-stack) for the solver stack.
+See [Conditions and physics](conditions/index.md#customize-the-solver-stack) for the solver stack.
 
 ## Nonlinear steel
 

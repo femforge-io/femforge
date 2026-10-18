@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import textwrap
 from types import ModuleType
+
+
+FIELD_DOCSTRING = re.compile(r"^(?:`(?P<symbol>[^`]+)` )?`\[(?P<unit>[^\]]+)\]`: (?P<meaning>\S.*)", re.DOTALL)
+"""A physical field's docstring, `` `glyph` `[unit]`: Meaning``; the glyph is optional for dimensionless knobs."""
 
 
 def attribute_docstrings(target: type | ModuleType) -> dict[str, str]:

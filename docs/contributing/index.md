@@ -108,7 +108,7 @@ uv run zensical serve
 
 Pass `--open` to open the preview in a browser and `--dev-addr` to change the address. `zensical serve` does not support strict mode yet, so run `zensical build --strict` before you push.
 
-Zensical caches each rendered page under `.cache` keyed by the page source, so a change to `markdown_extensions` in `mkdocs.yml` leaves unchanged pages stale. Run `uv run zensical build --clean` once after such a change.
+Zensical caches each rendered page under `.cache` keyed by the page source, so a change to `markdown_extensions` in `mkdocs.yml` leaves unchanged pages stale. Run `uv run zensical build --clean` once after such a change, and after a change to the conditions page generator or a condition class, whose generated tables the cache also keeps.
 
 ## Pull requests
 

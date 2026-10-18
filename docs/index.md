@@ -44,7 +44,7 @@ Four workbenches, each a script you can run. [Examples](examples/index.md) descr
 ## How it fits together
 
 1. [Geometry and tags](user-guide/geometry.md): name each body with its material and name tags, in your CAD's STEP export or in a build123d script.
-2. [Materials](user-guide/materials.md) and [conditions and physics](user-guide/conditions.md): say what each region is made of, what drives it and which physics to solve.
+2. [Materials](user-guide/materials.md) and [conditions and physics](user-guide/conditions/index.md): say what each region is made of, what drives it and which physics to solve.
 3. [Mesh](user-guide/mesh.md) and [frames](user-guide/frames/index.md): set the element sizes and choose how the model maps onto the solve.
 4. [Driver and runs](user-guide/driver.md): mesh, write the solver input, solve and record the run bundle.
 5. [Results](user-guide/results.md): read forces, torques, peak fields and the solved field mesh.

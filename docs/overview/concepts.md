@@ -57,7 +57,7 @@ Guide: [Materials](../user-guide/materials.md)
 
 A condition is a typed body force or boundary condition, such as [Magnetization][femforge.physical.Magnetization], [FixedTemperature][femforge.physical.FixedTemperature] or [Convection][femforge.physical.Convection]. Each condition names the [Physics][femforge.elmer.Physics] it feeds and whether it targets a body or a boundary. You attach conditions to an [EntityTag][femforge.physical.EntityTag], whose selector matches bodies by their tags. The mesher derives boundary groups from body adjacency: `A__B` for the faces two bodies share, `A__EXT` for a body's outer shell and `A__AXIS` for the symmetry axis of a 2D model. A body's boundary conditions reach every boundary group it borders, and an external-only condition such as convection lands on its outer shell alone. The physics selection resolves to a typed solver stack that you can edit field by field, and the sif writer checks materials against solvers before Elmer starts.
 
-Guide: [Conditions and physics](../user-guide/conditions.md)
+Guide: [Conditions and physics](../user-guide/conditions/index.md)
 
 ## Frames
 

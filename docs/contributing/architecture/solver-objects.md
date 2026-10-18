@@ -148,7 +148,7 @@ Three functions adjust or read a whole stack:
 | `needs_halobc` | asks for halo elements only when the stack holds CoilSolver: its boundary-terminated electrodes need them, and elsewhere they skew the force lumping | `src/femforge/elmer/config/common/physics_config.py:92-94` |
 | `convergence_targets` | the iteration cap and tolerance of each solver's nonlinear and steady-state loop, keyed the way Elmer tags its convergence lines | `src/femforge/elmer/config/common/physics_config.py:97-116` |
 
-[Conditions and physics](../../user-guide/conditions.md#customize-the-solver-stack) shows the user side of editing a stack.
+[Conditions and physics](../../user-guide/conditions/index.md#customize-the-solver-stack) shows the user side of editing a stack.
 
 ## Fields are sif keywords
 

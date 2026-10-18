@@ -38,7 +38,7 @@ Press `Ctrl+C` to stop. A later run loads each solved gap from `magnet-plate/run
 ```
 
 - `MagnetAndPlate` is the geometry: a build123d model whose parts carry their material and name. See [Geometry and tags](../user-guide/geometry.md).
-- `config()` builds one `SimulationConfig`: the solve frame, the mesh sizes, the materials and the conditions. See [Conditions and physics](../user-guide/conditions.md), [Frames](../user-guide/frames/index.md) and [Mesh](../user-guide/mesh.md).
+- `config()` builds one `SimulationConfig`: the solve frame, the mesh sizes, the materials and the conditions. See [Conditions and physics](../user-guide/conditions/index.md), [Frames](../user-guide/frames/index.md) and [Mesh](../user-guide/mesh.md).
 - `solve()` runs each gap through a `Driver` and reads the force from the typed `Result`. See [Driver and runs](../user-guide/driver.md) and [Results](../user-guide/results.md).
 - The script starts a second copy of itself with `--solve-only`, which runs `solve()`, and meanwhile `show()` serves the field viewer that `viewer()` builds. `Ctrl+C` stops both. With no run given, the viewer opens the newest run as soon as one lands. See [Workbench](../user-guide/workbench.md).
 
