@@ -534,7 +534,8 @@ def test_streamlines_are_integrated_only_when_their_options_change(monkeypatch: 
     scene.update(plotter, DisplaySpec(field="magnetic flux density", streamlines=restyled))
 
     assert [options.line_count for options in integrations] == [2, 3], "a colormap, inversion or opacity change restyles the cached lines"
-    assert scene.spec.streamlines == restyled and scene.integrated(FieldLineOptions(line_count=4)) is None
+    assert scene.spec.streamlines == restyled.model_copy(update={"vectors": "magnetic flux density"}), "the drawn options name the field they follow"
+    assert scene.integrated(FieldLineOptions(line_count=4)) is None
     assert str(StreamlineActor.LINES) in plotter.renderer.actors
 
     scene.update(plotter, DisplaySpec(field="magnetic flux density", streamlines=None))
@@ -597,6 +598,47 @@ def test_update_before_render_renders_first() -> None:
     scene.update(plotter, DisplaySpec(field="joule heating"))
 
     assert scene.clim == pytest.approx((2.0, 3.0), rel=0.5)
+    plotter.close()
+
+
+def test_an_update_recolors_the_surfaces_the_body_actor_draws() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _scene()
+    scene.spec = DisplaySpec(field="magnetic flux density", mode=DisplayMode.MAGNITUDE, streamlines=None)
+    plotter = pv.Plotter(off_screen=True)
+    scene.render(plotter)
+    scene.update(plotter, DisplaySpec(field="joule heating", streamlines=None))
+    actor = cast("pv.Actor", plotter.renderer.actors[str(SceneActor.BODIES)])
+    drawn = cast("pv.MultiBlock", actor.mapper.dataset)
+    colored: dict[str, set[float]] = {}
+    for name in (str(key) for key in drawn.keys()):
+        values: np.typing.NDArray[np.float64] = np.asarray(cast("pv.DataSet", drawn[name]).cell_data[SCALARS_ARRAY], dtype=np.float64)
+        colored[name] = set(cast("list[float]", values.tolist()))
+
+    assert colored == {"LEFT": {2.0}, "RIGHT": {3.0}}, "the actor draws surface copies of the blocks, which a recolor reaches too"
+    plotter.close()
+
+
+def test_a_scene_without_a_flux_density_draws_its_lines_along_the_first_vector() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    from femforge.viz.field_lines import StreamlineActor
+
+    grid = _synthetic_grid()
+    grid.point_data["displacement"] = np.asarray(grid.point_data["magnetic flux density"])
+    _ = grid.point_data.pop("magnetic flux density")
+    bodies = Bodies([Body(name="LEFT", mesh_id=1), Body(name="RIGHT", mesh_id=2)])
+    scene = FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=3, run_id="elastic", bodies=bodies)
+    plotter = pv.Plotter(off_screen=True)
+    scene.spec = DisplaySpec(field="joule heating", streamlines=FieldLineOptions(line_count=2))
+    scene.render(plotter)
+
+    assert scene.spec.streamlines is not None and scene.spec.streamlines.vectors == "displacement"
+    assert str(StreamlineActor.LINES) in plotter.renderer.actors
+    assert scene.lines_array(FieldLineOptions(vectors="absent"), "joule heating") is None
     plotter.close()
 
 

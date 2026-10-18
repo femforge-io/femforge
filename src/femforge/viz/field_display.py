@@ -804,6 +804,8 @@ class FieldScene:
         self.clim: tuple[float, float] = (0.0, 1.0)
         self.data_range: tuple[float, float] = (0.0, 1.0)
         self._actor: pv.Actor | None = None
+        self._surfaces: pv.MultiBlock | None = None
+        """The surface copy of the shown blocks the body actor draws, which every apply recolors with the blocks."""
         self._styled: dict[str, tuple[str, float]] = {}
         """The ``(color, opacity)`` of every solid body actor the plotter holds."""
         self._lines: tuple[StreamlineActors, FieldLineOptions] | None = None
@@ -897,6 +899,7 @@ class FieldScene:
         # Recorded only once the blocks stand, so a build that raised is tried again by the next draw; the body actor holds the old blocks, so it is added anew.
         self.expanded = wanted
         self._actor = None
+        self._surfaces = None
         self._lines = None
         self.drawn_lines = None
         log.bind(run_id=self.run_id, expansion=str(expansion), sweep=sweep).info("Section expanded.")
@@ -928,8 +931,6 @@ class FieldScene:
         names: list[str] = [str(key) for key in self.blocks.keys()]
         solved: list[AnyArray] = [reduce_field(raw_values(cast("pv.DataSet", self.section_blocks[name])), fitted.mode) for name in names]
         shown: list[AnyArray] = solved if self.blocks is self.section_blocks else [reduce_field(raw_values(cast("pv.DataSet", self.blocks[name])), fitted.mode) for name in names]
-        sources: list[FloatArray] = [raw_values(cast("pv.DataSet", self.blocks[name])) for name in names]
-        reductions: list[AnyArray] = shown
 
         # Every body counts, each through its own range, whatever it is shown as: the scale belongs to the field, not the view. A
         # component or an in-plane direction turns with the expansion, so its range comes from the values drawn.
@@ -937,20 +938,25 @@ class FieldScene:
         self.data_range = color_range(ranged, robust=False)
         clim: tuple[float, float] = fitted.clim if fitted.clim is not None else color_range(ranged, log_scale=fitted.log_scale, robust=fitted.robust)
 
-        if fitted.mode is DisplayMode.POLAR_XY:
+        def painted(block: pv.DataSet) -> AnyArray:
+            """What colors one block: the reduction, or RGBA rows in the polar mode, whose reduction only sets the range."""
+            values: FloatArray = raw_values(block)
+            if fitted.mode is not DisplayMode.POLAR_XY:
+                return reduce_field(values, fitted.mode)
+
             cmap = pv.get_cmap_safe(fitted.colormap)  # pyright: ignore[reportUnknownMemberType]  # pyvista returns an untyped matplotlib Colormap
 
             def mapper(fractions: FloatArray) -> FloatArray:
                 """RGBA rows for cyclic angle fractions, through the spec's colormap."""
                 return np.asarray(cmap(fractions), dtype=np.float64)
 
-            reductions = [polar_rgba(values, clim[0], clim[1], mapper) for values in sources]
+            return polar_rgba(values, clim[0], clim[1], mapper)
 
-        for name, scalars in zip(names, reductions, strict=True):
-            block: pv.DataSet = cast("pv.DataSet", self.blocks[name])
+        surfaces: list[pv.DataSet] = [] if self._surfaces is None else [cast("pv.DataSet", self._surfaces[name]) for name in names]
+        for block in [*(cast("pv.DataSet", self.blocks[name]) for name in names), *surfaces]:
             arrays = block.point_data if info.association is Association.POINT else block.cell_data
             # VTK's SetScalars replaces whichever array is active, the displayed field itself when it is, so the reduction is added beside it and then made active.
-            arrays[SCALARS_ARRAY] = scalars
+            arrays[SCALARS_ARRAY] = painted(block)
             arrays.active_scalars_name = SCALARS_ARRAY
 
         self.spec = fitted
@@ -969,8 +975,10 @@ class FieldScene:
         for name in leftovers:
             _ = plotter.remove_actor(name)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
 
+        # pyvista draws a composite through surface copies of its blocks, so the scene keeps those copies to recolor them.
+        self._surfaces = self.blocks.as_polydata_blocks()
         self._actor = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
-            self.blocks,
+            self._surfaces,
             scalars=SCALARS_ARRAY,
             show_edges=False,
             show_scalar_bar=False,
@@ -1159,29 +1167,27 @@ class FieldScene:
 
     def _update_streamlines(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Draw the field-line overlay when it or the display it is styled by changed, integrating only new lines, or remove it when the spec turns it off or the grid has no field to follow."""
-        if spec.streamlines is None or self.lines_array(spec.streamlines) is None:
+        vectors: str | None = None if spec.streamlines is None else self.lines_array(spec.streamlines, spec.field)
+        if spec.streamlines is None or vectors is None:
             for actor in StreamlineActor:
                 _ = plotter.remove_actor(str(actor))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
             self._remove_lines_bar(plotter)
             self.drawn_lines = None
             return
 
-        cached: StreamlineActors | None = self.integrated(spec.streamlines)
-        if cached is not None and self.line_style(spec.streamlines, cached) == self.drawn_lines:
+        options: FieldLineOptions = spec.streamlines.model_copy(update={"vectors": vectors})
+        cached: StreamlineActors | None = self.integrated(options)
+        if cached is not None and self.line_style(options, cached) == self.drawn_lines:
             return
 
-        self.show_streamlines(plotter, cached or self.integrate_streamlines(spec.streamlines), spec.streamlines)
+        self.show_streamlines(plotter, cached or self.integrate_streamlines(options), options)
 
-    def lines_array(self, options: FieldLineOptions) -> str | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """The array the field lines would follow: the one asked for, else the flux density, None when the grid has neither."""
-        names: list[str] = list(self.grid.array_names)
-        if options.vectors is not None:
-            return options.vectors if options.vectors in names else None
+    def lines_array(self, options: FieldLineOptions, shown: str) -> str | None:
+        """The array the field lines follow: the one asked for when the grid has it, else the one [`line_vectors`][] picks for the ``shown`` array."""
+        if options.vectors is None:
+            return line_vectors(self.fields, shown)
 
-        try:
-            return select_flux_density_array(names)
-        except KeyError:
-            return None
+        return options.vectors if options.vectors in self.grid.array_names else None
 
     def integrated(self, options: FieldLineOptions) -> StreamlineActors | None:
         """The cached field lines when ``options`` only restyle them, None when they need integrating."""
