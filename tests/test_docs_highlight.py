@@ -1,7 +1,7 @@
 """The docs highlight filter tags names the way an editor's semantic tokens would."""
 
 import pytest
-from femforge_docs_highlight import SemanticNames
+from femforge_docs.highlight import SemanticNames
 from pygments.lexers import get_lexer_by_name  # pyright: ignore[reportUnknownVariableType]
 from pygments.token import Keyword, Name, _TokenType
 

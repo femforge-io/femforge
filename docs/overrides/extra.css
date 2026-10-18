@@ -239,6 +239,19 @@
   background-color: var(--ff-tone);
 }
 
+.md-typeset summary .ff-source {
+  float: right;
+  margin-right: 1.6rem;
+  color: var(--md-default-fg-color--light);
+}
+.md-typeset summary .ff-source:is(:hover, :focus-visible) {
+  color: var(--md-accent-fg-color);
+}
+.md-typeset p:has(> .ff-source-caption) {
+  margin-top: -0.4em;
+  font-size: 0.7rem;
+}
+
 .md-grid {
   max-width: 72rem;
 }

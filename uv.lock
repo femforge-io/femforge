@@ -905,7 +905,7 @@ dev = [
     { name = "types-pygments" },
 ]
 docs = [
-    { name = "femforge-docs-highlight" },
+    { name = "femforge-docs" },
     { name = "griffe-pydantic" },
     { name = "markdown-exec", extra = ["ansi"] },
     { name = "mkdocs-redirects" },
@@ -950,7 +950,7 @@ dev = [
     { name = "types-pygments" },
 ]
 docs = [
-    { name = "femforge-docs-highlight", editable = "tools/docs-highlight" },
+    { name = "femforge-docs", editable = "tools/docs" },
     { name = "griffe-pydantic", specifier = ">=1.3.2" },
     { name = "markdown-exec", extras = ["ansi"], specifier = ">=1.12.4" },
     { name = "mkdocs-redirects", specifier = ">=1.2.2" },
@@ -959,15 +959,19 @@ docs = [
 ]
 
 [[package]]
-name = "femforge-docs-highlight"
+name = "femforge-docs"
 version = "0.1.0"
-source = { editable = "tools/docs-highlight" }
+source = { editable = "tools/docs" }
 dependencies = [
+    { name = "markdown" },
     { name = "pygments" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pygments", specifier = ">=2.12" }]
+requires-dist = [
+    { name = "markdown", specifier = ">=3.6" },
+    { name = "pygments", specifier = ">=2.12" },
+]
 
 [[package]]
 name = "femforge-workbench"

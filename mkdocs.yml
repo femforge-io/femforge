@@ -3,7 +3,7 @@ site_url: https://docs.femforge.io/
 site_description: "Typed finite-element orchestration in Python: a tagged STEP file in, typed results out, with gmsh and Elmer as the first backends."
 site_author: Nathan W.
 copyright: Copyright &copy; 2026 Nathan W. Apache-2.0.
-repo_url: https://github.com/femforge-io/femforge
+repo_url: &repo https://github.com/femforge-io/femforge
 repo_name: femforge-io/femforge
 edit_uri: edit/main/docs/
 docs_dir: docs
@@ -123,6 +123,8 @@ markdown_extensions:
   - pymdownx.snippets:
       base_path: [".", docs]
       check_paths: true
+  - femforge_docs.source_links:
+      repo: *repo
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true

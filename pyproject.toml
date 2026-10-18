@@ -73,10 +73,10 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 femforge-workbench = { workspace = true }
-femforge-docs-highlight = { path = "tools/docs-highlight", editable = true }
+femforge-docs = { path = "tools/docs", editable = true }
 
 [tool.ruff]
-src = ["src", "packages/femforge-workbench/src", "examples/*", "tools/docs-highlight/src"]
+src = ["src", "packages/femforge-workbench/src", "examples/*", "tools/docs/src"]
 extend-exclude = ["tests"]
 force-exclude = true
 line-length = 200
@@ -95,7 +95,7 @@ combine-as-imports = true
 typeCheckingMode = "basic"
 include = ["src", "tests", "packages/femforge-workbench/src", "packages/femforge-workbench/hatch_build.py", "scripts", "examples", "tools"]
 exclude = [".venv", "**/__pycache__"]
-extraPaths = ["src", "packages/femforge-workbench/src", "tools/docs-highlight/src"]
+extraPaths = ["src", "packages/femforge-workbench/src", "tools/docs/src"]
 pythonVersion = "3.12"
 stubPath = "typings"
 reportUnnecessaryTypeIgnoreComment = "warning"
@@ -129,7 +129,7 @@ dev = [
     "types-pygments",
 ]
 docs = [
-    "femforge-docs-highlight",
+    "femforge-docs",
     "griffe-pydantic>=1.3.2",
     "markdown-exec[ansi]>=1.12.4",
     "mkdocs-redirects>=1.2.2",
