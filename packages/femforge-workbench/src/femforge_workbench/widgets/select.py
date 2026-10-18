@@ -56,13 +56,22 @@ class Select(Element):
 class SelectTrigger(Element):
     """The button showing the chosen value."""
 
-    def __init__(self, children: object = None, *, size: Prop[SelectTriggerSize] = None, disabled: Prop[bool] = None, **kwargs: Unpack[Shared]) -> None:
+    def __init__(
+        self,
+        children: object = None,
+        *,
+        size: Prop[SelectTriggerSize] = None,
+        disabled: Prop[bool] = None,
+        aria_label: Prop[str] = None,
+        **kwargs: Unpack[Shared],
+    ) -> None:
         """Creates the trigger; a prop left None keeps the component's default.
 
         Args:
             children: The trigger's content, usually a SelectValue.
             size: The trigger's height.
             disabled: Disables the trigger.
+            aria_label: The trigger's accessible name, for a select whose caption is not its label element.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         super().__init__("ff-select-trigger", locals(), children, **kwargs)
@@ -105,7 +114,17 @@ class SelectContent(Element):
 class SelectItem(Element):
     """One option; `children` is its label."""
 
-    def __init__(self, children: object = None, *, value: Prop[str] = None, disabled: Prop[bool] = None, text_value: Prop[str] = None, **kwargs: Unpack[Shared]) -> None:
+    def __init__(
+        self,
+        children: object = None,
+        *,
+        value: Prop[str] = None,
+        disabled: Prop[bool] = None,
+        text_value: Prop[str] = None,
+        flag: Prop[str] = None,
+        detail: Prop[list[str]] = None,
+        **kwargs: Unpack[Shared],
+    ) -> None:
         """Creates the option; a prop left None keeps the component's default.
 
         Args:
@@ -113,6 +132,8 @@ class SelectItem(Element):
             value: The value the option chooses.
             disabled: Disables the option.
             text_value: The text typeahead matches, for a label that is not plain text.
+            flag: A state word after the label, such as Solving, set apart from the muted detail.
+            detail: Muted parts after the label, never copied into the trigger nor matched on typeahead.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         super().__init__("ff-select-item", locals(), children, **kwargs)

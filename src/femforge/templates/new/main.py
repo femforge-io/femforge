@@ -2,8 +2,9 @@
 # requires-python = ">=3.12"
 # dependencies = ["femforge[workbench]~=0.1.0"]
 # ///
-"""A disc magnet pulls on a steel plate across an air gap: solve four gaps, then browse the fields in a workbench (``--solve-only`` skips it)."""
+"""A disc magnet pulls on a steel plate across an air gap: solve four gaps in the background while a workbench shows each run as it lands (``--solve-only`` skips the workbench)."""
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -95,16 +96,20 @@ def solve() -> None:
 
 
 def viewer() -> ff.workbench.Split:
-    """The field viewer on the newest run, coloring the flux density with the air hidden."""
+    """The field viewer coloring the flux density with the air hidden; it opens the newest run as soon as one lands."""
     display = ff.DisplaySpec(field="magnetic flux density", mode=ff.DisplayMode.MAGNITUDE, hidden_bodies=("AIR",))
-    runs = ff.find_runs(RUNS)
 
-    return ff.workbench.field_viewer(runs[0] if runs else None, display=display, telemetry=TELEMETRY)
+    return ff.workbench.field_viewer(display=display, telemetry=TELEMETRY)
 
 
 if __name__ == "__main__":
-    solve()
-
-    if "--solve-only" not in sys.argv[1:]:
-        # A function, not a built dock, so every save of this file rebuilds the workbench.
-        ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
+    if "--solve-only" in sys.argv[1:]:
+        solve()
+    else:
+        solver = subprocess.Popen([sys.executable, __file__, "--solve-only"])
+        try:
+            # A function, not a built dock, so every save of this file rebuilds the workbench.
+            ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
+        finally:
+            # Ctrl+C reaches the solver too; waiting lets it release its claim on the run it was solving.
+            _ = solver.wait()

@@ -85,6 +85,7 @@ _telemetry_process: str | None = None
 _scoped_telemetry: dict[str, tuple[ParquetLogSink, int]] = {}
 _scoped_lock: threading.Lock = threading.Lock()
 _json_sink: int | None = None
+_setup_lock: threading.RLock = threading.RLock()
 
 
 class RelayedRecord(TypedDict):
@@ -299,8 +300,13 @@ def setup_logging(
 
 
 def _ensure_setup() -> None:
-    if _terminal is None and _json_sink is None:
-        setup_logging()
+    if _terminal is not None or _json_sink is not None:
+        return
+
+    # Two threads logging first at once would otherwise both set up, leaving two terminal sinks.
+    with _setup_lock:
+        if _terminal is None and _json_sink is None:
+            setup_logging()
 
 
 def _write_json_record(message: Message) -> None:
