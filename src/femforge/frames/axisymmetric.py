@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from femforge.common.vector import DIRECTION_SLACK, Direction, DirectionField, Vec3
+from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import ALIGNMENT_TOLERANCE, Axis, Frame, SolvePlane
+from femforge.frames.base import Axis, Frame, SolvePlane, in_plane, least_aligned_world_axis
 
 
 if TYPE_CHECKING:
@@ -42,18 +42,10 @@ class Axisymmetric(Frame):
         if radial is None or not isinstance(axis, Axis):
             return radial
 
-        cosine: float = radial.dot(axis.direction)
-
-        # A stored radial is already perpendicular; projecting it again would shift its last digit on every reload.
-        if abs(cosine) <= DIRECTION_SLACK:
-            return radial
-
-        across: Vec3 = radial - axis.direction * cosine
-
-        if across.magnitude() <= ALIGNMENT_TOLERANCE:
-            raise ValueError(f"The radial direction {radial} is parallel to the symmetry axis {axis.direction}.")
-
-        return Direction(across.x, across.y, across.z)
+        try:
+            return in_plane(radial, axis.direction)
+        except ValueError:
+            raise ValueError(f"The radial direction {radial} is parallel to the symmetry axis {axis.direction}.") from None
 
     @property
     def label(self) -> str:
@@ -76,11 +68,10 @@ class Axisymmetric(Frame):
     def plane(self) -> SolvePlane:
         """The half-plane through ``axis`` toward ``radial``, else toward the world axis least aligned with ``axis`` (X first)."""
         direction: Direction = self.axis.direction
-        world: tuple[Vec3, ...] = (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
-        seed: Vec3 = self.radial if self.radial is not None else min(world, key=lambda unit: abs(unit.dot(direction)))
+        seed: Vec3 = self.radial if self.radial is not None else least_aligned_world_axis(direction)
         across: Vec3 = seed - direction * seed.dot(direction)
 
-        return SolvePlane(origin=self.axis.origin, radial=Direction(across.x, across.y, across.z), axis=direction)
+        return SolvePlane(origin=self.axis.origin, x_dir=Direction(across.x, across.y, across.z), y_dir=direction)
 
     @property
     def lumps_torque(self) -> bool:
@@ -95,11 +86,11 @@ class Axisymmetric(Frame):
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
         """``step_out``, written with the section of ``step_in`` on ``plane``."""
         from femforge.common.log import log
-        from femforge.geometry.section import axisymmetric_cross_section
+        from femforge.geometry.section import axisymmetric_cross_section, export_section
         from femforge.geometry.step import import_tagged_step
 
         section = axisymmetric_cross_section(import_tagged_step(step_in), self.plane)
-        section.export_step(str(step_out))
+        export_section(section, step_out)
         log.bind(step=str(step_out), axis=self.axis.model_dump(mode="json")).info("Axisymmetric section written.")
 
         return step_out

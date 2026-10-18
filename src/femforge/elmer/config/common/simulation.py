@@ -15,6 +15,9 @@ class CoordinateSystem(StrEnum):
     CARTESIAN = "Cartesian"
     """Cartesian coordinates."""
 
+    CARTESIAN_2D = "Cartesian 2D"
+    """2D Cartesian (x, y) coordinates, integrated per metre of depth."""
+
     CYLINDRIC = "Cylindric"
     """Full cylindrical coordinates."""
 

@@ -52,9 +52,9 @@ class Solid(Frame):
         return step_in
 
     def solves(self, physics: Physics) -> Physics:
-        """``physics`` itself, except the axisymmetric stack, which raises."""
+        """``physics`` itself, except the 2D magnetostatic stack, which raises."""
         if physics is Physics.MAGNETOSTATICS_2D:
-            raise ValueError(f"Physics '{physics.value}' is the axisymmetric stack: select '{Physics.MAGNETOSTATICS.value}' with frame=Axisymmetric().")
+            raise ValueError(f"Physics '{physics.value}' is the 2D magnetostatic stack: select '{Physics.MAGNETOSTATICS.value}' with a 2D frame (Axisymmetric() or Cartesian2D()).")
 
         return physics
 

@@ -1,13 +1,15 @@
-"""Tagged cross-sections of tagged 3D solids: the quarter-wedge cutaway and the axisymmetric r–z section the 2D solve meshes."""
+"""Tagged cross-sections of tagged 3D solids: the quarter-wedge cutaway, and the axisymmetric and planar sections the 2D solves mesh."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Iterable, cast
 
 import build123d as b3d
 
+from femforge.common.vector import Vec3
 from femforge.frames.base import SolvePlane
-from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
+from femforge.geometry.tags import TaggedCompound, TaggedEdge, TaggedFace, TaggedPart
 
 
 _TOLERANCE = 1e-6
@@ -75,47 +77,135 @@ def cross_section_3D(
     return result
 
 
+def _solve_location(plane: SolvePlane) -> b3d.Location:
+    """The placement that carries authored shapes into the solve frame of ``plane``, the plane landing on Z = 0."""
+    x_dir: b3d.Vector = b3d.Vector(*plane.x_dir.to_tuple())
+    y_dir: b3d.Vector = b3d.Vector(*plane.y_dir.to_tuple())
+    solve_frame = b3d.Plane(origin=b3d.Vector(*plane.origin.to_tuple()), x_dir=x_dir, z_dir=x_dir.cross(y_dir))
+
+    return solve_frame.location.inverse()
+
+
+def _sheet(parts: list[TaggedPart], *, half: bool, margin: float) -> b3d.Sketch:
+    """The Z = 0 rectangle reaching ``margin`` past every part, only its X >= 0 half when ``half``."""
+    boxes: list[b3d.BoundBox] = [part.bounding_box() for part in parts]
+    left: float = 0.0 if half else min(box.min.X for box in boxes) - margin
+    right: float = max(max(box.max.X for box in boxes), left) + margin
+    bottom: float = min(box.min.Y for box in boxes) - margin
+    top: float = max(box.max.Y for box in boxes) + margin
+
+    return cast("b3d.Sketch", b3d.Pos(left, bottom) * b3d.Rectangle(right - left, top - bottom, align=(b3d.Align.MIN, b3d.Align.MIN)))
+
+
+def _section(compound: TaggedCompound, plane: SolvePlane, *, half: bool, margin: float, kind: str) -> list[TaggedFace | TaggedEdge]:
+    """Every tagged solid of ``compound`` sectioned into faces and every marker face into named edges, in the solve frame of ``plane``; ``kind`` names the section in errors."""
+    leaves = compound.placed_leaves(_solve_location(plane))
+    parts: list[TaggedPart] = [leaf for leaf in leaves if isinstance(leaf, TaggedPart)]
+
+    if not parts:
+        raise ValueError(f"{kind}_cross_section needs at least one TaggedPart solid to section.")
+
+    # A common with the sheet keeps coplanar boundary faces of half models, where a section would drop them.
+    sheet: b3d.Sketch = _sheet(parts, half=half, margin=margin)
+    reach: str = f"the half-plane through {plane.origin} along {plane.y_dir}" if half else f"the plane through {plane.origin} normal to {plane.normal}"
+
+    def common(shape: TaggedPart | TaggedFace) -> b3d.Compound | None:
+        intersect = cast("Callable[[b3d.Sketch], b3d.Compound | None]", shape.intersect)
+
+        return intersect(sheet)
+
+    sections: list[TaggedFace | TaggedEdge] = []
+    for part in parts:
+        section: b3d.Compound | None = common(part)
+        section_faces: list[b3d.Face] = list(section.faces()) if section is not None else []
+
+        if not section_faces:
+            raise ValueError(f"the {kind} section missed the solid tagged {part.tags_str()!r}: it does not reach {reach}.")
+
+        for face in section_faces:
+            tagged = TaggedFace(face, tags=part.current_tags)
+            tagged.color = part.color
+            sections.append(tagged)
+
+    markers: list[TaggedFace] = [leaf for leaf in leaves if isinstance(leaf, TaggedFace)]
+    for marker in markers:
+        crossing: b3d.Compound | None = common(marker)
+
+        if crossing is not None and crossing.faces():
+            raise ValueError(f"the named face {marker.tags_str()!r} lies in the section plane, so it sections to no edge; name a face that crosses the plane.")
+
+        crossing_edges: list[b3d.Edge] = list(crossing.edges()) if crossing is not None else []
+
+        if not crossing_edges:
+            raise ValueError(f"the named face {marker.tags_str()!r} does not cross {reach}, so it names no edge of the section.")
+
+        for edge in crossing_edges:
+            tagged_edge = TaggedEdge(edge, tags=marker.current_tags)
+            tagged_edge.color = marker.color
+            sections.append(tagged_edge)
+
+    return sections
+
+
 def axisymmetric_cross_section(compound: TaggedCompound, plane: SolvePlane, margin: float = 1.0) -> TaggedCompound:
-    """Section every tagged solid on the X >= 0 half of ``plane`` into the solve frame (X = radial >= 0, Y = along the axis, Z = 0); a missed solid raises.
+    """Section every tagged solid on the X >= 0 half of ``plane`` into the solve frame (X = radial >= 0, Y = along the axis, Z = 0), and every marker face into a named edge; a missed solid raises.
 
     Args:
         compound: The tagged assembly to section.
         plane: The solve plane, from [`Axisymmetric.plane`][femforge.frames.Axisymmetric.plane].
         margin: How far the half-plane reaches past the parts.
     """
-    toward: b3d.Vector = b3d.Vector(*plane.radial.to_tuple())
-    direction: b3d.Vector = b3d.Vector(*plane.axis.to_tuple())
-    solve_frame = b3d.Plane(origin=b3d.Vector(*plane.origin.to_tuple()), x_dir=toward, z_dir=toward.cross(direction))
+    sections: list[TaggedFace | TaggedEdge] = _section(
+        compound,
+        plane,
+        half=True,
+        margin=margin,
+        kind="axisymmetric",
+    )
 
-    leaves = compound.placed_leaves(solve_frame.location.inverse())
-    parts: list[TaggedPart] = [leaf for leaf in leaves if isinstance(leaf, TaggedPart)]
-    if not parts:
-        raise ValueError("axisymmetric_cross_section needs at least one TaggedPart solid to section.")
+    for leaf in sections:
+        box: b3d.BoundBox = leaf.bounding_box()
 
-    # The X >= 0 half of the Z = 0 plane, past every part; a common with it keeps coplanar boundary faces of half models.
-    boxes: list[b3d.BoundBox] = [part.bounding_box() for part in parts]
-    reach: float = max(max(box.max.X for box in boxes), 0.0) + margin
-    bottom: float = min(box.min.Y for box in boxes) - margin
-    top: float = max(box.max.Y for box in boxes) + margin
-    half_plane = b3d.Pos(0, bottom) * b3d.Rectangle(reach, top - bottom, align=(b3d.Align.MIN, b3d.Align.MIN))
+        if box.min.X < -_TOLERANCE:
+            raise ValueError(f"the section tagged {leaf.tags_str()!r} reaches X = {box.min.X:g} < 0, which Elmer's axisymmetric solve rejects silently.")
 
-    faces: list[TaggedFace] = []
-    for part in parts:
-        common = cast("Callable[[b3d.Sketch], b3d.Compound | None]", part.intersect)
-        section = common(half_plane)
-        section_faces: list[b3d.Face] = list(section.faces()) if section is not None else []
-        if not section_faces:
-            raise ValueError(f"the axisymmetric section missed the solid tagged {part.tags_str()!r}: it does not reach the half-plane through {plane.origin} along {plane.axis}.")
-
-        for face in section_faces:
-            box: b3d.BoundBox = face.bounding_box()
-            if box.min.X < -_TOLERANCE:
-                raise ValueError(f"the section of the solid tagged {part.tags_str()!r} reaches X = {box.min.X:g} < 0, which Elmer's axisymmetric solve rejects silently.")
-
-            tagged = TaggedFace(face, tags=part.current_tags)
-            tagged.color = part.color
-            faces.append(tagged)
-
-    result: TaggedCompound = TaggedCompound(children=faces)
+    result: TaggedCompound = TaggedCompound(children=sections)
     result.label = f"Cross Section of {compound.label}"
+
     return result
+
+
+def planar_cross_section(compound: TaggedCompound, plane: SolvePlane, margin: float = 1.0) -> TaggedCompound:
+    """Section every tagged solid on ``plane`` into the solve frame (X = ``plane.x_dir``, Y = ``plane.y_dir``, Z = 0), and every marker face into a named edge; a missed solid raises.
+
+    Args:
+        compound: The tagged assembly to section.
+        plane: The solve plane, from [`Cartesian2D.plane`][femforge.frames.Cartesian2D.plane].
+        margin: How far the plane reaches past the parts.
+    """
+    sections: list[TaggedFace | TaggedEdge] = _section(
+        compound,
+        plane,
+        half=False,
+        margin=margin,
+        kind="planar",
+    )
+    result: TaggedCompound = TaggedCompound(children=sections)
+    result.label = f"Planar Section of {compound.label}"
+
+    return result
+
+
+def export_section(section: TaggedCompound, step: Path) -> None:
+    """Write ``section`` to the STEP ``step`` and its named edges to the edge file beside it, which the mesher reads back."""
+    from femforge.meshing.section_edges import CurveSpan, SectionEdge, SectionEdges
+
+    def span(edge: TaggedEdge) -> CurveSpan:
+        start: b3d.Vector = edge.start_point()
+        end: b3d.Vector = edge.end_point()
+
+        return CurveSpan(start=Vec3(start.X, start.Y, start.Z), end=Vec3(end.X, end.Y, end.Z), length=edge.length)
+
+    section.export_step(str(step))
+    edges: list[TaggedEdge] = [leaf for leaf in section.placed_leaves() if isinstance(leaf, TaggedEdge)]
+    SectionEdges(edges=[SectionEdge(name=edge.tags_str(), span=span(edge)) for edge in edges]).write(step)

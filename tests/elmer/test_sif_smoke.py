@@ -461,7 +461,7 @@ def test_sim_selects_the_axisymmetric_stack_from_the_frame() -> None:
 
 
 def test_sim_rejects_a_frame_its_physics_or_stack_cannot_solve() -> None:
-    with pytest.raises(ValueError, match="frame=Axisymmetric"):
+    with pytest.raises(ValueError, match="with a 2D frame"):
         Sim(_groups(), physics=Physics.MAGNETOSTATICS_2D)
 
     with pytest.raises(ValueError, match="Coordinate System 'Cartesian'"):

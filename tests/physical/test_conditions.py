@@ -6,7 +6,7 @@ from typing import Annotated, Literal, cast
 import pytest
 from pydantic import TypeAdapter
 
-from femforge.frames import Axis, Axisymmetric, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.physics import Physics
 from femforge.elmer.sections import SifSection
@@ -302,11 +302,41 @@ def test_a_free_fixed_displacement_component_is_left_out() -> None:
 
 
 def test_a_fixed_displacement_rejects_a_nonzero_component_the_frame_cannot_express() -> None:
-    FixedDisplacement().check_frame(Axisymmetric())
-    FixedDisplacement(z=quantity(1.0, "mm")).check_frame(Axisymmetric())
+    planar = Cartesian2D(thickness=10 * U.mm)
+
+    FixedDisplacement().check_frame(Solid())
+    FixedDisplacement().check_frame(planar)
+    FixedDisplacement(x=quantity(1.0, "mm"), y=None).check_frame(planar)
+
+    with pytest.raises(ValueError, match="nonzero z, which has no form in the Cartesian 2D normal to Z frame; set z=None"):
+        FixedDisplacement(z=quantity(1.0, "mm")).check_frame(planar)
 
     with pytest.raises(ValueError, match="x=None"):
         FixedDisplacement(x=quantity(1.0, "mm")).check_frame(Axisymmetric())
+
+
+def test_a_fixed_displacement_rejects_a_component_the_frame_solves_as_another_coordinate() -> None:
+    flipped = Cartesian2D(normal=Axis(direction=Direction(0, 0, -1)), thickness=10 * U.mm)
+    sideways = Cartesian2D(normal=Axis.X, thickness=10 * U.mm)
+
+    FixedDisplacement().check_frame(flipped)
+    FixedDisplacement(y=None, z=None).check_frame(sideways)
+
+    with pytest.raises(ValueError, match="constrains y, which the Cartesian 2D normal to -Z frame solves as another coordinate"):
+        FixedDisplacement(y=quantity(1.0, "mm")).check_frame(flipped)
+
+    with pytest.raises(ValueError, match="constrains y, which the Cartesian 2D normal to X frame solves as another coordinate"):
+        FixedDisplacement().check_frame(sideways)
+
+    with pytest.raises(ValueError, match="constrains z, which the axisymmetric about Z frame"):
+        FixedDisplacement().check_frame(Axisymmetric())
+
+
+def test_a_fixed_displacement_drops_the_component_along_a_2d_normal() -> None:
+    site = BoundarySite(name="ROOT", measure=None, frame=Cartesian2D(thickness=10 * U.mm))
+
+    assert FixedDisplacement().on_boundary(site) == {"Displacement 1": 0.0, "Displacement 2": 0.0}
+    assert FixedDisplacement(x=None).on_boundary(site) == {"Displacement 2": 0.0}
 
 
 def test_a_surface_force_spreads_its_total_over_the_measured_face() -> None:

@@ -114,9 +114,8 @@ def test_tree_renders_groups_and_leaves() -> None:
     assert len(layer_node.children) == 1
 
 
-def test_flatten_and_tag_keeps_solids_and_faces_only() -> None:
-    # A 2D planar scene is authored as tagged faces, so they must survive the flatten that feeds export_step —
-    # while edges/sketches (construction geometry) must not reach the STEP.
+def test_flatten_and_tag_drops_edges_under_solids() -> None:
+    # Leaves more than one dimension below the highest are construction geometry: a solid keeps its marker faces, not its edges.
     flattened = TaggedCompound(
         children=[
             TaggedPart([b3d.Box(1, 1, 1)], tags={"Material": "Copper"}),
@@ -235,3 +234,26 @@ def test_tagged_part_and_face_carry_their_name_into_the_step_label() -> None:
     assert face.tags == {"Name": "Bearing"}
 
     assert TaggedPart([b3d.Box(1, 1, 1)], tags={TagKey.MATERIAL: "N52"}).get_tag(TagKey.NAME) is None
+
+
+def test_a_tagged_edge_takes_a_name_like_a_face() -> None:
+    edge = TaggedEdge(b3d.Line((0, 0), (0, 20)).edge(), tags={"Side": "Left"}, name="LeftFace")
+
+    assert edge.current_tags == {"Side": "Left", "Name": "LeftFace"}
+    assert edge.label == "Side=Left, Name=LeftFace"
+    assert (TaggedPart.dim, TaggedFace.dim, TaggedEdge.dim) == (3, 2, 1)
+
+
+def test_a_faces_and_edges_compound_keeps_its_edges_placed_and_tagged() -> None:
+    face = TaggedFace(b3d.Rectangle(10, 4).face(), tags={"Material": "Steel316"})
+    edge = TaggedEdge(b3d.Line((-5, -2), (-5, 2)).edge(), name="Left")
+    edge.color = b3d.Color("red")
+    section = TaggedCompound(children=[TaggedCompound(children=[face, edge], tags={"Group": "A"})])
+    section.location = b3d.Location((0, 0, 7))
+
+    leaves = section.placed_leaves(b3d.Location((1, 0, 0)))
+
+    assert [type(leaf).__name__ for leaf in leaves] == ["TaggedFace", "TaggedEdge"]
+    assert leaves[1].current_tags == {"Group": "A", "Name": "Left"}
+    assert tuple(leaves[1].center()) == pytest.approx((-4.0, 0.0, 7.0))
+    assert leaves[1].color is not None

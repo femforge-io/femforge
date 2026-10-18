@@ -23,6 +23,7 @@ class BundleFile(StrEnum):
     MANIFEST = "manifest.json"
     RESULT = "result.json"
     GEOMETRY_STEP = "geometry.step"
+    GEOMETRY_BOUNDARIES = "geometry.boundaries.json"
     GEOMETRY_MSH = "geometry.msh"
     ENTITIES = "entities.json"
     BOUNDARIES = "boundaries.yml"
@@ -79,7 +80,7 @@ class RunFile(StrEnum):
         member.patterns = patterns
         return member
 
-    GEOMETRY = ("geometry", BundleFile.GEOMETRY_STEP)
+    GEOMETRY = ("geometry", BundleFile.GEOMETRY_STEP, BundleFile.GEOMETRY_BOUNDARIES)
     GMSH_MESH = ("gmsh_mesh", BundleGlob.MSH)
     ELMER_MESH = ("elmer_mesh", BundleFile.MESH_HEADER, BundleFile.MESH_NODES, BundleFile.MESH_ELEMENTS, BundleFile.MESH_BOUNDARY)
     PARTITIONING = ("partitioning", BundleGlob.PARTITIONING, BundleFile.PARTITION_LOG)

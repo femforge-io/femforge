@@ -27,6 +27,7 @@ def test_an_axisymmetric_frame_is_a_sectioned_2d_per_radian_solve() -> None:
     assert frame.coordinate_system.per_radian
     assert frame.rewrites_geometry is True
     assert frame.lumps_torque is False
+    assert frame.revolves is True
 
 
 def test_labels_name_the_symmetry_axis() -> None:
@@ -89,9 +90,10 @@ def test_a_dumped_frame_reloads_to_the_same_dump() -> None:
 def test_an_unset_radial_faces_the_world_axis_least_aligned_with_the_axis_x_first(axis: Axis, radial: list[float]) -> None:
     plane = Axisymmetric(axis=axis).plane
 
-    assert plane.radial.to_list() == pytest.approx(radial)
-    assert plane.axis == axis.direction
+    assert plane.x_dir.to_list() == pytest.approx(radial)
+    assert plane.y_dir == axis.direction
     assert plane.origin == Vec3(0, 0, 0)
+    assert plane.normal.to_list() == pytest.approx(Vec3(*radial).cross(axis.direction).to_list())
 
 
 def test_the_plane_takes_the_axis_origin_and_the_stored_radial() -> None:
@@ -99,8 +101,9 @@ def test_the_plane_takes_the_axis_origin_and_the_stored_radial() -> None:
     plane = frame.plane
 
     assert plane.origin == Vec3(10, 0, 0)
-    assert plane.radial.to_list() == pytest.approx([0, 1, 0])
-    assert plane.axis.to_list() == [0, 0, 1]
+    assert plane.x_dir.to_list() == pytest.approx([0, 1, 0])
+    assert plane.y_dir.to_list() == [0, 0, 1]
+    assert plane.normal.to_list() == pytest.approx([1, 0, 0])
 
 
 def test_magnetostatics_and_heat_conduction_have_a_form_and_nothing_else_does() -> None:

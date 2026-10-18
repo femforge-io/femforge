@@ -12,6 +12,7 @@ from femforge.common.files import MSH_SUFFIX
 from femforge.common.log import get_console, log
 from femforge.common.tags import TagKey, parse_tags
 from femforge.common.utils import COLORS, title
+from femforge.common.vector import Vec3
 from femforge.meshing.backend import MeshError
 from femforge.meshing.boundary import BoundaryGroup, axis_entity_tags, partition_boundary_faces, read_face_adjacency
 from femforge.meshing.config import SupportsMeshing
@@ -20,6 +21,7 @@ from femforge.meshing.groups import PhysicalGroup, format_boundary_groups, forma
 from femforge.meshing.mesh_entity import MeshEntity
 from femforge.meshing.mesh_sizing import apply_mesh_sizing, gmsh_set_global_size, gmsh_set_region_size, resolve_region_sizes
 from femforge.meshing.naming import compose_group_name, face_group_name, name_fragment
+from femforge.meshing.section_edges import CurveSpan, SectionEdges, millimetres_per_unit
 from femforge.physical.domain import EntityTag
 
 
@@ -161,6 +163,9 @@ class Mesher:
         gmsh.model.occ.importShapes(self.input_filename, highestDimOnly=False)
         gmsh.model.occ.synchronize()
 
+        if body_dim == 2:
+            self._name_section_edges(options)
+
         # Conformal mesh is REQUIRED: build123d STEPs carry independent, possibly overlapping solids, which gmsh meshes
         # with duplicate coincident faces and no shared nodes — flux cannot couple across interfaces and the solve is garbage.
         before_conforming = [MeshEntity(*entity, config.domain) for entity in gmsh.model.getEntities(dim=body_dim)]
@@ -261,6 +266,35 @@ class Mesher:
 
         _, element_tags, _ = gmsh.model.mesh.getElements(dim=body_dim)
         self._element_count = sum(len(tags) for tags in element_tags)
+
+    def _name_section_edges(self, options: GmshOptions) -> None:  # pragma: no cover - names curves of a live gmsh model
+        """Name the curves of a 2D section from the edge file beside its STEP alone: gmsh imports no names on free edges, and names a colored face's curves after the face."""
+        for _, tag in gmsh.model.getEntities(dim=1):
+            gmsh.model.setEntityName(1, tag, "")
+
+        edges: SectionEdges | None = SectionEdges.load(Path(self.input_filename))
+
+        if edges is None:
+            return
+
+        scale: float = millimetres_per_unit(options.target_units)
+
+        def point(tag: int, parameter: float) -> Vec3:
+            x, y, z = gmsh.model.getValue(1, tag, [parameter])
+
+            return Vec3(x * scale, y * scale, z * scale)
+
+        # Only free curves can be marker edges: fragmenting has not yet merged them into the face boundaries.
+        curves: dict[int, CurveSpan] = {}
+        for _, tag in gmsh.model.getEntities(dim=1):
+            if len(gmsh.model.getAdjacencies(1, tag)[0]) > 0:
+                continue
+
+            low, high = gmsh.model.getParametrizationBounds(1, tag)
+            curves[tag] = CurveSpan(start=point(tag, low[0]), end=point(tag, high[0]), length=gmsh.model.occ.getMass(1, tag) * scale)
+
+        for tag, name in edges.match(curves).items():
+            gmsh.model.setEntityName(1, tag, name)
 
     def _make_conformal(self) -> dict[int, str]:  # pragma: no cover - mutates a live gmsh OCC model
         """

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 from pydantic import ConfigDict, Field
 
 from femforge.common.config import ConfigArea
-from femforge.common.vector import Direction, DirectionField, Vec3, Vec3Field
+from femforge.common.vector import DIRECTION_SLACK, Direction, DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
 
 
@@ -72,13 +72,43 @@ class SolvePlane(ConfigArea):
     model_config = ConfigDict(frozen=True)
 
     origin: Vec3Field
-    """`[mm]`: The authored point at the plane's origin, on the axis."""
+    """`[mm]`: The authored point at the plane's origin."""
 
-    radial: DirectionField
-    """`[-]`: The authored direction of the plane's +X, the radial direction at θ = 0."""
+    x_dir: DirectionField
+    """`[-]`: The authored direction of the plane's +X, the radial direction at θ = 0 of an axisymmetric section."""
 
-    axis: DirectionField
-    """`[-]`: The authored direction of the plane's +Y, along the axis."""
+    y_dir: DirectionField
+    """`[-]`: The authored direction of the plane's +Y, the symmetry axis of an axisymmetric section."""
+
+    @property
+    def normal(self) -> Direction:
+        """The authored direction of the solve +Z, ``x_dir × y_dir``."""
+        normal: Vec3 = self.x_dir.cross(self.y_dir)
+
+        return Direction(normal.x, normal.y, normal.z)
+
+
+def least_aligned_world_axis(direction: Vec3) -> Vec3:
+    """The world unit axis least aligned with ``direction``, X first on a tie."""
+    world: tuple[Vec3, ...] = (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
+
+    return min(world, key=lambda unit: abs(unit.dot(direction)))
+
+
+def in_plane(direction: Direction, normal: Direction) -> Direction:
+    """The unit part of ``direction`` perpendicular to ``normal``; raises ``ValueError`` when the two are parallel."""
+    cosine: float = direction.dot(normal)
+
+    # A stored in-plane direction is already perpendicular; projecting it again would shift its last digit on every reload.
+    if abs(cosine) <= DIRECTION_SLACK:
+        return direction
+
+    across: Vec3 = direction - normal * cosine
+
+    if across.magnitude() <= ALIGNMENT_TOLERANCE:
+        raise ValueError(f"The direction {direction} is parallel to {normal}, so it has no part in the plane normal to it.")
+
+    return Direction(across.x, across.y, across.z)
 
 
 class Frame(ConfigArea, ABC):

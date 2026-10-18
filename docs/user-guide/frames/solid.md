@@ -37,7 +37,7 @@ A solid frame meshes the authored STEP itself when the config has no parametric 
 
 ## Physics
 
-Every [Physics][femforge.elmer.Physics] member solves as itself, except `MAGNETOSTATICS_2D`, which is the axisymmetric stack: select `MAGNETOSTATICS` with [Axisymmetric](axisymmetric.md) instead.
+Every [Physics][femforge.elmer.Physics] member solves as itself, except `MAGNETOSTATICS_2D`, which is the 2D magnetostatic stack: select `MAGNETOSTATICS` with [Axisymmetric](axisymmetric.md) or [Cartesian2D](cartesian-2d.md) instead.
 
 ## Conditions
 

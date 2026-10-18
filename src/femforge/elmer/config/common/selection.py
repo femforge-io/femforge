@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 SELECTABLE_PHYSICS: list[str] = [physics.value for physics in Physics if physics is not Physics.MAGNETOSTATICS_2D]
-"""The physics a user may select; ``MAGNETOSTATICS_2D`` is what ``MAGNETOSTATICS`` solves as under an axisymmetric frame."""
+"""The physics a user may select; ``MAGNETOSTATICS_2D`` is what ``MAGNETOSTATICS`` solves as under a 2D frame."""
 
 
 class PhysicsSelection(ConfigArea):
@@ -32,9 +32,9 @@ class PhysicsSelection(ConfigArea):
     @field_validator("selected")
     @classmethod
     def selectable(cls, selected: Physics) -> Physics:
-        """Reject the internal axisymmetric stack."""
+        """Reject the internal 2D magnetostatic stack."""
         if selected is Physics.MAGNETOSTATICS_2D:
-            raise ValueError(f"Physics '{selected.value}' is not selectable: select '{Physics.MAGNETOSTATICS.value}' with frame=Axisymmetric().")
+            raise ValueError(f"Physics '{selected.value}' is not selectable: select '{Physics.MAGNETOSTATICS.value}' with a 2D frame (Axisymmetric() or Cartesian2D()).")
 
         return selected
 
