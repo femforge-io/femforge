@@ -14,9 +14,10 @@ from femforge.common.files import BundleFile
 from femforge.common.log import log
 from femforge.common.utils import title
 from femforge.elmer.physics import Physics
-from femforge.elmer.variables import variable_unit
+from femforge.elmer.variables import ELEMENTAL_SUFFIX, ElmerVariable, elemental, variable_of, variable_unit
 from femforge.frames import Frame, SolvePlane, default_frame
 from femforge.run.fields import GEOMETRY_IDS_ARRAY, select_array
+from femforge.run.mechanical import VOIGT_COMPONENTS
 from femforge.viz.colormaps import register_paraview
 from femforge.viz.field_lines import (
     Bounds,
@@ -121,6 +122,15 @@ class DisplayMode(StrEnum):
     POLAR_XY = "polar_xy"
     """The in-plane direction as hue, brightened by the in-plane magnitude."""
 
+    MAX_PRINCIPAL = "max_principal"
+    """The largest of the three principal values."""
+
+    MID_PRINCIPAL = "mid_principal"
+    """The middle one of the three principal values."""
+
+    MIN_PRINCIPAL = "min_principal"
+    """The smallest of the three principal values."""
+
     @property
     def label(self) -> str:
         """The mode's name as it reads in a picker."""
@@ -130,8 +140,52 @@ class DisplayMode(StrEnum):
 VECTOR_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.MAGNITUDE, DisplayMode.POLAR_XY})
 """The modes that need a 3-component array; the rest accept any width."""
 
-ROTATION_FREE_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.VALUE, DisplayMode.ABSVALUE, DisplayMode.MAGNITUDE})
+PRINCIPAL_MODES: tuple[DisplayMode, ...] = (DisplayMode.MAX_PRINCIPAL, DisplayMode.MID_PRINCIPAL, DisplayMode.MIN_PRINCIPAL)
+"""The modes of a principal-value field, the default first; each needs three values per row."""
+
+ROTATION_FREE_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.VALUE, DisplayMode.ABSVALUE, DisplayMode.MAGNITUDE, *PRINCIPAL_MODES})
 """The modes whose value a mirrored or revolved copy keeps; the others turn with it."""
+
+
+class FieldKind(StrEnum):
+    """What one row of a field array holds, which sets its display modes and whether an expansion turns it."""
+
+    SCALAR = "scalar"
+    """One value."""
+
+    VECTOR = "vector"
+    """A 3-component vector, turned with a mirrored or revolved copy."""
+
+    PRINCIPAL = "principal"
+    """Three principal values, which no rotation changes."""
+
+    TENSOR = "tensor"
+    """A Voigt tensor, whole or as one of the ``stress_xx`` columns Elmer splits it into, or any other width; not displayed."""
+
+
+PRINCIPAL_VARIABLES: frozenset[ElmerVariable] = frozenset({ElmerVariable.PRINCIPAL_STRESS, ElmerVariable.PRINCIPAL_STRAIN})
+"""The 3-component variables that hold principal values rather than a vector."""
+
+TENSOR_VARIABLES: frozenset[ElmerVariable] = frozenset({ElmerVariable.STRESS, ElmerVariable.STRAIN})
+"""The Voigt tensor variables, whose split ``<name>_xx`` columns are tensor parts rather than scalars."""
+
+
+def field_kind(name: str, components: int) -> FieldKind:
+    """The kind of a VTU array by its name and its component count."""
+
+    def tensor_column() -> bool:
+        bare: str = name.lower().removesuffix(ELEMENTAL_SUFFIX)
+        variable, _, component = bare.rpartition("_")
+
+        return component in VOIGT_COMPONENTS and variable_of(variable) in TENSOR_VARIABLES
+
+    if components == 3:
+        return FieldKind.PRINCIPAL if variable_of(name) in PRINCIPAL_VARIABLES else FieldKind.VECTOR
+
+    if components != 1 or tensor_column():
+        return FieldKind.TENSOR
+
+    return FieldKind.SCALAR
 
 
 class Legend(StrEnum):
@@ -185,8 +239,14 @@ class FieldInfo:
 
     @property
     def display_name(self) -> str:
-        """The array's name as it reads in a picker, with the [`FIELD_RENAMES`][] overrides applied."""
-        label: str = title(self.name)
+        """The array's name as it reads in a picker: the variable's own spelling where one names it, with the [`FIELD_RENAMES`][] overrides applied."""
+        variable: ElmerVariable | None = variable_of(self.name)
+        spelled: str = self.name
+
+        if variable is not None:
+            spelled = elemental(variable) if self.name.lower().endswith(ELEMENTAL_SUFFIX) else str(variable)
+
+        label: str = title(spelled)
 
         return FIELD_RENAMES.get(label, label)
 
@@ -196,12 +256,22 @@ class FieldInfo:
         return titled(self.display_name, self.unit)
 
     @property
-    def modes(self) -> tuple[DisplayMode, ...]:
-        """The display modes this array supports, the default first: the vector set for a 3-component field, the scalar pair otherwise."""
-        if self.components == 3:
-            return (DisplayMode.MAGNITUDE, DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.POLAR_XY)
+    def kind(self) -> FieldKind:
+        """What one row of the array holds."""
+        return field_kind(self.name, self.components)
 
-        return (DisplayMode.VALUE, DisplayMode.ABSVALUE)
+    @property
+    def modes(self) -> tuple[DisplayMode, ...]:
+        """The display modes this array supports, the default first; a tensor supports none."""
+        match self.kind:
+            case FieldKind.SCALAR:
+                return (DisplayMode.VALUE, DisplayMode.ABSVALUE)
+            case FieldKind.VECTOR:
+                return (DisplayMode.MAGNITUDE, DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.POLAR_XY)
+            case FieldKind.PRINCIPAL:
+                return PRINCIPAL_MODES
+            case FieldKind.TENSOR:
+                return ()
 
 
 def titled(name: str, unit: str | None) -> str:
@@ -210,7 +280,7 @@ def titled(name: str, unit: str | None) -> str:
 
 
 def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, AnyArray], physics: Physics | None = None) -> list[FieldInfo]:
-    """Every displayable array of a VTU as a [`FieldInfo`][], sorted by display name; ``GeometryIds`` and arrays neither scalar nor 3-vector (tensors) are left out.
+    """Every displayable array of a VTU as a [`FieldInfo`][], sorted by display name; ``GeometryIds`` and tensors are left out.
 
     Args:
         point_arrays: The VTU's point arrays by name.
@@ -227,12 +297,32 @@ def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, 
             shape: tuple[int, ...] = array.shape
             components: int = shape[-1] if array.ndim > 1 else 1
 
-            if components not in (1, 3):
+            if field_kind(name, components) is FieldKind.TENSOR:
                 continue
 
             infos.append(FieldInfo(name=name, association=association, components=components, dtype=str(array.dtype), unit=variable_unit(name, physics)))
 
     return sorted(infos, key=lambda info: info.display_name)
+
+
+def line_vectors(fields: Sequence[FieldInfo], shown: str) -> str | None:
+    """The vector field the field lines follow: the shown one when it is a vector, else the flux density, else the first vector field; None for a run with none.
+
+    Args:
+        fields: The run's displayable fields, in picker order.
+        shown: The name of the array the display colors by.
+    """
+    vectors: list[str] = [info.name for info in fields if info.kind is FieldKind.VECTOR]
+    if shown in vectors:
+        return shown
+
+    if not vectors:
+        return None
+
+    try:
+        return select_flux_density_array(vectors)
+    except KeyError:
+        return vectors[0]
 
 
 class BodyPaint(StrEnum):
@@ -377,11 +467,12 @@ def reduce_field(values: AnyArray, mode: DisplayMode) -> FloatArray:
     """
     The scalar a display mode draws from one field array.
 
-    ``VALUE`` passes the array through and ``POLAR_XY`` returns the XY magnitude (the quantity that sets the color range; the angle rides along as hue).
+    ``VALUE`` passes the array through, ``POLAR_XY`` returns the XY magnitude (the quantity that sets the color range; the angle rides along as hue) and a principal mode picks from each row sorted.
     """
     array: FloatArray = np.asarray(values, dtype=np.float64)
-    if mode in VECTOR_MODES and (array.ndim < 2 or array.shape[-1] != 3):
-        raise ValueError(f"display mode {mode.value!r} needs 3-component vectors, got shape {array.shape}")
+    wide: bool = mode in VECTOR_MODES or mode in PRINCIPAL_MODES
+    if wide and (array.ndim < 2 or array.shape[-1] != 3):
+        raise ValueError(f"display mode {mode.value!r} needs 3 components per row, got shape {array.shape}")
 
     match mode:
         case DisplayMode.VALUE:
@@ -398,6 +489,12 @@ def reduce_field(values: AnyArray, mode: DisplayMode) -> FloatArray:
             return np.linalg.norm(array, axis=-1)
         case DisplayMode.POLAR_XY:
             return np.linalg.norm(array[..., :2], axis=-1)
+        case DisplayMode.MAX_PRINCIPAL:
+            return np.sort(array, axis=-1)[..., 2]
+        case DisplayMode.MID_PRINCIPAL:
+            return np.sort(array, axis=-1)[..., 1]
+        case DisplayMode.MIN_PRINCIPAL:
+            return np.sort(array, axis=-1)[..., 0]
 
 
 def polar_angle(values: AnyArray) -> FloatArray:
@@ -707,6 +804,8 @@ class FieldScene:
         self.clim: tuple[float, float] = (0.0, 1.0)
         self.data_range: tuple[float, float] = (0.0, 1.0)
         self._actor: pv.Actor | None = None
+        self._surfaces: pv.MultiBlock | None = None
+        """The surface copy of the shown blocks the body actor draws, which every apply recolors with the blocks."""
         self._styled: dict[str, tuple[str, float]] = {}
         """The ``(color, opacity)`` of every solid body actor the plotter holds."""
         self._lines: tuple[StreamlineActors, FieldLineOptions] | None = None
@@ -778,6 +877,7 @@ class FieldScene:
 
         expansion, sweep = wanted
         basis: Basis | None = self.basis
+        still: frozenset[str] = frozenset(info.name for info in self.fields if info.kind is not FieldKind.VECTOR)
 
         def rebuilt(build: Callable[[pv.DataSet], pv.DataSet]) -> pv.MultiBlock:
             """Every section block through ``build``, under its name."""
@@ -791,14 +891,15 @@ class FieldScene:
             case Expansion.SECTION:
                 self.blocks, self.grid = self.section_blocks, self.section_grid
             case Expansion.MIRROR:
-                self.blocks, self.grid = rebuilt(mirror), mirror(self.section_grid)
+                self.blocks, self.grid = rebuilt(lambda block: mirror(block, still=still)), mirror(self.section_grid, still=still)
             case Expansion.REVOLVE:
                 assert basis is not None, "a run without a basis is shown as is"
-                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep)), self.section_grid
+                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep, still=still)), self.section_grid
 
         # Recorded only once the blocks stand, so a build that raised is tried again by the next draw; the body actor holds the old blocks, so it is added anew.
         self.expanded = wanted
         self._actor = None
+        self._surfaces = None
         self._lines = None
         self.drawn_lines = None
         log.bind(run_id=self.run_id, expansion=str(expansion), sweep=sweep).info("Section expanded.")
@@ -830,8 +931,6 @@ class FieldScene:
         names: list[str] = [str(key) for key in self.blocks.keys()]
         solved: list[AnyArray] = [reduce_field(raw_values(cast("pv.DataSet", self.section_blocks[name])), fitted.mode) for name in names]
         shown: list[AnyArray] = solved if self.blocks is self.section_blocks else [reduce_field(raw_values(cast("pv.DataSet", self.blocks[name])), fitted.mode) for name in names]
-        sources: list[FloatArray] = [raw_values(cast("pv.DataSet", self.blocks[name])) for name in names]
-        reductions: list[AnyArray] = shown
 
         # Every body counts, each through its own range, whatever it is shown as: the scale belongs to the field, not the view. A
         # component or an in-plane direction turns with the expansion, so its range comes from the values drawn.
@@ -839,20 +938,25 @@ class FieldScene:
         self.data_range = color_range(ranged, robust=False)
         clim: tuple[float, float] = fitted.clim if fitted.clim is not None else color_range(ranged, log_scale=fitted.log_scale, robust=fitted.robust)
 
-        if fitted.mode is DisplayMode.POLAR_XY:
+        def painted(block: pv.DataSet) -> AnyArray:
+            """What colors one block: the reduction, or RGBA rows in the polar mode, whose reduction only sets the range."""
+            values: FloatArray = raw_values(block)
+            if fitted.mode is not DisplayMode.POLAR_XY:
+                return reduce_field(values, fitted.mode)
+
             cmap = pv.get_cmap_safe(fitted.colormap)  # pyright: ignore[reportUnknownMemberType]  # pyvista returns an untyped matplotlib Colormap
 
             def mapper(fractions: FloatArray) -> FloatArray:
                 """RGBA rows for cyclic angle fractions, through the spec's colormap."""
                 return np.asarray(cmap(fractions), dtype=np.float64)
 
-            reductions = [polar_rgba(values, clim[0], clim[1], mapper) for values in sources]
+            return polar_rgba(values, clim[0], clim[1], mapper)
 
-        for name, scalars in zip(names, reductions, strict=True):
-            block: pv.DataSet = cast("pv.DataSet", self.blocks[name])
+        surfaces: list[pv.DataSet] = [] if self._surfaces is None else [cast("pv.DataSet", self._surfaces[name]) for name in names]
+        for block in [*(cast("pv.DataSet", self.blocks[name]) for name in names), *surfaces]:
             arrays = block.point_data if info.association is Association.POINT else block.cell_data
             # VTK's SetScalars replaces whichever array is active, the displayed field itself when it is, so the reduction is added beside it and then made active.
-            arrays[SCALARS_ARRAY] = scalars
+            arrays[SCALARS_ARRAY] = painted(block)
             arrays.active_scalars_name = SCALARS_ARRAY
 
         self.spec = fitted
@@ -871,8 +975,10 @@ class FieldScene:
         for name in leftovers:
             _ = plotter.remove_actor(name)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
 
+        # pyvista draws a composite through surface copies of its blocks, so the scene keeps those copies to recolor them.
+        self._surfaces = self.blocks.as_polydata_blocks()
         self._actor = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
-            self.blocks,
+            self._surfaces,
             scalars=SCALARS_ARRAY,
             show_edges=False,
             show_scalar_bar=False,
@@ -1061,29 +1167,27 @@ class FieldScene:
 
     def _update_streamlines(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Draw the field-line overlay when it or the display it is styled by changed, integrating only new lines, or remove it when the spec turns it off or the grid has no field to follow."""
-        if spec.streamlines is None or self.lines_array(spec.streamlines) is None:
+        vectors: str | None = None if spec.streamlines is None else self.lines_array(spec.streamlines, spec.field)
+        if spec.streamlines is None or vectors is None:
             for actor in StreamlineActor:
                 _ = plotter.remove_actor(str(actor))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
             self._remove_lines_bar(plotter)
             self.drawn_lines = None
             return
 
-        cached: StreamlineActors | None = self.integrated(spec.streamlines)
-        if cached is not None and self.line_style(spec.streamlines, cached) == self.drawn_lines:
+        options: FieldLineOptions = spec.streamlines.model_copy(update={"vectors": vectors})
+        cached: StreamlineActors | None = self.integrated(options)
+        if cached is not None and self.line_style(options, cached) == self.drawn_lines:
             return
 
-        self.show_streamlines(plotter, cached or self.integrate_streamlines(spec.streamlines), spec.streamlines)
+        self.show_streamlines(plotter, cached or self.integrate_streamlines(options), options)
 
-    def lines_array(self, options: FieldLineOptions) -> str | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """The array the field lines would follow: the one asked for, else the flux density, None when the grid has neither."""
-        names: list[str] = list(self.grid.array_names)
-        if options.vectors is not None:
-            return options.vectors if options.vectors in names else None
+    def lines_array(self, options: FieldLineOptions, shown: str) -> str | None:
+        """The array the field lines follow: the one asked for when the grid has it, else the one [`line_vectors`][] picks for the ``shown`` array."""
+        if options.vectors is None:
+            return line_vectors(self.fields, shown)
 
-        try:
-            return select_flux_density_array(names)
-        except KeyError:
-            return None
+        return options.vectors if options.vectors in self.grid.array_names else None
 
     def integrated(self, options: FieldLineOptions) -> StreamlineActors | None:
         """The cached field lines when ``options`` only restyle them, None when they need integrating."""

@@ -23,6 +23,7 @@ def test_every_variable_but_the_potential_names_its_unit() -> None:
         ("GeometryIds", Physics.MAGNETOSTATICS, None),
         ("stress", Physics.LINEAR_ELASTICITY, "Pa"),
         ("vonmises", None, "Pa"),
+        ("tresca", None, "Pa"),
         ("principal strain", None, "-"),
         ("strain energy density", None, "J/m³"),
     ],

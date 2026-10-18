@@ -278,13 +278,17 @@ class Surface:
 
         return cls(np.zeros((0, 3), dtype=np.float64), ids, ids, ids, angles, ids, angles, basis)
 
-    def point_values(self, values: AnyArray) -> AnyArray:
-        """A section point array carried onto the output points."""
-        return self.basis.carry(values[self.point_source], self.point_theta)
+    def point_values(self, values: AnyArray, *, turns: bool = True) -> AnyArray:
+        """A section point array carried onto the output points, its vectors turned with them unless ``turns`` is False."""
+        copied: AnyArray = values[self.point_source]
 
-    def cell_values(self, values: AnyArray) -> AnyArray:
-        """A section cell array carried onto the output cells."""
-        return self.basis.carry(values[self.cell_source], self.cell_theta)
+        return self.basis.carry(copied, self.point_theta) if turns else copied
+
+    def cell_values(self, values: AnyArray, *, turns: bool = True) -> AnyArray:
+        """A section cell array carried onto the output cells, its vectors turned with them unless ``turns`` is False."""
+        copied: AnyArray = values[self.cell_source]
+
+        return self.basis.carry(copied, self.cell_theta) if turns else copied
 
 
 def mirrored(points: FloatArray, polygons: Polygons) -> Surface:
@@ -418,17 +422,22 @@ def _section(dataset: pv.DataSet) -> tuple[pv.UnstructuredGrid, FloatArray, Poly
     return grid, np.asarray(grid.points, dtype=np.float64), Polygons.of(blocks, np.asarray(grid.celltypes))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista's celltypes is untyped
 
 
-def _dress(source: pv.DataSet, surface: Surface, target: pv.DataSet) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
-    """Copy every point and cell array of ``source`` onto ``target`` through ``surface``."""
+def _dress(source: pv.DataSet, surface: Surface, target: pv.DataSet, still: frozenset[str]) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+    """Copy every point and cell array of ``source`` onto ``target`` through ``surface``, the ones named in ``still`` unturned."""
     for name in source.point_data.keys():
-        target.point_data[name] = surface.point_values(np.asarray(source.point_data[name]))
+        target.point_data[name] = surface.point_values(np.asarray(source.point_data[name]), turns=name not in still)
 
     for name in source.cell_data.keys():
-        target.cell_data[name] = surface.cell_values(np.asarray(source.cell_data[name]))
+        target.cell_data[name] = surface.cell_values(np.asarray(source.cell_data[name]), turns=name not in still)
 
 
-def mirror(dataset: pv.DataSet) -> pv.UnstructuredGrid:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
-    """Both halves of an axisymmetric section in the solve frame: its triangles and quads beside their reflection across the axis; line and vertex cells are dropped."""
+def mirror(dataset: pv.DataSet, *, still: frozenset[str] = frozenset()) -> pv.UnstructuredGrid:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+    """Both halves of an axisymmetric section in the solve frame: its triangles and quads beside their reflection across the axis; line and vertex cells are dropped.
+
+    Args:
+        dataset: The section in the solve frame.
+        still: The array names copied unturned, such as principal values.
+    """
     import pyvista as pv
 
     grid, points, polygons = _section(dataset)
@@ -436,12 +445,14 @@ def mirror(dataset: pv.DataSet) -> pv.UnstructuredGrid:  # pragma: no cover - ne
     celltypes: np.typing.NDArray[np.uint8] = np.full(len(surface.corners), VtkCell.QUAD, dtype=np.uint8)
     celltypes[surface.corners == 3] = VtkCell.TRIANGLE
     output = pv.UnstructuredGrid(surface.faces, celltypes, surface.points)
-    _dress(grid, surface, output)
+    _dress(grid, surface, output, still)
 
     return output
 
 
-def revolve(dataset: pv.DataSet, basis: Basis, *, segments: int = 72, sweep: float = 360.0) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+def revolve(
+    dataset: pv.DataSet, basis: Basis, *, segments: int = 72, sweep: float = 360.0, still: frozenset[str] = frozenset()
+) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
     """The surfaces of an axisymmetric section swept about its axis into the authored frame, capped on a partial sweep.
 
     Args:
@@ -449,6 +460,7 @@ def revolve(dataset: pv.DataSet, basis: Basis, *, segments: int = 72, sweep: flo
         basis: Where the section sits in the authored frame.
         segments: The ring count per full turn.
         sweep: The swept angle in degrees, in ``(0, 360]``.
+        still: The array names copied unturned, such as principal values.
     """
     import pyvista as pv
 
@@ -458,6 +470,6 @@ def revolve(dataset: pv.DataSet, basis: Basis, *, segments: int = 72, sweep: flo
         return pv.PolyData()
 
     output = pv.PolyData(surface.points, faces=surface.faces)
-    _dress(grid, surface, output)
+    _dress(grid, surface, output, still)
 
     return output
