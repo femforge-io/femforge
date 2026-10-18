@@ -16,6 +16,7 @@ class FR4(MaterialProperties):
 
         self.mechanical.density = Static(value=1900 * U.kg / U.m**3)
         self.mechanical.elastic_modulus = Static(value=20e9 * U.Pa)
+        self.mechanical.poisson_ratio = Static(value=0.13 * U.dimensionless)
         self.mechanical.yield_strength = Static(value=60e6 * U.Pa)
         self.mechanical.ultimate_tensile_strength = Static(value=100e6 * U.Pa)
 

@@ -109,7 +109,7 @@ def test_neodymium_grades_differ_only_in_br_and_hcb() -> None:
         assert float(remanence(temperature=353.15 * U.K).to(U.T).magnitude) == pytest.approx(br * (1 - 0.0012 * 60))
         assert float(coercivity(temperature=353.15 * U.K).to(U.A / U.m).magnitude) == pytest.approx(hcb * (1 - 0.0060 * 60))
     # The shared base values emit identically for both grades.
-    shared = ["Density", "Youngs Modulus", "Heat Conductivity", "Heat Capacity", "Relative Permeability", "Electric Conductivity", "Relative Permittivity"]
+    shared = ["Density", "Youngs Modulus", "Poisson Ratio", "Heat Conductivity", "Heat Capacity", "Relative Permeability", "Electric Conductivity", "Relative Permittivity"]
     e52, e42 = n52.to_elmer(at=AT), n42.to_elmer(at=AT)
     for key in shared:
         assert e52[key] == e42[key], key
