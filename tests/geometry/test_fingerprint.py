@@ -1,4 +1,4 @@
-"""TaggedCompound.fingerprint: leaf order, the STEP round trip, edge leaves and integration noise."""
+"""TaggedCompound.fingerprint: leaf order, the STEP round trip, edge leaves, integration noise and symmetric changes."""
 
 from pathlib import Path
 
@@ -58,3 +58,14 @@ def test_the_fingerprint_rounds_integration_noise_away() -> None:
 
     assert bar(0.0).fingerprint() == bar(1e-13).fingerprint()
     assert bar(0.0).fingerprint() != bar(1e-3).fingerprint()
+
+
+def test_the_fingerprint_moves_with_changes_that_keep_the_mass_properties() -> None:
+    def plate(cuts: list[b3d.Part]) -> str:
+        return TaggedCompound(children=[TaggedPart([b3d.Cylinder(20, 5) - cuts], tags={"Material": "Steel316"})]).fingerprint()
+
+    def holes(x: float, y: float) -> list[b3d.Part]:
+        return [b3d.Pos(x, y, 0) * b3d.Cylinder(2, 5), b3d.Pos(-x, -y, 0) * b3d.Cylinder(2, 5)]
+
+    assert plate([b3d.Box(8, 8, 5)]) != plate([b3d.Box(8, 8, 5).rotate(b3d.Axis.Z, 30)])
+    assert plate(holes(8, 0)) != plate(holes(0, 8))

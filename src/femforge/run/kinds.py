@@ -32,7 +32,7 @@ MESH_PRODUCER_VERSION = 2
 STEP_PRODUCER_VERSION = 3
 """Bump when STEP export or frame conversion changes what the same geometry parameters and frame yield."""
 
-# ISO-10303-21 stamps the export time into the HEADER's FILE_NAME entity; masking it makes a rebuilt STEP digest identically.
+# ISO-10303-21 stamps the export time into the HEADER's FILE_NAME entity, which the bytes fallback masks.
 _FILE_NAME_HEADER = re.compile(rb"FILE_NAME\s*\(.*?\)\s*;", re.DOTALL)
 
 

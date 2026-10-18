@@ -67,11 +67,17 @@ class TaggedCompound(b3d.Compound, HasTags):
         return leaves
 
     def fingerprint(self) -> str:
-        """SHA-256 of every placed leaf's kind, tags, RGB color and mass properties to nine significant digits, so it ignores leaf order and survives a STEP round trip."""
+        """SHA-256 of every placed leaf's kind, tags, RGB color, mass properties, faces and vertices, each quantized to a billionth of the leaf's size, so it ignores leaf order.
+
+        Two imports of one STEP agree; an authored compound and its import agree only as closely as OCCT integrates them alike.
+        """
 
         def rounded(value: float, scale: float) -> float:
-            # Integration noise leaves values like 1e-13 where an exact zero belongs, which nine significant digits would keep.
-            return 0.0 if abs(value) < 1e-9 * scale else float(f"{value:.9g}")
+            # A quantum relative to the leaf's size drops integration noise that significant digits would keep; + 0.0 turns -0.0 into 0.0.
+            return round(value / scale, 9) + 0.0
+
+        def point(vector: b3d.Vector, scale: float) -> list[float]:
+            return [rounded(coordinate, scale) for coordinate in vector]
 
         def describe(leaf: TaggedPart | TaggedFace | TaggedEdge) -> list[object]:
             box: b3d.BoundBox = leaf.bounding_box(optimal=True)
@@ -84,6 +90,9 @@ class TaggedCompound(b3d.Compound, HasTags):
             area: float | None = None if isinstance(leaf, TaggedEdge) else rounded(leaf.area, scale**2)
             length: float | None = rounded(leaf.length, scale) if isinstance(leaf, TaggedEdge) else None
             tags: list[list[str]] = sorted([str(key), value] for key, value in leaf.tags.items())
+            # Whole-leaf mass properties cannot tell a rotated hole or a symmetric hole pattern apart.
+            faces: list[list[float]] = sorted([rounded(face.area, scale**2), *point(face.center(b3d.CenterOf.MASS), scale)] for face in leaf.faces())
+            vertices: list[list[float]] = sorted(point(vertex.center(), scale) for vertex in leaf.vertices())
 
             return [
                 type(leaf).__name__,
@@ -93,9 +102,11 @@ class TaggedCompound(b3d.Compound, HasTags):
                 volume,
                 area,
                 length,
-                [rounded(coordinate, scale) for coordinate in center],
-                [rounded(coordinate, scale) for coordinate in box.min],
-                [rounded(coordinate, scale) for coordinate in box.max],
+                point(center, scale),
+                point(box.min, scale),
+                point(box.max, scale),
+                faces,
+                vertices,
             ]
 
         described: list[list[object]] = [describe(leaf) for leaf in self.placed_leaves()]
