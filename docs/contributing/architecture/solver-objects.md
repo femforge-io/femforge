@@ -138,7 +138,7 @@ The comments in the presets record why each stack looks the way it does. Three m
 
 - `COIL_MAGNETOSTATICS` chains CoilSolver into WhitneyAV and drives the field solve from CoilSolver's elemental current, because a nodal current source dilutes the drive about twofold on thin conductors (`src/femforge/elmer/config/common/presets.py:97-105`).
 - `MAGNETOSTATICS_2D` pins CalcFields' potential variable and keeps nodal fields on, because turning them off also suppresses the nodal force variable the force reduction reads (`src/femforge/elmer/config/common/presets.py:46-56`).
-- `LINEAR_ELASTICITY` fits `StressSolver` to the frame: `fit_frame` sets `Variable Dofs` to the frame's dimension and `plane_stress` to its plane state, and `plane_stress` is an `EquationScope()` field, so its keyword lands in the Equation block rather than the Solver block (`src/femforge/elmer/config/mechanics/stress.py:63-73`). `displace_mesh` stays off so the VTU keeps the undeformed coordinates that position filters and face means read.
+- `LINEAR_ELASTICITY` fits `StressSolver` to the frame: `fit_frame` sets `Variable Dofs` to the frame's dimension and `plane_stress` to its plane state, and `plane_stress` is an `EquationScope()` field, so its keyword lands in the Equation block rather than the Solver block (`src/femforge/elmer/config/mechanics/stress.py:72-82`). `displace_mesh` stays off so the VTU keeps the undeformed coordinates that position filters and face means read.
 
 Three functions adjust or read a whole stack:
 

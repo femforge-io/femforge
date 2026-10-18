@@ -28,6 +28,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
 - The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
 - `SolvePlane` names its directions `x_dir` and `y_dir`, for the old `radial` and `axis`, and gains `normal`.
+- `StressSolver` solves with CG and ILU1 preconditioning to a linear tolerance of `1e-7`, for BiCGStab, ILU0 and `1e-8`, which stalled on large quadratic meshes.
 - `FixedDisplacement` drops a zero component along a 2D normal and rejects a constrained component its frame solves as another coordinate.
 - The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.
 - Cached sections and the runs built on them are rebuilt on first use.
