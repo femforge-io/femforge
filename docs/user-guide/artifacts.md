@@ -26,7 +26,7 @@ Each artifact belongs to a kind, a module-level [ArtifactKind][femforge.artifact
 
 | Kind | Spec | Files | Key |
 |---|---|---|---|
-| [STEP][femforge.run.STEP] | the geometry source and the frame | `geometry.step` | the parametric geometry's parameters, or the authored STEP's content digest, plus the frame |
+| [STEP][femforge.run.STEP] | the geometry source and the frame | `geometry.step` | the parametric geometry's parameters, or the authored STEP's geometric digest, plus the frame |
 | [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | `mesh.header`, `mesh.nodes`, `mesh.elements`, `mesh.boundary`, `mesh.names`, `groups.json`, and `elmergrid.log` when produced | the STEP key, the mesh dimension, the element size, the gmsh options, `deterministic`, the tag selectors with their mesh sizes in domain order, and the sorted material tags |
 | [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec] | `manifest.json`, `result.json`, and what the bundle policy adds | the run's [cache_key][femforge.run.cache_key], so the store key and the run id agree |
 

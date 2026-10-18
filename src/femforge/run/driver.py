@@ -286,7 +286,7 @@ class Driver:
 
         sim_dir.mkdir(parents=True, exist_ok=True)
 
-        # Built from the ORIGINAL config: materialization repoints mesh.step, and the geometry key would then digest the STEP bytes.
+        # Built from the ORIGINAL config: materialization repoints mesh.step, and the geometry key would then digest the derived STEP.
         manifest: RunManifest = RunManifest.build(
             config,
             status="running",

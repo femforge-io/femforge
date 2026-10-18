@@ -190,7 +190,7 @@ The run id has the form `<adjective>-<noun>-<hash8>` and is a pure function of t
 | Enters the cache key | Stays out |
 |---|---|
 | The config, minus the fields on the right | `config.meta`: description and tags |
-| The geometry: the parametric geometry's parameters, or the authored STEP's content digest with its export timestamp masked | The authored STEP's path |
+| The geometry: the parametric geometry's parameters, or the authored STEP's geometric digest: the names, tags, colors, mass properties, faces and vertices of its bodies, so a re-export of the same model keeps the key | The authored STEP's path and its bytes |
 | The frame (a field left out of its dump adds nothing) | `physics.overrides` as written; the resolved stack stands in for it |
 | The resolved solver stack | gmsh `num_threads` and `terminal_output` |
 | The pipeline's producer version | The git commit, the machine, the run directory |
