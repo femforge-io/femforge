@@ -6,7 +6,7 @@ abstract: "Finite-element analysis as a typed Python API: one config takes a tag
 authors:
   - family-names: Woodward
     given-names: Nathan
-version: 0.1.0rc1
+version: 0.1.0
 date-released: "2026-10-17"
 license: Apache-2.0
 repository-code: https://github.com/femforge-io/femforge
