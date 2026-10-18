@@ -60,7 +60,8 @@ def _summary(doc: str | None) -> str:
 
 
 def _frames() -> tuple[Frame, ...]:
-    return tuple(kind.model_validate({}) for kind in shipped_frames())
+    # Constructed unvalidated: a frame with a required field, such as the Cartesian 2D thickness, still answers solves().
+    return tuple(kind.model_construct() for kind in shipped_frames())
 
 
 def _default(condition: type[Condition]) -> Condition:

@@ -1,6 +1,6 @@
 # Linear elasticity
 
-`LINEAR_ELASTICITY` solves the small displacements, stresses and strains of a linear elastic solid. See [Conditions and physics](index.md) for how conditions attach and where they land.
+`LINEAR_ELASTICITY` solves the small displacements, stresses and strains of a linear elastic solid, in 3D under a solid frame and on a planar section, in plane stress or plane strain, under a [Cartesian 2D](../frames/cartesian-2d.md) frame. See [Conditions and physics](index.md) for how conditions attach and where they land.
 
 ```python exec="true" session="linear-elasticity"
 from femforge.elmer import Physics, SifSection
@@ -45,7 +45,7 @@ print(block_table(Physics.LINEAR_ELASTICITY, SifSection.BOUNDARY_CONDITION))
 print(condition_details(FixedDisplacement))
 ```
 
-Set a component to None to leave it free, as in `FixedDisplacement(z=None)` for a roller. A frame rejects a nonzero component along a direction it has no solve coordinate for.
+Set a component to None to leave it free, as in `FixedDisplacement(z=None)` for a roller. A frame rejects a nonzero component along a direction it has no solve coordinate for, and a Cartesian 2D frame drops a zero one along its normal.
 
 ### SurfaceForce
 
