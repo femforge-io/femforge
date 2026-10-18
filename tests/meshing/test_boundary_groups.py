@@ -1,8 +1,10 @@
-"""2D (surface) physical groups from body adjacency: pure `partition_boundary_faces` logic plus a gmsh-gated integration case on two fragmented boxes."""
+"""Boundary groups from body adjacency and named faces: pure partition logic plus a gmsh-gated two-box case."""
 
 import pytest
 
 from femforge.meshing.boundary import BoundaryGroup, BoundaryPartition, partition_boundary_faces
+from femforge.meshing.naming import face_group_name
+from femforge.physical.domain import EntityTag
 
 
 # -- pure partition logic (no gmsh) -----------------------------------------
@@ -140,6 +142,86 @@ def test_boundary_group_dim_follows_the_model():
     # In a 2D planar model the boundaries are curves, so the group carries dim 1 instead of the 3D default.
     curve = BoundaryGroup(gmsh_id=1, name="AIR__EXT", bodies=("AIR",), face_tags=[1], dim=1)
     assert curve.dim == 1
+
+
+# -- named face groups (named_faces) -----------------------------------------
+
+
+def test_named_faces_carve_out_of_the_external_shell():
+    parts = partition_boundary_faces({1: {"BEAM"}, 2: {"BEAM"}, 3: {"BEAM"}, 4: {"BEAM"}}, named_faces={1: "ROOT", 4: "TIP"})
+    by_name = {p.name: p for p in parts}
+
+    assert set(by_name) == {"BEAM__EXT", "ROOT", "TIP"}
+    assert by_name["BEAM__EXT"].face_tags == (2, 3)
+    assert by_name["ROOT"].face_tags == (1,) and by_name["TIP"].face_tags == (4,)
+    assert by_name["ROOT"].bodies == ("BEAM",)
+    assert by_name["ROOT"].named and not by_name["ROOT"].on_axis
+    assert not by_name["BEAM__EXT"].named
+
+
+def test_named_faces_keep_the_partition_total():
+    face_to_bodies: dict[int, set[str]] = {1: {"A"}, 2: {"A", "B"}, 3: {"B"}, 4: {"B"}, 5: {"A"}}
+    parts = partition_boundary_faces(face_to_bodies, named_faces={3: "LOAD", 5: "LOAD"})
+
+    covered = [face for p in parts for face in p.face_tags]
+    assert sorted(covered) == [1, 2, 3, 4, 5]
+    assert len(covered) == len(set(covered))
+
+
+def test_named_groups_follow_the_adjacency_groups_sorted_by_name():
+    parts = partition_boundary_faces({1: {"A"}, 2: {"A"}, 3: {"A"}, 4: {"Z"}}, named_faces={1: "ZETA", 2: "ALPHA"})
+
+    assert [p.name for p in parts] == ["A__EXT", "Z__EXT", "ALPHA", "ZETA"]
+
+
+def test_a_named_group_unions_the_faces_and_bodies_of_its_name():
+    parts = partition_boundary_faces({1: {"A"}, 2: {"B"}, 3: {"B"}}, named_faces={3: "PAD", 1: "PAD"})
+    pad = next(p for p in parts if p.name == "PAD")
+
+    assert pad.face_tags == (1, 3)
+    assert pad.bodies == ("A", "B")
+
+
+def test_a_named_interface_face_leaves_the_interface_group():
+    parts = partition_boundary_faces({1: {"A", "B"}, 2: {"A", "B"}, 3: {"A"}}, named_faces={2: "GLUE"})
+    by_name = {p.name: p for p in parts}
+
+    assert set(by_name) == {"A__B", "A__EXT", "GLUE"}
+    assert by_name["A__B"].face_tags == (1,)
+    assert by_name["GLUE"].bodies == ("A", "B")
+
+
+def test_a_named_face_absent_from_the_adjacency_is_skipped():
+    parts = partition_boundary_faces({1: {"A"}, 2: {"A"}}, named_faces={9: "OFF", 2: "ON"})
+
+    assert [p.name for p in parts] == ["A__EXT", "ON"]
+
+
+def test_a_named_group_is_external_when_it_borders_one_body():
+    tip = BoundaryGroup(gmsh_id=5, name="TIP", bodies=("BEAM",), face_tags=[4], measure=1e-4, named=True)
+    glue = BoundaryGroup(gmsh_id=6, name="GLUE", bodies=("A", "B"), face_tags=[2], named=True)
+
+    assert tip.is_external and tip.named and tip.measure == 1e-4
+    assert not glue.is_external
+
+
+def test_face_group_name_prefers_the_authored_name():
+    tags = [EntityTag(selector={"Load": "Tip"})]
+
+    assert face_group_name("LeftFace", tags) == "LEFTFACE"
+    assert face_group_name("Left Face", []) == "LEFT_FACE"
+
+
+def test_face_group_name_falls_back_to_the_selecting_tags():
+    tags = [EntityTag(selector={}), EntityTag(selector={"Load": "Tip"}), EntityTag(selector={"Side": "X"})]
+
+    assert face_group_name(None, tags) == "LOADTIP_SIDEX"
+    assert face_group_name("", tags[1:2]) == "LOADTIP"
+
+
+def test_face_group_name_is_none_for_a_face_nothing_names():
+    assert face_group_name(None, []) is None
+    assert face_group_name(None, [EntityTag(selector={})]) is None
 
 
 # -- gmsh integration: real adjacency read off a built model ----------------

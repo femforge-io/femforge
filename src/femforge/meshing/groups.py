@@ -106,7 +106,11 @@ def format_boundary_groups(groups: Sequence[BoundaryGroup]) -> str:
     lines: list[str] = ["", f"{len(groups)} Boundary Groups:"]
     max_group_name = max((len(group.name) for group in groups), default=0)
     for group in groups:
-        lines.append(f"  {group.name:<{max_group_name}} {len(group.entity_tags):>4}  → id {group.id}")
+        line: str = f"  {group.name:<{max_group_name}} {len(group.entity_tags):>4}  → id {group.id}"
+        if group.named and group.measure is not None:
+            line += f"  ({group.measure:.4g} m²)"
+
+        lines.append(line)
 
     return "\n".join(lines)
 
@@ -151,6 +155,12 @@ class _BoundarySource(Protocol):
     def entity_tags(self) -> Sequence[int]: ...
     @property
     def on_axis(self) -> bool: ...
+    @property
+    def named(self) -> bool: ...
+    @property
+    def measure(self) -> float | None: ...
+    @property
+    def tags(self) -> Sequence[_TagSource]: ...
 
 
 class BodyGroupRecord(BaseModel):
@@ -186,7 +196,7 @@ class BoundaryGroupRecord(BaseModel):
     """Topological dimension of the group."""
 
     name: str
-    """The compound boundary name shared verbatim with Elmer."""
+    """The compound boundary name, or a named group's face name, shared verbatim with Elmer."""
 
     bodies: tuple[str, ...] = ()
     """The one or two body group names the boundary borders."""
@@ -196,6 +206,15 @@ class BoundaryGroupRecord(BaseModel):
 
     on_axis: bool = False
     """Whether the group lies on the symmetry axis of a 2D axisymmetric model."""
+
+    named: bool = False
+    """Whether the group is a tagged face's own group."""
+
+    selectors: list[TagDict] = Field(default_factory=list)
+    """The selectors of the tags a named group's faces matched, in domain order."""
+
+    measure: float | None = None
+    """`A` `[m²]`: Measured size of a named group, area in 3D and length times one metre of depth in 2D; None for adjacency groups."""
 
 
 class MeshGroupsFile(BaseModel):
@@ -240,6 +259,9 @@ class MeshGroupsFile(BaseModel):
                     bodies=tuple(group.bodies),
                     face_tags=list(group.entity_tags),
                     on_axis=group.on_axis,
+                    named=group.named,
+                    selectors=[dict(tag.selector) for tag in group.tags],
+                    measure=group.measure,
                 )
                 for group in boundary_groups
             ],

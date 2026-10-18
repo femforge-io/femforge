@@ -52,6 +52,9 @@ class _FakeBoundaryGroup:
     bodies: tuple[str, ...]
     entity_tags: list[int] = field(default_factory=list)
     on_axis: bool = False
+    named: bool = False
+    measure: float | None = None
+    tags: list[_FakeTag] = field(default_factory=list)
 
 
 def _groups() -> MeshGroupsFile:
@@ -90,6 +93,15 @@ def _groups() -> MeshGroupsFile:
             entity_tags=[13],
             on_axis=True,
         ),
+        _FakeBoundaryGroup(
+            dim=1,
+            name="TIP",
+            bodies=("AIR",),
+            entity_tags=[14],
+            named=True,
+            measure=2.5e-3,
+            tags=[_FakeTag({TagKey.NAME: "Tip"})],
+        ),
     ]
     return MeshGroupsFile.capture(bodies, boundaries, element_count=4067)
 
@@ -97,7 +109,10 @@ def _groups() -> MeshGroupsFile:
 def _domain() -> DomainConfig:
     return DomainConfig(
         materials=[MaterialProperties(name="Air", tag="Air"), MaterialProperties(name="Neodymium", tag="n42")],
-        tags=[EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 1, 0))])],
+        tags=[
+            EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 1, 0))]),
+            EntityTag(selector={TagKey.NAME: "Tip"}),
+        ],
     )
 
 
@@ -113,10 +128,16 @@ def test_rebind_groups_attaches_the_current_domain_objects() -> None:
     assert magnet.entity_tags == [2, 3]
     assert magnet.id == 0 and magnet.dim == 2
 
-    assert [boundary.name for boundary in boundaries] == ["AIR__EXT", "AIR__N42_MAGNETIZATIONN", "AIR__AXIS"]
+    assert [boundary.name for boundary in boundaries] == ["AIR__EXT", "AIR__N42_MAGNETIZATIONN", "AIR__AXIS", "TIP"]
     assert boundaries[1].bodies == ("AIR", "N42_MAGNETIZATIONN")
     assert boundaries[2].is_axis and not boundaries[2].is_external
     assert boundaries[0].entity_tags == [10]
+    assert boundaries[0].tags == [] and boundaries[0].measure is None and not boundaries[0].named
+
+    tip = boundaries[3]
+    assert tip.named and tip.is_external
+    assert tip.tags == [domain.tags[1]] and tip.tags[0] is domain.tags[1]
+    assert tip.measure == 2.5e-3
 
 
 def test_rebind_groups_fails_loudly_on_a_mismatched_domain() -> None:
@@ -129,6 +150,11 @@ def test_rebind_groups_fails_loudly_on_a_mismatched_domain() -> None:
     missing_tag.tags.clear()
     with pytest.raises(MeshRebindError, match="selector"):
         _ = rebind_groups(_groups(), missing_tag)
+
+    missing_face_tag = _domain()
+    _ = missing_face_tag.tags.pop()
+    with pytest.raises(MeshRebindError, match="boundary 'TIP' was grouped by selector"):
+        _ = rebind_groups(_groups(), missing_face_tag)
 
     renamed = _domain()
     renamed.materials[1].tag = "N52"

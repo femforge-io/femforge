@@ -73,7 +73,7 @@ class TaggedCompound(b3d.Compound, HasTags):
 
 
 class TaggedFace(b3d.Face, HasTags):
-    """A build123d face whose tags ride its STEP name into a 2D mesh."""
+    """A build123d face whose tags ride its STEP name into the mesh: a body of a 2D model, or a named boundary group of a 3D one."""
 
     def __init__(self, face: b3d.Face, *, tags: TagDict | None = None, name: str | None = None) -> None:
         """Wrap ``face`` and tag it.
@@ -81,7 +81,7 @@ class TaggedFace(b3d.Face, HasTags):
         Args:
             face: The face to wrap, placed where it is.
             tags: The ``key=value`` pairs domain materials and ``EntityTag`` selectors match, e.g. ``{TagKey.MATERIAL: N52().tag}``.
-            name: The body name, kept as written in the ``Name`` tag and uppercased in the mesh, Elmer, ``entities.json`` and the viewer; None composes it from the tags.
+            name: The body or boundary-group name, kept as written in the ``Name`` tag and uppercased in the mesh, Elmer, ``entities.json`` and the viewer; None composes it from the tags.
         """
         b3d.Face.__init__(self, cast("object", face.wrapped))  # pyright: ignore[reportUnknownMemberType]  # OCP ships no stubs
         HasTags.__init__(self, named(tags, name))

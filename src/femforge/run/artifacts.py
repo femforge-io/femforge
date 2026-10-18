@@ -10,6 +10,7 @@ from femforge.artifacts.cache import ArtifactCache, ArtifactHandle
 from femforge.artifacts.kind import BuiltinKind
 from femforge.artifacts.store import ArtifactError, ArtifactMissing
 from femforge.common.files import RunFile
+from femforge.common.tags import TagDict
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.boundary import BoundaryGroup
 from femforge.meshing.groups import BodyGroupRecord, BoundaryGroupRecord, MeshGroupsFile, PhysicalGroup
@@ -45,12 +46,12 @@ def _material_for(record: BodyGroupRecord, domain: DomainConfig) -> MaterialProp
     raise MeshRebindError(f"cached mesh body {record.name!r} needs material tag {record.material!r}, which the domain lacks")
 
 
-def _tags_for(record: BodyGroupRecord, domain: DomainConfig) -> list[EntityTag]:
+def _tags_for(group: str, selectors: list[TagDict], domain: DomainConfig) -> list[EntityTag]:
     tags: list[EntityTag] = []
-    for selector in record.selectors:
+    for selector in selectors:
         match: EntityTag | None = next((tag for tag in domain.tags if dict(tag.selector) == selector), None)
         if match is None:
-            raise MeshRebindError(f"cached mesh body {record.name!r} was grouped by selector {selector}, which the domain lacks")
+            raise MeshRebindError(f"cached mesh {group} was grouped by selector {selector}, which the domain lacks")
 
         tags.append(match)
     return tags
@@ -61,7 +62,7 @@ def rebind_groups(groups: MeshGroupsFile, domain: DomainConfig) -> tuple[list[Ph
     bodies: list[PhysicalGroup] = []
     for record in groups.bodies:
         material: MaterialProperties = _material_for(record, domain)
-        tags: list[EntityTag] = _tags_for(record, domain)
+        tags: list[EntityTag] = _tags_for(f"body {record.name!r}", record.selectors, domain)
         expected: str = compose_group_name(material, tags, warn=lambda _message: None, authored=record.authored)
         if expected != record.name:
             raise MeshRebindError(f"cached mesh body {record.name!r} would be named {expected!r} by the current domain")
@@ -78,17 +79,22 @@ def rebind_groups(groups: MeshGroupsFile, domain: DomainConfig) -> tuple[list[Ph
             )
         )
 
-    boundaries: list[BoundaryGroup] = [
-        BoundaryGroup(
-            gmsh_id=0,
-            name=record.name,
-            bodies=tuple(record.bodies),
-            face_tags=list(record.face_tags),
-            dim=record.dim,
-            on_axis=record.on_axis,
+    boundaries: list[BoundaryGroup] = []
+    for record in groups.boundaries:
+        boundaries.append(
+            BoundaryGroup(
+                gmsh_id=0,
+                name=record.name,
+                bodies=tuple(record.bodies),
+                face_tags=list(record.face_tags),
+                dim=record.dim,
+                on_axis=record.on_axis,
+                tags=_tags_for(f"boundary {record.name!r}", record.selectors, domain),
+                measure=record.measure,
+                named=record.named,
+            )
         )
-        for record in groups.boundaries
-    ]
+
     return bodies, boundaries
 
 

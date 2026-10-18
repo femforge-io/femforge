@@ -9,6 +9,8 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - Each condition names the sif section it lands in, `Condition.section`, from the new `SifSection` enum, and `shipped_conditions()` lists the condition classes `ConditionUnion` admits.
 - `Condition.on_boundary(site)` emits a boundary condition for one boundary group, described by a `BoundarySite`; a boundary group carries its own `tags`, `measure` and `named` flag, and the tags' boundary conditions land after the bordering bodies' ones.
 - Frame hooks `Frame.solve_share`, the inverse of `Frame.total`, `Frame.revolves` and `Frame.plane_stress`, and solver hooks `SolverBase.fit_frame` and `SolverBase.check_frame`.
+- Named faces: a `TaggedFace` on a face of a 3D body becomes a boundary group of its own, such as `TIP`, carved out of the shell or interface it lies on, with its area recorded. The boundary conditions of the tags it matches land there, `Boundaries.face(name)` finds it in a run, and `import_tagged_step` reads named faces back. `TaggedFace` is now exported from `femforge`.
+- `GmshOptions.element_order` sets the element order (`Mesh.ElementOrder`), such as 2 for quadratic elements.
 
 ### Changed
 
