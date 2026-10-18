@@ -214,7 +214,7 @@ def test_fitted_takes_the_first_field_and_its_first_allowed_mode() -> None:
 
 def test_fitted_keeps_an_allowed_mode_and_returns_the_same_object() -> None:
     fields = _infos(("t", Association.POINT, 1))
-    spec = DisplaySpec(field="t", mode=DisplayMode.ABSVALUE)
+    spec = DisplaySpec(field="t", mode=DisplayMode.ABSVALUE, warp=None)
 
     assert spec.fitted(fields) is spec
 
@@ -225,6 +225,20 @@ def test_fitted_resolves_a_loose_name_the_way_a_field_query_does() -> None:
     fitted = DisplaySpec(field="magnetic flux density").fitted(fields)
 
     assert fitted.field == "magnetic flux density e"
+
+
+def test_fitted_resolves_the_warp_among_the_vector_fields_and_drops_one_the_run_lacks() -> None:
+    elastic = _infos(("displacement e", Association.CELL, 3), ("principal stress", Association.POINT, 3), ("vonmises", Association.POINT, 1))
+    thermal = _infos(("temperature", Association.POINT, 1))
+
+    assert DisplaySpec().fitted(elastic).warp == "displacement e", "the warp resolves a loose name the way the field does"
+    assert DisplaySpec(warp="principal stress").fitted(elastic).warp is None, "principal values are no displacement"
+    assert DisplaySpec(warp="vonmises").fitted(elastic).warp is None
+    assert DisplaySpec().fitted(thermal).warp is None
+    assert DisplaySpec(warp=None).fitted(elastic).warp is None
+
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        _ = DisplaySpec(warp_scale=-1.0)
 
 
 def test_fitted_raises_naming_the_available_arrays() -> None:
@@ -1130,3 +1144,108 @@ def test_the_legend_places_the_bars_and_a_second_one_beside_the_first() -> None:
     assert bar_placement(Legend.HIDDEN) == bar_placement(Legend.VERTICAL), "a hidden legend never reaches a placement"
     assert bar_placement(Legend.VERTICAL, second=True).x < bar_placement(Legend.VERTICAL).x
     assert bar_placement(Legend.HORIZONTAL, second=True).y > bar_placement(Legend.HORIZONTAL).y
+
+
+# --- pyvista-gated: the deformed shape --------------------------------------------
+
+
+def _bent_scene(displacement: np.typing.NDArray[np.float64] | None = None) -> FieldScene:  # pragma: no cover - helper for the pyvista-gated tests below
+    grid = _synthetic_grid()
+    points = np.asarray(grid.points, dtype=np.float64)
+    bent = np.column_stack([np.zeros(len(points)), np.zeros(len(points)), -1e-3 * points[:, 0] ** 2])
+    grid.point_data["displacement"] = bent if displacement is None else displacement
+    bodies = Bodies([Body(name="LEFT", mesh_id=1), Body(name="RIGHT", mesh_id=2)])
+
+    return FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=3, run_id="bent", bodies=bodies)
+
+
+def test_the_automatic_warp_moves_the_largest_displacement_a_tenth_of_the_section_diagonal() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _bent_scene()
+    auto = scene.auto_warp_scale("displacement")
+    _ = scene.apply(DisplaySpec(field="joule heating", robust=False))
+    right = _block(scene, "RIGHT")
+    solved = cast("pv.DataSet", scene.section_blocks["RIGHT"])
+    moved = np.linalg.norm(np.asarray(right.points) - np.asarray(solved.points), axis=1)
+
+    assert auto == pytest.approx(0.1 * np.sqrt(6.0) / 4e-3)
+    assert scene.warped == ("displacement", auto) and scene.expanded == (Expansion.SECTION, 360.0)
+    assert moved.max() == pytest.approx(0.1 * np.sqrt(6.0)), "the tip moves a tenth of the box diagonal"
+    assert np.asarray(solved.points)[:, 2].min() == 0.0, "the solved bodies stay as solved"
+    assert scene.bounds[4] == pytest.approx(-0.1 * np.sqrt(6.0)) and scene.grid.bounds[4] == pytest.approx(-0.1 * np.sqrt(6.0)), "the bodies and the line grid bend alike"
+    assert scene.data_range == pytest.approx((2.0, 3.0)), "the warp moves the bodies, not their values"
+
+
+def test_a_zero_displacement_leaves_the_bodies_as_solved() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _bent_scene(np.zeros((16, 3)))
+    _ = scene.apply(DisplaySpec(field="joule heating"))
+
+    assert scene.auto_warp_scale("displacement") == 0.0 and scene.warp_of(DisplaySpec()) is None
+    assert scene.warped is None and scene.blocks is scene.section_blocks
+    assert scene.warp_of(DisplaySpec(warp_scale=0.0)) is None, "a zero scale draws the bodies as solved"
+
+
+def test_a_changed_warp_reshapes_the_scene_and_keeps_its_expansion() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _bent_scene()
+    plotter = pv.Plotter(off_screen=True)
+    scene.render(plotter)
+    auto = scene.auto_warp_scale("displacement")
+    bent = plotter.bounds[4]
+    doubled = DisplaySpec(field="joule heating", warp_scale=2.0 * auto, streamlines=None)
+
+    assert scene.reshaped(doubled) and not scene.reshaped(DisplaySpec(field="joule heating"))
+
+    scene.update(plotter, doubled)
+
+    assert scene.warped == ("displacement", 2.0 * auto) and plotter.bounds[4] == pytest.approx(2.0 * bent)
+
+    scene.update(plotter, DisplaySpec(field="joule heating", warp=None, streamlines=None))
+
+    assert scene.warped is None and scene.blocks is scene.section_blocks and plotter.bounds[4] == pytest.approx(0.0)
+    assert str(SceneActor.BODIES) in plotter.renderer.actors
+    plotter.close()
+
+
+def test_a_warped_section_keeps_its_expansion_and_a_revolved_one_warps_its_surfaces_and_its_line_grid() -> None:
+    pytest.importorskip("pyvista")
+
+    grid = _section_grid(columns=16, rows=8)
+    grid.point_data["displacement"] = np.tile([0.5, 0.0, 0.0], (grid.n_points, 1))
+    bodies = Bodies([Body(name="INNER", mesh_id=1), Body(name="OUTER", mesh_id=2)])
+    scene = FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=2, run_id="swollen", bodies=bodies)
+    swollen = DisplaySpec(field="magnetic flux density", warp_scale=1.0)
+
+    _ = scene.apply(swollen)
+
+    assert scene.expanded == (Expansion.REVOLVE, 360.0) and scene.warped == ("displacement", 1.0)
+    assert scene.bounds[1] == pytest.approx(2.5), "the revolved surfaces move along the turned radial displacement"
+    assert scene.grid.bounds[1] == pytest.approx(2.5) and scene.section_grid.bounds[1] == pytest.approx(2.0), "the lines run through the displaced section"
+    assert scene.integrate_streamlines(FieldLineOptions(line_count=5)).streamlines.n_points > 0
+
+    _ = scene.apply(swollen.model_copy(update={"expansion": Expansion.MIRROR}))
+
+    assert scene.expanded == (Expansion.MIRROR, 360.0) and scene.warped == ("displacement", 1.0)
+    assert scene.bounds[0] == pytest.approx(-2.5) and scene.grid.bounds[0] == pytest.approx(-2.5), "the mirrored half moves along the reflected displacement"
+
+
+def test_an_elemental_displacement_is_averaged_onto_the_points_before_the_warp() -> None:
+    pytest.importorskip("pyvista")
+
+    grid = _synthetic_grid()
+    grid.cell_data["displacement e"] = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 3.0]])
+    bodies = Bodies([Body(name="LEFT", mesh_id=1), Body(name="RIGHT", mesh_id=2)])
+    scene = FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=3, run_id="cells", bodies=bodies)
+
+    _ = scene.apply(DisplaySpec(field="joule heating", warp_scale=1.0))
+    shift = np.asarray(scene.grid.points) - np.asarray(scene.section_grid.points)
+
+    assert scene.warped == ("displacement e", 1.0)
+    assert _block(scene, "LEFT").bounds[5] == pytest.approx(2.0) and _block(scene, "RIGHT").bounds[5] == pytest.approx(4.0)
+    assert np.allclose(shift[:, 2], np.repeat([1.0, 3.0], 8)), "each point takes the value of the cells around it"
+    assert "displacement e" not in _block(scene, "LEFT").point_data, "the averaging leaves the arrays as solved"
