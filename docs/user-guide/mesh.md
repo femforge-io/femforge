@@ -108,6 +108,33 @@ A mesh is fine enough when refining it no longer changes the quantity you report
 
 Check each quantity on its own. A force lumped over a body depends on the field at the body's surface, so a settled field energy does not show that the force has settled. Refine the body that carries a `ForceComponent` and the gap around it, and keep `deterministic=True` through the study so every change comes from the sizes.
 
+## Solver tolerances
+
+The solver tolerances decide when Elmer stops iterating on a mesh, so they matter only while their error stays well below the mesh error.
+
+| Preset | Nonlinear tolerance | Linear tolerance |
+|---|---|---|
+| 3D magnetostatics (`MagnetoDynamicsSolver`) | `1e-6` | `1e-6`, BiCGStabl |
+| Axisymmetric magnetostatics (`MagnetoDynamics2DSolver`) | `1e-7` | none, direct solver |
+
+On the 3D bearing-seat example, tightening the 3D nonlinear and linear tolerances to `1e-10` and `1e-8` moved the force by at most 0.0007% and the energy by at most 0.0004%, against a 2% force change from one mesh refinement, and took nearly twice the linear iterations. Both tolerances are relative, so they need no scaling with mesh size: a 2.2 times larger mesh doubled the tolerance error, which stayed thousands of times below the mesh error.
+
+Keep the nonlinear tolerance at or above the linear one. The change between nonlinear iterations cannot fall much below the error each linear solve leaves, so a tighter nonlinear tolerance ends only when a linear solve stops iterating. To tighten or loosen a run, customize its stack:
+
+```python
+import femforge as ff
+
+config = ff.SimulationConfig(
+    mesh=ff.MeshConfig(step="magnet_in_air.step"),
+    physics=ff.PhysicsSelection(selected=ff.Physics.MAGNETOSTATICS),
+)
+
+stack = config.customize_physics()
+solver = stack.solver(ff.elmer.MagnetoDynamicsSolver)
+solver.nonlinear_system_convergence_tolerance = 1e-8
+solver.linear_system_convergence_tolerance = 1e-8
+```
+
 ## Reference
 
 - [Meshing API](../reference/meshing.md): `MeshConfig`, `GmshOptions`, the backends and the group records.
