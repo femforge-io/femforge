@@ -4,8 +4,8 @@
 # ///
 """A disc magnet pulls on a steel plate across an air gap: solve four gaps in the background while a workbench shows each run as it lands (``--solve-only`` skips the workbench)."""
 
+import subprocess
 import sys
-import threading
 from pathlib import Path
 
 import build123d as b3d
@@ -106,6 +106,10 @@ if __name__ == "__main__":
     if "--solve-only" in sys.argv[1:]:
         solve()
     else:
-        threading.Thread(target=solve, name="solve", daemon=True).start()
-        # A function, not a built dock, so every save of this file rebuilds the workbench.
-        ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
+        solver = subprocess.Popen([sys.executable, __file__, "--solve-only"])
+        try:
+            # A function, not a built dock, so every save of this file rebuilds the workbench.
+            ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
+        finally:
+            # Ctrl+C reaches the solver too; waiting lets it release its claim on the run it was solving.
+            _ = solver.wait()
