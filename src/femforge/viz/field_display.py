@@ -14,7 +14,7 @@ from femforge.common.files import BundleFile
 from femforge.common.log import log
 from femforge.common.utils import title
 from femforge.elmer.physics import Physics
-from femforge.elmer.variables import variable_unit
+from femforge.elmer.variables import ELEMENTAL_SUFFIX, ElmerVariable, elemental, variable_of, variable_unit
 from femforge.frames import Frame, SolvePlane, default_frame
 from femforge.run.fields import GEOMETRY_IDS_ARRAY, select_array
 from femforge.viz.colormaps import register_paraview
@@ -121,6 +121,15 @@ class DisplayMode(StrEnum):
     POLAR_XY = "polar_xy"
     """The in-plane direction as hue, brightened by the in-plane magnitude."""
 
+    MAX_PRINCIPAL = "max_principal"
+    """The largest of the three principal values."""
+
+    MID_PRINCIPAL = "mid_principal"
+    """The middle one of the three principal values."""
+
+    MIN_PRINCIPAL = "min_principal"
+    """The smallest of the three principal values."""
+
     @property
     def label(self) -> str:
         """The mode's name as it reads in a picker."""
@@ -130,8 +139,42 @@ class DisplayMode(StrEnum):
 VECTOR_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.MAGNITUDE, DisplayMode.POLAR_XY})
 """The modes that need a 3-component array; the rest accept any width."""
 
-ROTATION_FREE_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.VALUE, DisplayMode.ABSVALUE, DisplayMode.MAGNITUDE})
+PRINCIPAL_MODES: tuple[DisplayMode, ...] = (DisplayMode.MAX_PRINCIPAL, DisplayMode.MID_PRINCIPAL, DisplayMode.MIN_PRINCIPAL)
+"""The modes of a principal-value field, the default first; each needs three values per row."""
+
+ROTATION_FREE_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.VALUE, DisplayMode.ABSVALUE, DisplayMode.MAGNITUDE, *PRINCIPAL_MODES})
 """The modes whose value a mirrored or revolved copy keeps; the others turn with it."""
+
+
+class FieldKind(StrEnum):
+    """What one row of a field array holds, which sets its display modes and whether an expansion turns it."""
+
+    SCALAR = "scalar"
+    """One value."""
+
+    VECTOR = "vector"
+    """A 3-component vector, turned with a mirrored or revolved copy."""
+
+    PRINCIPAL = "principal"
+    """Three principal values, which no rotation changes."""
+
+    TENSOR = "tensor"
+    """Any other width, such as a Voigt stress tensor; not displayed."""
+
+
+PRINCIPAL_VARIABLES: frozenset[ElmerVariable] = frozenset({ElmerVariable.PRINCIPAL_STRESS, ElmerVariable.PRINCIPAL_STRAIN})
+"""The 3-component variables that hold principal values rather than a vector."""
+
+
+def field_kind(name: str, components: int) -> FieldKind:
+    """The kind of a VTU array by its name and its component count."""
+    if components == 1:
+        return FieldKind.SCALAR
+
+    if components != 3:
+        return FieldKind.TENSOR
+
+    return FieldKind.PRINCIPAL if variable_of(name) in PRINCIPAL_VARIABLES else FieldKind.VECTOR
 
 
 class Legend(StrEnum):
@@ -185,8 +228,14 @@ class FieldInfo:
 
     @property
     def display_name(self) -> str:
-        """The array's name as it reads in a picker, with the [`FIELD_RENAMES`][] overrides applied."""
-        label: str = title(self.name)
+        """The array's name as it reads in a picker: the variable's own spelling where one names it, with the [`FIELD_RENAMES`][] overrides applied."""
+        variable: ElmerVariable | None = variable_of(self.name)
+        spelled: str = self.name
+
+        if variable is not None:
+            spelled = elemental(variable) if self.name.lower().endswith(ELEMENTAL_SUFFIX) else str(variable)
+
+        label: str = title(spelled)
 
         return FIELD_RENAMES.get(label, label)
 
@@ -196,12 +245,22 @@ class FieldInfo:
         return titled(self.display_name, self.unit)
 
     @property
-    def modes(self) -> tuple[DisplayMode, ...]:
-        """The display modes this array supports, the default first: the vector set for a 3-component field, the scalar pair otherwise."""
-        if self.components == 3:
-            return (DisplayMode.MAGNITUDE, DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.POLAR_XY)
+    def kind(self) -> FieldKind:
+        """What one row of the array holds."""
+        return field_kind(self.name, self.components)
 
-        return (DisplayMode.VALUE, DisplayMode.ABSVALUE)
+    @property
+    def modes(self) -> tuple[DisplayMode, ...]:
+        """The display modes this array supports, the default first; a tensor supports none."""
+        match self.kind:
+            case FieldKind.SCALAR:
+                return (DisplayMode.VALUE, DisplayMode.ABSVALUE)
+            case FieldKind.VECTOR:
+                return (DisplayMode.MAGNITUDE, DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.POLAR_XY)
+            case FieldKind.PRINCIPAL:
+                return PRINCIPAL_MODES
+            case FieldKind.TENSOR:
+                return ()
 
 
 def titled(name: str, unit: str | None) -> str:
@@ -210,7 +269,7 @@ def titled(name: str, unit: str | None) -> str:
 
 
 def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, AnyArray], physics: Physics | None = None) -> list[FieldInfo]:
-    """Every displayable array of a VTU as a [`FieldInfo`][], sorted by display name; ``GeometryIds`` and arrays neither scalar nor 3-vector (tensors) are left out.
+    """Every displayable array of a VTU as a [`FieldInfo`][], sorted by display name; ``GeometryIds`` and tensors are left out.
 
     Args:
         point_arrays: The VTU's point arrays by name.
@@ -227,12 +286,32 @@ def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, 
             shape: tuple[int, ...] = array.shape
             components: int = shape[-1] if array.ndim > 1 else 1
 
-            if components not in (1, 3):
+            if field_kind(name, components) is FieldKind.TENSOR:
                 continue
 
             infos.append(FieldInfo(name=name, association=association, components=components, dtype=str(array.dtype), unit=variable_unit(name, physics)))
 
     return sorted(infos, key=lambda info: info.display_name)
+
+
+def line_vectors(fields: Sequence[FieldInfo], shown: str) -> str | None:
+    """The vector field the field lines follow: the shown one when it is a vector, else the flux density, else the first vector field; None for a run with none.
+
+    Args:
+        fields: The run's displayable fields, in picker order.
+        shown: The name of the array the display colors by.
+    """
+    vectors: list[str] = [info.name for info in fields if info.kind is FieldKind.VECTOR]
+    if shown in vectors:
+        return shown
+
+    if not vectors:
+        return None
+
+    try:
+        return select_flux_density_array(vectors)
+    except KeyError:
+        return vectors[0]
 
 
 class BodyPaint(StrEnum):
@@ -377,11 +456,12 @@ def reduce_field(values: AnyArray, mode: DisplayMode) -> FloatArray:
     """
     The scalar a display mode draws from one field array.
 
-    ``VALUE`` passes the array through and ``POLAR_XY`` returns the XY magnitude (the quantity that sets the color range; the angle rides along as hue).
+    ``VALUE`` passes the array through, ``POLAR_XY`` returns the XY magnitude (the quantity that sets the color range; the angle rides along as hue) and a principal mode picks from each row sorted.
     """
     array: FloatArray = np.asarray(values, dtype=np.float64)
-    if mode in VECTOR_MODES and (array.ndim < 2 or array.shape[-1] != 3):
-        raise ValueError(f"display mode {mode.value!r} needs 3-component vectors, got shape {array.shape}")
+    wide: bool = mode in VECTOR_MODES or mode in PRINCIPAL_MODES
+    if wide and (array.ndim < 2 or array.shape[-1] != 3):
+        raise ValueError(f"display mode {mode.value!r} needs 3 components per row, got shape {array.shape}")
 
     match mode:
         case DisplayMode.VALUE:
@@ -398,6 +478,12 @@ def reduce_field(values: AnyArray, mode: DisplayMode) -> FloatArray:
             return np.linalg.norm(array, axis=-1)
         case DisplayMode.POLAR_XY:
             return np.linalg.norm(array[..., :2], axis=-1)
+        case DisplayMode.MAX_PRINCIPAL:
+            return np.sort(array, axis=-1)[..., 2]
+        case DisplayMode.MID_PRINCIPAL:
+            return np.sort(array, axis=-1)[..., 1]
+        case DisplayMode.MIN_PRINCIPAL:
+            return np.sort(array, axis=-1)[..., 0]
 
 
 def polar_angle(values: AnyArray) -> FloatArray:
@@ -778,6 +864,7 @@ class FieldScene:
 
         expansion, sweep = wanted
         basis: Basis | None = self.basis
+        still: frozenset[str] = frozenset(info.name for info in self.fields if info.kind is not FieldKind.VECTOR)
 
         def rebuilt(build: Callable[[pv.DataSet], pv.DataSet]) -> pv.MultiBlock:
             """Every section block through ``build``, under its name."""
@@ -791,10 +878,10 @@ class FieldScene:
             case Expansion.SECTION:
                 self.blocks, self.grid = self.section_blocks, self.section_grid
             case Expansion.MIRROR:
-                self.blocks, self.grid = rebuilt(mirror), mirror(self.section_grid)
+                self.blocks, self.grid = rebuilt(lambda block: mirror(block, still=still)), mirror(self.section_grid, still=still)
             case Expansion.REVOLVE:
                 assert basis is not None, "a run without a basis is shown as is"
-                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep)), self.section_grid
+                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep, still=still)), self.section_grid
 
         # Recorded only once the blocks stand, so a build that raised is tried again by the next draw; the body actor holds the old blocks, so it is added anew.
         self.expanded = wanted

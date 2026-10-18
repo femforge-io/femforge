@@ -331,6 +331,36 @@ def test_revolve_keeps_the_body_ids_and_turns_the_vectors_with_each_ring() -> No
     assert quarter.volume == pytest.approx(2.0 * math.pi * 1.5 / 4.0, rel=0.01)
 
 
+def test_mirror_and_revolve_carry_still_arrays_unturned() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    from femforge.viz.symmetry import mirror, revolve
+
+    grid = pv.UnstructuredGrid([4, 0, 1, 2, 3], [pv.CellType.QUAD], SQUARE)
+    grid.point_data["B"] = np.tile([1.0, 0.0, 3.0], (4, 1))
+    grid.point_data["principal"] = np.tile([1.0, 0.0, 3.0], (4, 1))
+    grid.cell_data["principal e"] = np.array([[1.0, 0.0, 3.0]])
+    still = frozenset({"principal", "principal e"})
+
+    mirrored_grid = mirror(grid, still=still)
+    revolved = revolve(grid, Basis.DEFAULT, segments=8, still=still)
+
+    for shown in (mirrored_grid, revolved):
+        assert np.allclose(np.asarray(shown.point_data["principal"]), [1.0, 0.0, 3.0])
+        assert np.allclose(np.asarray(shown.cell_data["principal e"]), [1.0, 0.0, 3.0])
+        assert not np.allclose(np.asarray(shown.point_data["B"]), [1.0, 0.0, 3.0]), "a vector still turns"
+
+
+def test_surface_values_stay_unturned_when_asked() -> None:
+    surface = mirrored(SQUARE, _polygons([[0, 1, 2, 3]]))
+    vectors = np.tile([1.0, 2.0, 3.0], (4, 1))
+
+    assert np.allclose(surface.point_values(vectors, turns=False), [1.0, 2.0, 3.0])
+    assert np.allclose(surface.cell_values(np.array([[1.0, 2.0, 3.0]]), turns=False), [1.0, 2.0, 3.0])
+    assert np.allclose(surface.point_values(vectors)[4:], [-1.0, 2.0, -3.0])
+
+
 def test_revolve_of_a_section_without_2d_cells_is_empty() -> None:
     pytest.importorskip("pyvista")
     import pyvista as pv

@@ -19,6 +19,7 @@ from femforge.viz.field_display import (
     DisplayMode,
     DisplaySpec,
     FieldInfo,
+    FieldKind,
     FieldScene,
     Legend,
     SceneActor,
@@ -27,6 +28,8 @@ from femforge.viz.field_display import (
     color_range,
     feature_outline,
     field_infos,
+    field_kind,
+    line_vectors,
     list_fields,
     model_dim_of,
     polar_angle,
@@ -63,6 +66,7 @@ def _infos(*specs: tuple[str, Association, int]) -> list[FieldInfo]:
 def test_display_mode_label_reads_as_words() -> None:
     assert DisplayMode.ABSVALUE.label == "Absolute Value"
     assert DisplayMode.POLAR_XY.label == "Polar XY"
+    assert DisplayMode.MAX_PRINCIPAL.label == "Max Principal"
 
 
 # --- FieldInfo / field_infos ------------------------------------------------
@@ -99,8 +103,29 @@ def test_field_info_modes_depend_on_the_component_count() -> None:
     vector = FieldInfo(name="b", association=Association.CELL, components=3, dtype="float64")
     scalar = FieldInfo(name="t", association=Association.POINT, components=1, dtype="float64")
 
+    principal = FieldInfo(name="principal stress", association=Association.POINT, components=3, dtype="float64")
+    tensor = FieldInfo(name="stress", association=Association.POINT, components=6, dtype="float64")
+
     assert vector.modes == (DisplayMode.MAGNITUDE, DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.POLAR_XY)
     assert scalar.modes == (DisplayMode.VALUE, DisplayMode.ABSVALUE)
+    assert principal.modes == (DisplayMode.MAX_PRINCIPAL, DisplayMode.MID_PRINCIPAL, DisplayMode.MIN_PRINCIPAL)
+    assert tensor.modes == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "components", "kind"),
+    [
+        ("vonmises", 1, FieldKind.SCALAR),
+        ("displacement", 3, FieldKind.VECTOR),
+        ("magnetic flux density e", 3, FieldKind.VECTOR),
+        ("principal stress", 3, FieldKind.PRINCIPAL),
+        ("Principal Strain e", 3, FieldKind.PRINCIPAL),
+        ("stress", 6, FieldKind.TENSOR),
+        ("strain", 4, FieldKind.TENSOR),
+    ],
+)
+def test_field_kind_follows_the_width_and_the_principal_variables(name: str, components: int, kind: FieldKind) -> None:
+    assert field_kind(name, components) is kind
 
 
 def test_field_infos_excludes_geometry_ids_and_sorts_by_display_name() -> None:
@@ -115,12 +140,40 @@ def test_field_infos_excludes_geometry_ids_and_sorts_by_display_name() -> None:
     assert infos[1].dtype == "float64"
 
 
-def test_field_infos_leave_out_tensor_arrays() -> None:
-    point_arrays: dict[str, np.typing.NDArray[np.generic]] = {"stress": np.zeros((4, 6)), "displacement": np.zeros((4, 3)), "vonmises": np.zeros(4)}
+def _elastic_arrays() -> dict[str, np.typing.NDArray[np.generic]]:
+    return {
+        "stress": np.zeros((4, 6)),
+        "strain": np.zeros((4, 6)),
+        "displacement": np.zeros((4, 3)),
+        "vonmises": np.zeros(4),
+        "principal stress": np.zeros((4, 3)),
+        "strain energy density": np.zeros(4),
+    }
 
-    infos = field_infos(point_arrays, {})
 
-    assert [info.name for info in infos] == ["displacement", "vonmises"]
+def test_field_infos_leave_out_tensors_and_keep_the_elasticity_fields() -> None:
+    infos = field_infos(_elastic_arrays(), {})
+
+    assert [info.name for info in infos] == ["displacement", "principal stress", "strain energy density", "vonmises"]
+    assert [info.kind for info in infos] == [FieldKind.VECTOR, FieldKind.PRINCIPAL, FieldKind.SCALAR, FieldKind.SCALAR]
+
+
+def test_elasticity_fields_take_their_units_and_names() -> None:
+    titles = [info.title for info in field_infos(_elastic_arrays(), {})]
+
+    assert titles == ["Displacement [m]", "Principal Stress [Pa]", "Strain Energy Density [J/m³]", "Von Mises [Pa]"]
+    assert FieldInfo(name="vonmises e", association=Association.CELL, components=1, dtype="float64").display_name == "Von Mises E"
+
+
+def test_line_vectors_prefer_the_shown_vector_then_the_flux_density_then_the_first_vector() -> None:
+    magnetic = _infos(("joule heating", Association.CELL, 1), ("magnetic field strength", Association.POINT, 3), ("magnetic flux density e", Association.CELL, 3))
+    elastic = _infos(("displacement", Association.POINT, 3), ("principal stress", Association.POINT, 3), ("vonmises", Association.POINT, 1))
+
+    assert line_vectors(magnetic, "magnetic field strength") == "magnetic field strength"
+    assert line_vectors(magnetic, "joule heating") == "magnetic flux density e"
+    assert line_vectors(elastic, "vonmises") == "displacement"
+    assert line_vectors(elastic, "principal stress") == "displacement", "principal values are not a direction to follow"
+    assert line_vectors(_infos(("temperature", Association.POINT, 1)), "temperature") is None
 
 
 # --- DisplaySpec.fitted -----------------------------------------------------
@@ -187,6 +240,25 @@ def test_reduce_field_components_and_magnitudes(mode: DisplayMode, expected: lis
 def test_reduce_field_rejects_a_non_vector_array_naming_its_shape() -> None:
     with pytest.raises(ValueError, match=r"shape \(4,\)"):
         _ = reduce_field(SCALARS, DisplayMode.MAGNITUDE)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (DisplayMode.MAX_PRINCIPAL, [3.0, 5.0]),
+        (DisplayMode.MID_PRINCIPAL, [1.0, -1.0]),
+        (DisplayMode.MIN_PRINCIPAL, [-2.0, -4.0]),
+    ],
+)
+def test_principal_modes_pick_the_sorted_values(mode: DisplayMode, expected: list[float]) -> None:
+    unsorted = np.array([[1.0, -2.0, 3.0], [-4.0, 5.0, -1.0]])
+
+    assert reduce_field(unsorted, mode).tolist() == expected
+
+
+def test_reduce_field_rejects_a_principal_mode_on_a_scalar() -> None:
+    with pytest.raises(ValueError, match=r"max_principal.*shape \(4,\)"):
+        _ = reduce_field(SCALARS, DisplayMode.MAX_PRINCIPAL)
 
 
 # --- polar angle and RGBA ---------------------------------------------------
@@ -833,6 +905,31 @@ def test_a_section_revolves_by_default_mirrors_on_request_and_keeps_its_solved_r
 
     assert scene.display_dim == 2 and scene.bounds[0] == pytest.approx(-2.0) and scene.bounds[5] == pytest.approx(0.0)
     assert scene.grid.n_cells == 16, "the mirrored grid carries both halves"
+
+
+def test_an_expanded_section_keeps_the_principal_values_unturned_and_turns_the_displacement() -> None:
+    pytest.importorskip("pyvista")
+
+    grid = _section_grid()
+    count = grid.n_points
+    grid.point_data["displacement"] = np.tile([1.0, 0.0, 2.0], (count, 1))
+    grid.point_data["principal stress"] = np.tile([3.0, 1.0, 2.0], (count, 1))
+    bodies = Bodies([Body(name="INNER", mesh_id=1), Body(name="OUTER", mesh_id=2)])
+    scene = FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=model_dim_of(grid), run_id="section", bodies=bodies)
+
+    _ = scene.apply(DisplaySpec(field="principal stress", expansion=Expansion.MIRROR))
+    mirrored_points = scene.grid.point_data
+
+    assert np.allclose(np.asarray(mirrored_points["principal stress"]), [3.0, 1.0, 2.0])
+    assert np.allclose(np.asarray(mirrored_points["displacement"])[count:], [-1.0, 0.0, -2.0]), "the reflected half turns the vector"
+    assert all(np.allclose(np.asarray(cast("pv.DataSet", scene.blocks[name]).point_data[SCALARS_ARRAY]), 3.0) for name in scene.blocks.keys())
+
+    _ = scene.apply(DisplaySpec(field="principal stress", mode=DisplayMode.MIN_PRINCIPAL))
+    revolved = [cast("pv.DataSet", scene.blocks[name]) for name in scene.blocks.keys()]
+
+    assert all(np.allclose(np.asarray(block.point_data["principal stress"]), [3.0, 1.0, 2.0]) for block in revolved)
+    assert all(np.allclose(np.asarray(block.point_data[SCALARS_ARRAY]), 1.0) for block in revolved)
+    assert any(not np.allclose(np.asarray(block.point_data["displacement"]), [1.0, 0.0, 2.0]) for block in revolved)
 
 
 def test_a_mirrored_section_keeps_the_field_lines_of_both_halves() -> None:
