@@ -16,6 +16,7 @@ from rich.console import Console
 import femforge
 import femforge.meshing.worker as worker
 from femforge.common.log import TELEMETRY_ENV, _reset_for_tests, log, setup_logging
+from femforge.frames import Solid
 from femforge.meshing.backend import MeshDone, MeshError, MeshFailed, MeshJob, MeshReport, WorkerMesher, WorkerProbe, mesh_outcomes
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.groups import MeshGroupsFile
@@ -126,7 +127,7 @@ def test_main_meshes_into_the_msh_directory_and_writes_a_done_outcome(tmp_path: 
     target = tmp_path / "out" / "geometry.msh"
     job_file = tmp_path / "job.json"
     outcome_file = tmp_path / "outcome.json"
-    _ = job_file.write_text(MeshJob(spec=_spec(), step="model.step", msh=str(target)).model_dump_json(), encoding="utf-8")
+    _ = job_file.write_text(MeshJob(spec=_spec(), frame=Solid(), step="model.step", msh=str(target)).model_dump_json(), encoding="utf-8")
 
     code = worker.main([str(job_file), str(outcome_file)])
 
@@ -144,7 +145,7 @@ def test_main_turns_a_meshing_error_into_a_failed_outcome(tmp_path: Path, monkey
     monkeypatch.setattr(worker, "mesh_with_gmsh", mesh_with_gmsh)
     job_file = tmp_path / "job.json"
     outcome_file = tmp_path / "outcome.json"
-    _ = job_file.write_text(MeshJob(spec=_spec(), step="model.step", msh=str(tmp_path / "geometry.msh")).model_dump_json(), encoding="utf-8")
+    _ = job_file.write_text(MeshJob(spec=_spec(), frame=Solid(), step="model.step", msh=str(tmp_path / "geometry.msh")).model_dump_json(), encoding="utf-8")
 
     code = worker.main([str(job_file), str(outcome_file)])
 
@@ -174,7 +175,7 @@ def test_worker_mesher_reads_the_report_and_relays_the_worker_log(tmp_path: Path
     monkeypatch.setenv("FAKE_WORKER_MODE", "done")
     monkeypatch.setenv(TELEMETRY_ENV, str(tmp_path / "telemetry"))
     out_dir = tmp_path / "out"
-    job = MeshJob(spec=_spec(), step="model.step")
+    job = MeshJob(spec=_spec(), frame=Solid(), step="model.step")
     monkeypatch.chdir(tmp_path)
 
     report = WorkerMesher(module=fake_worker).mesh(job, out_dir)
@@ -197,7 +198,7 @@ def test_worker_mesher_raises_the_worker_failure(tmp_path: Path, monkeypatch: py
     monkeypatch.setenv("FAKE_WORKER_MODE", "failed")
 
     with pytest.raises(MeshError, match="MeshError: no material"):
-        _ = WorkerMesher(module=fake_worker).mesh(MeshJob(spec=_spec(), step="model.step"), tmp_path)
+        _ = WorkerMesher(module=fake_worker).mesh(MeshJob(spec=_spec(), frame=Solid(), step="model.step"), tmp_path)
 
 
 @pytest.mark.usefixtures("clean_logging", "relayed")
@@ -205,7 +206,7 @@ def test_worker_mesher_reports_a_crash_with_the_worker_log(tmp_path: Path, monke
     monkeypatch.setenv("FAKE_WORKER_MODE", "crash")
 
     with pytest.raises(MeshError, match="exited with code 3 without an outcome") as raised:
-        _ = WorkerMesher(module=fake_worker).mesh(MeshJob(spec=_spec(), step="model.step"), tmp_path)
+        _ = WorkerMesher(module=fake_worker).mesh(MeshJob(spec=_spec(), frame=Solid(), step="model.step"), tmp_path)
 
     assert "Traceback (most recent call last): boom" in str(raised.value)
 
@@ -215,4 +216,4 @@ def test_worker_mesher_stops_a_worker_past_its_timeout(tmp_path: Path, monkeypat
     monkeypatch.setenv("FAKE_WORKER_MODE", "hang")
 
     with pytest.raises(MeshError, match="ran past its 1.0 s"):
-        _ = WorkerMesher(module=fake_worker, timeout_s=1.0).mesh(MeshJob(spec=_spec(), step="model.step"), tmp_path)
+        _ = WorkerMesher(module=fake_worker, timeout_s=1.0).mesh(MeshJob(spec=_spec(), frame=Solid(), step="model.step"), tmp_path)

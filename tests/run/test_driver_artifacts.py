@@ -16,7 +16,7 @@ from femforge.artifacts.kind import Produced
 from femforge.artifacts.local import LocalArtifactStore
 from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock, LockOwner
 from femforge.artifacts.sidecar import ArtifactOrigin
-from femforge.common.frame import Axis, Axisymmetric, Frame, Solid
+from femforge.frames import Axis, Axisymmetric, FrameUnion, Solid
 from femforge.common.names import bundle_name
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
@@ -27,7 +27,6 @@ from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.execution.streaming import CancelToken, CommandResult, LineSink
 from femforge.geometry import Build123dGeometry
 from femforge.geometry.config import GeometryArea
-from femforge.geometry.frame import apply_frame
 from femforge.geometry.tags import TaggedCompound, TaggedPart
 from femforge.meshing.backend import MeshBackend, MeshJob, MeshReport
 from femforge.meshing.config import MeshConfig
@@ -412,20 +411,19 @@ def test_each_frame_of_one_geometry_caches_its_own_step(tmp_path: Path) -> None:
 
 
 def test_an_authored_step_is_sectioned_once_per_file_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from femforge.run import kinds
-
     sections: list[Path] = []
+    section = Axisymmetric.prepare_geometry
 
-    def counting_apply_frame(step_in: Path, step_out: Path, frame: Frame) -> Path:
+    def counting_prepare_geometry(frame: Axisymmetric, step_in: Path, step_out: Path) -> Path:
         sections.append(step_in)
-        return apply_frame(step_in, step_out, frame)
+        return section(frame, step_in, step_out)
 
-    monkeypatch.setattr(kinds, "apply_frame", counting_apply_frame)
+    monkeypatch.setattr(Axisymmetric, "prepare_geometry", counting_prepare_geometry)
     authored = _RodGeometry().build_step(tmp_path / "authored.step")
     cache = ArtifactCache(LocalArtifactStore(tmp_path / "store"))
     driver = Driver(runs_dir=tmp_path / "runs", code_sha="sha1", artifacts=cache)
 
-    def prepared(name: str, frame: Frame, step: Path = authored) -> SolveState:
+    def prepared(name: str, frame: FrameUnion, step: Path = authored) -> SolveState:
         state = SolveState(config=SimulationConfig(mesh=MeshConfig(step=str(step)), frame=frame), sim_dir=tmp_path / name)
         state.sim_dir.mkdir()
         driver.prepare_geometry(state)

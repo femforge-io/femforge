@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from femforge.common.frame import Axisymmetric, Frame, Solid
+from femforge.frames import Axisymmetric, FrameUnion, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Vec3
 from femforge.config import SimulationConfig
@@ -31,7 +31,7 @@ $ AIR__N42_MAGNETIZATIONN = 4
 """
 
 
-def _config(frame: Frame = Solid()) -> SimulationConfig:
+def _config(frame: FrameUnion = Solid()) -> SimulationConfig:
     return SimulationConfig(
         frame=frame,
         mesh=MeshConfig(step="data/does-not-exist.step"),
@@ -42,7 +42,7 @@ def _config(frame: Frame = Solid()) -> SimulationConfig:
     )
 
 
-def _bundle(tmp_path: Path, result: Result | None = None, frame: Frame = Solid()) -> Path:
+def _bundle(tmp_path: Path, result: Result | None = None, frame: FrameUnion = Solid()) -> Path:
     manifest = RunManifest.build(
         _config(frame),
         status="ok",

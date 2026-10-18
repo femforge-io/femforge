@@ -10,7 +10,7 @@ from femforge.artifacts.kind import Produced
 from femforge.artifacts.store import ArtifactMissing
 from femforge.artifacts.local import LocalArtifactStore
 from femforge.artifacts.sidecar import ArtifactOrigin, ArtifactRef
-from femforge.common.frame import Solid
+from femforge.frames import Solid
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.geometry.config import GeometryArea

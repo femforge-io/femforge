@@ -191,7 +191,7 @@ The run id has the form `<adjective>-<noun>-<hash8>` and is a pure function of t
 |---|---|
 | The config, minus the fields on the right | `config.meta`: description and tags |
 | The geometry: the parametric geometry's parameters, or the authored STEP's content digest with its export timestamp masked | The authored STEP's path |
-| The frame (an unset `radial` adds nothing) | `physics.overrides` as written; the resolved stack stands in for it |
+| The frame (a field left out of its dump adds nothing) | `physics.overrides` as written; the resolved stack stands in for it |
 | The resolved solver stack | gmsh `num_threads` and `terminal_output` |
 | The pipeline's producer version | The git commit, the machine, the run directory |
 | | Every driver setting: backend, mesher, `mpi_processes`, retention, artifacts, bundle policy, telemetry |

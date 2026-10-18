@@ -6,12 +6,12 @@ import re
 from pathlib import Path
 
 from femforge.common.files import BundleFile, BundleGlob
-from femforge.common.frame import Axisymmetric, Frame, Solid
 from femforge.common.log import log
 from femforge.common.vector import Vec3
 from femforge.elmer.variables import ElmerVariable
+from femforge.frames import FrameUnion, Solid
 from femforge.physical.units import quantity
-from femforge.run.magnetic import component_forces, component_torques, read_component_names, revolve
+from femforge.run.magnetic import component_forces, component_torques, read_component_names
 from femforge.run.manifest import RunManifest
 from femforge.run.result import Result, RunStatus
 
@@ -174,8 +174,8 @@ def _parse_log(sim_dir: Path) -> tuple[RunStatus, float | None, float | None, st
     return status, residual, wall_time, elmer_version
 
 
-def parse_result(sim_dir: str | Path, frame: Frame | None = None) -> Result:
-    """Parse a finished run directory into a typed [`Result`][femforge.run.result.Result], revolving force and torque to full-revolution totals under an ``Axisymmetric`` frame.
+def parse_result(sim_dir: str | Path, frame: FrameUnion | None = None) -> Result:
+    """Parse a finished run directory into a typed [`Result`][femforge.run.result.Result], with force and torque as the frame's whole-model totals.
 
     ``frame=None`` reads the frame from the bundle's manifest, falling back to ``Solid`` for a directory without one.
     """
@@ -210,11 +210,10 @@ def parse_result(sim_dir: str | Path, frame: Frame | None = None) -> Result:
         has_manifest: bool = (sim_path / BundleFile.MANIFEST).is_file()
         frame = RunManifest.load(sim_path).config.frame if has_manifest else Solid()
 
-    if isinstance(frame, Axisymmetric):
-        force_vec = revolve(force_vec) if force_vec is not None else None
-        torque_vec = revolve(torque_vec) if torque_vec is not None else None
-        force_by_component = {name: revolve(vec) for name, vec in force_by_component.items()}
-        torque_by_component = {name: revolve(vec) for name, vec in torque_by_component.items()}
+    force_vec = frame.total(force_vec) if force_vec is not None else None
+    torque_vec = frame.total(torque_vec) if torque_vec is not None else None
+    force_by_component = {name: frame.total(vec) for name, vec in force_by_component.items()}
+    torque_by_component = {name: frame.total(vec) for name, vec in torque_by_component.items()}
 
     return Result(
         status=status,

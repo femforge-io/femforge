@@ -181,6 +181,16 @@ class Drawn:
     footprint: Footprint | None
 
 
+def toolbar_id(panel_id: str) -> str:
+    """The element id of a scene panel's toolbar."""
+    return f"{panel_id}-toolbar"
+
+
+def view_id(panel_id: str) -> str:
+    """The element id of a scene panel's view host."""
+    return f"{panel_id}-view"
+
+
 def vector(value: object) -> Vector:
     """A camera state field as a 3-tuple of floats."""
     x, y, z = cast("Sequence[float]", value)
@@ -553,7 +563,7 @@ class ScenePanel(PanelComponent):
         self.state[self.key(StateVar.MODE)] = str(self.mode)
         self.state[self.key(StateVar.STATUS)] = ""
         self.state[self.key(StateVar.NOTICE)] = ""
-        with html.Div(classes=str(Cls.TOOLBAR)):
+        with html.Div(classes=str(Cls.TOOLBAR), id=self.toolbar_id):
             for view in View:
                 Button(str(view), size="xs", variant="ghost", on_click=self.callback(partial(self.look, view)))
 
@@ -573,10 +583,20 @@ class ScenePanel(PanelComponent):
             Button("Axes", size="xs", variant="ghost", title="Toggle the orientation axes", on_click=self.callback(self.toggle_axes))
             Button("Screenshot", size="xs", variant="ghost", title="Save a 2x PNG", on_click=self.callback(self.screenshot))
 
-        self.host = html.Div(style=VIEW_STYLE)
+        self.host = html.Div(style=VIEW_STYLE, id=self.view_id)
         with self.host:
             self.build_view()
             self.build_notice()
+
+    @property
+    def toolbar_id(self) -> str:
+        """The element id of the toolbar, for a tour to point at."""
+        return toolbar_id(self.id)
+
+    @property
+    def view_id(self) -> str:
+        """The element id of the view's host, for a tour to point at."""
+        return view_id(self.id)
 
     def build_notice(self) -> None:
         """The notice centered over the view, shown while it holds text."""

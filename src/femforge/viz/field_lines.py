@@ -14,6 +14,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.viz.colormaps import register_paraview
+from femforge.viz.symmetry import Basis
 
 
 if TYPE_CHECKING:
@@ -33,10 +34,10 @@ class SeedPlacement(StrEnum):
     """Where the streamline seed points are placed within the domain bounding box."""
 
     CENTER_PLANE = "center_plane"
-    """A ``line_count`` × ``line_count`` grid on the mid-Z plane (the field-line cross-section)."""
+    """A ``line_count`` × ``line_count`` grid on the mid-Z plane (the field-line cross-section), the default."""
 
     VOLUME = "volume"
-    """A ``line_count``³ grid filling the box — denser, fuller 3D coverage (the default)."""
+    """A ``line_count``³ grid filling the box: denser, fuller 3D coverage."""
 
     GAP_LINE = "gap_line"
     """A single line of ``line_count`` points along X through the center (e.g. across the Halbach gap)."""
@@ -116,19 +117,19 @@ class FieldLineOptions(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, validate_assignment=True)
 
-    seed_placement: SeedPlacement = SeedPlacement.VOLUME
+    seed_placement: SeedPlacement = SeedPlacement.CENTER_PLANE
     """Where to seed the streamlines within the domain bounding box."""
 
     seed_grid: bool = Field(default=True)
     """Seed the streamlines on a grid (``True``) or at random points (``False``)."""
 
-    line_count: int = Field(default=12, gt=0)
+    line_count: int = Field(default=18, gt=0)
     """Seed points per axis: ``CENTER_PLANE`` seeds ``line_count²``, ``VOLUME`` ``line_count³``, ``GAP_LINE`` ``line_count``."""
 
     max_length: float = Field(default=0.75, gt=0.0, le=1.0)
     """`[-]`: Fraction of the domain diagonal a streamline may integrate along, keeping the picture framed on the magnets."""
 
-    colormap: Colormap | str | list[str] = Colormap.VIRIDIS
+    colormap: Colormap | str | list[str] = Colormap.TURBO
     """The ``|B|`` colormap: a [`Colormap`][] member, any matplotlib or colorcet colormap name, or a list of colors interpolated across the scalar range."""
 
     invert: bool = False
@@ -223,18 +224,21 @@ REVERSAL_COSINE = -0.5
 """The cosine between consecutive steps below which a line has turned back on itself."""
 
 
-def trimmed_lines(points: np.typing.NDArray[np.float64], lines: np.typing.NDArray[np.int64]) -> tuple[np.typing.NDArray[np.int64], np.typing.NDArray[np.int64]]:
+def trimmed_lines(points: np.typing.NDArray[np.float64], lines: np.typing.NDArray[np.int64]) -> tuple[np.typing.NDArray[np.int64], np.typing.NDArray[np.int64], np.typing.NDArray[np.int64]]:
     """
-    Every polyline of a flat VTK ``lines`` array cut at its first sharp reversal, as the kept point ids and the renumbered ``lines`` array.
+    Every polyline of a flat VTK ``lines`` array cut at its first sharp reversal, as the kept point ids, the renumbered ``lines`` array and the kept polylines' indices.
 
     A field with sources, such as H at a magnet's pole faces, sends the integrator back and forth across a face until its step limit.
     """
     kept: list[np.typing.NDArray[np.int64]] = []
     flat: list[int] = []
+    cells: list[int] = []
     sizes = cast("list[int]", lines.tolist())
     start = 0
     position = 0
+    cell = -1
     while position < len(sizes):
+        cell += 1
         count = sizes[position]
         ids = lines[position + 1 : position + 1 + count]
         position += count + 1
@@ -252,24 +256,28 @@ def trimmed_lines(points: np.typing.NDArray[np.float64], lines: np.typing.NDArra
 
         kept.append(ids[:end])
         flat.extend([end, *range(start, start + end)])
+        cells.append(cell)
         start += end
 
     ids_kept = np.concatenate(kept) if kept else np.zeros(0, dtype=np.int64)
 
-    return ids_kept, np.asarray(flat, dtype=np.int64)
+    return ids_kept, np.asarray(flat, dtype=np.int64), np.asarray(cells, dtype=np.int64)
 
 
 def trim_reversals(streamlines: pv.PolyData) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration tests
-    """The streamlines cut at their first sharp reversal, with their point data."""
+    """The streamlines cut at their first sharp reversal, with their point and cell data."""
     import pyvista as pv
 
-    ids, lines = trimmed_lines(np.asarray(streamlines.points, dtype=np.float64), np.asarray(streamlines.lines, dtype=np.int64))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista's lines property is untyped
+    ids, lines, cells = trimmed_lines(np.asarray(streamlines.points, dtype=np.float64), np.asarray(streamlines.lines, dtype=np.int64))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista's lines property is untyped
     if ids.size == 0:
         return pv.PolyData()
 
     trimmed = pv.PolyData(np.asarray(streamlines.points)[ids], lines=lines)
     for name in streamlines.point_data.keys():
         trimmed.point_data[name] = np.asarray(streamlines.point_data[name])[ids]
+
+    for name in streamlines.cell_data.keys():
+        trimmed.cell_data[name] = np.asarray(streamlines.cell_data[name])[cells]
 
     return trimmed
 
@@ -371,7 +379,7 @@ class StreamlineActors:
     """
 
     streamlines: pv.PolyData
-    """The integrated streamlines, clipped to the integration region."""
+    """The integrated streamlines, within the integration region."""
 
     b_name: str
     """The name of the B array the lines carry for coloring."""
@@ -399,9 +407,7 @@ def build_streamlines(
     bounds: Bounds = cast("Bounds", tuple(dataset.bounds))
     seeds: pv.PolyData = pv.PolyData(seed_points(bounds, opts))
 
-    # Bound the integration length and clip to the domain: far from the magnets the air field is weak and
-    # near-uniform, so unbounded streamlines run many domain-widths past the box. Limiting the arc length to
-    # the domain diagonal and clipping the tubes to the bounds keeps the picture framed on the magnets.
+    # Far from the magnets the air field is weak and near-uniform, so the arc length is bounded by a share of the domain diagonal to keep the picture framed on the magnets.
     xmin, xmax, ymin, ymax, zmin, zmax = bounds
     dx, dy, dz = xmax - xmin, ymax - ymin, zmax - zmin
     max_length: float = math.sqrt(dx * dx + dy * dy + dz * dz) * opts.max_length
@@ -427,10 +433,72 @@ def build_streamlines(
         if opts.tube_radius is not None
         else streamlines
     )
-    clipped: pv.PolyData = cast("pv.PolyData", tubed.clip_box(bounds, invert=False))  # pyright: ignore[reportUnknownMemberType]
     outline: pv.PolyData | None = cast("pv.PolyData", dataset.outline()) if opts.show_outline else None
     magnitudes: np.typing.NDArray[np.float64] = np.linalg.norm(np.asarray(dataset.point_data[b_name], dtype=np.float64).reshape(dataset.n_points, -1), axis=1)
-    return StreamlineActors(streamlines=clipped, b_name=b_name, outline=outline, magnitudes=[magnitudes])
+    return StreamlineActors(streamlines=tubed, b_name=b_name, outline=outline, magnitudes=[magnitudes])
+
+
+SEED_IDS = "SeedIds"
+"""The cell array vtkStreamTracer writes with each line's seed index; a "both" trace gives each seed a forward and a backward line."""
+
+
+def build_swept_streamlines(
+    section: pv.DataSet,
+    b_name: str,
+    options: FieldLineOptions,
+    basis: Basis,
+    bounds: Bounds,
+    *,
+    seeds: np.typing.NDArray[np.float64] | None = None,
+) -> StreamlineActors:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration tests
+    """Field lines of a revolved axisymmetric section: seeded in the authored frame, folded into the section, integrated there and swept back to each seed's angle.
+
+    Args:
+        section: The solved section in the solve frame, carrying B on its points.
+        b_name: The point array the lines follow.
+        options: The field-line options.
+        basis: Where the section sits in the authored frame.
+        bounds: The revolved display's authored bounds, which the seeds fill and the outline draws.
+        seeds: ``(N, 3)`` authored seed points to use instead of seeding ``bounds``.
+    """
+    import pyvista as pv
+
+    authored: np.typing.NDArray[np.float64] = seeds if seeds is not None else np.asarray(seed_points(bounds, options), dtype=np.float64)
+    folded, theta = basis.fold(authored)
+
+    xmin, xmax, ymin, ymax, zmin, zmax = cast("Bounds", tuple(section.bounds))
+    max_length: float = math.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2) * options.max_length
+    traced: pv.PolyData = cast(
+        "pv.PolyData",
+        section.streamlines_from_source(
+            pv.PolyData(folded),
+            vectors=b_name,
+            integration_direction="both",
+            max_length=max_length,
+            initial_step_length=options.initial_step_length,
+            min_step_length=options.min_step_length,
+            max_step_length=options.max_step_length,
+            interpolator_type=options.interpolator.value,
+        ),
+    )
+    lines: pv.PolyData = trim_reversals(traced)
+
+    if lines.n_points:
+        counts: np.typing.NDArray[np.int64] = np.diff(np.asarray(lines.line_offsets, dtype=np.int64))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista types line_offsets loosely
+        point_theta: np.typing.NDArray[np.float64] = np.repeat(theta[np.asarray(lines.cell_data[SEED_IDS], dtype=np.int64)], counts)
+        lines.points = basis.place(np.asarray(lines.points, dtype=np.float64), point_theta)
+        for name in lines.point_data.keys():
+            lines.point_data[name] = basis.carry(np.asarray(lines.point_data[name]), point_theta)
+
+    tubed: pv.PolyData = (
+        cast("pv.PolyData", lines.tube(radius=options.tube_radius))  # pyright: ignore[reportUnknownMemberType]
+        if options.tube_radius is not None and lines.n_points
+        else lines
+    )
+    outline: pv.PolyData | None = cast("pv.PolyData", pv.Box(bounds).outline()) if options.show_outline else None  # pyright: ignore[reportUnknownMemberType]  # pyvista types Box bounds loosely
+    magnitudes: np.typing.NDArray[np.float64] = np.linalg.norm(np.asarray(section.point_data[b_name], dtype=np.float64).reshape(section.n_points, -1), axis=1)
+
+    return StreamlineActors(streamlines=tubed, b_name=b_name, outline=outline, magnitudes=[magnitudes])
 
 
 def prepare_streamline_source(grid: pv.UnstructuredGrid, options: FieldLineOptions) -> tuple[pv.DataSet, str]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test

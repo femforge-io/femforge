@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.files import BundleFile
-from femforge.common.frame import Axisymmetric, Frame, Solid
+from femforge.frames import Frame, FrameUnion
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.config import MeshConfig
 from femforge.meshing.groups import MeshGroupsFile
@@ -64,12 +64,15 @@ class MeshError(RuntimeError):
 
 
 class MeshJob(BaseModel):
-    """One meshing request as plain data: the mesh spec, the STEP to read, and the ``.msh`` to write."""
+    """One meshing request as plain data: the mesh spec, the solve frame, the STEP to read, and the ``.msh`` to write."""
 
     model_config = ConfigDict(use_attribute_docstrings=True)
 
     spec: MeshSpec
     """The mesh artifact's spec, which decides the mesh."""
+
+    frame: FrameUnion
+    """The solve frame the STEP is in; the STEP key already carries it, so it stays out of the spec."""
 
     step: str
     """The solve-frame STEP to mesh."""
@@ -109,7 +112,7 @@ class MeshInputs:
     """The config surface a mesher reads, rebuilt from a [`MeshJob`][femforge.meshing.backend.MeshJob] alone."""
 
     frame: Frame
-    """A frame of the job's body dimension."""
+    """The job's solve frame."""
 
     mesh: MeshConfig
     """The job's STEP and mesh settings."""
@@ -119,9 +122,8 @@ class MeshInputs:
 
 
 def mesh_inputs(job: MeshJob) -> MeshInputs:
-    """The mesher's inputs for ``job``: the frame of its dimension, its mesh settings, and a domain of bare materials and tag selectors."""
+    """The mesher's inputs for ``job``: its frame, its mesh settings, and a domain of bare materials and tag selectors."""
     spec: MeshSpec = job.spec
-    frame: Frame = Solid() if spec.model_dim == 3 else Axisymmetric()
     mesh = MeshConfig(
         step=job.step,
         global_mesh_size=quantity(spec.global_mesh_size, "m"),
@@ -135,7 +137,7 @@ def mesh_inputs(job: MeshJob) -> MeshInputs:
         size: Quantity | None = None if tag.mesh_size is None else quantity(tag.mesh_size, "m")
         tags.append(EntityTag(selector=dict(tag.selector), mesh_size=size))
 
-    return MeshInputs(frame=frame, mesh=mesh, domain=DomainConfig(materials=materials, tags=tags))
+    return MeshInputs(frame=job.frame, mesh=mesh, domain=DomainConfig(materials=materials, tags=tags))
 
 
 class GmshMesher(MeshBackend):

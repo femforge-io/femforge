@@ -8,8 +8,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.files import BundleFile
-from femforge.common.frame import Axis, Axisymmetric, Frame, Solid
 from femforge.common.vector import Vec3
+from femforge.frames import Axis, FrameUnion
 from femforge.physical.units import FluxDensity, Force, Quantity, Temperature, Torque, quantity
 
 
@@ -76,9 +76,9 @@ class Result(BaseModel):
     elmer_version: str | None = None
     """ElmerSolver version parsed from the log, if present."""
 
-    frame: Frame
-    """The run's solve frame. Every vector stays in solve coordinates; under ``Axisymmetric`` the typed force/torque fields
-    are full-revolution totals with the radial component zeroed (zero net by symmetry), while ``raw`` keeps Elmer's per-radian columns."""
+    frame: FrameUnion
+    """The run's solve frame. Every vector stays in solve coordinates; the typed force/torque fields are the frame's
+    whole-model totals ([`Frame.total`][femforge.frames.Frame.total]), while ``raw`` keeps Elmer's columns as printed."""
 
     component_forces: dict[str, Force] = Field(default_factory=dict)
     """`F⃗` `[N]`: Lumped magnetic force on each force-carrying sif Component, keyed by its ``components.yml`` name."""
@@ -103,22 +103,7 @@ class Result(BaseModel):
         return result
 
     def axial_force(self, body: str, axis: Axis | None = None) -> Quantity:
-        """`F_ax` `[N]`: Component ``body``'s force along the authored ``axis``; an axisymmetric run defaults to its symmetry axis."""
+        """`F_ax` `[N]`: Component ``body``'s force along the authored ``axis``, the frame's own axis for None ([`Frame.along`][femforge.frames.Frame.along])."""
         force: Vec3 = self.component_forces[body].m_as("newton")
 
-        match self.frame:
-            case Axisymmetric():
-                if axis is None:
-                    return quantity(force.y, "newton")
-
-                cosine: float | None = self.frame.axis.along(axis.direction)
-
-                if cosine is None:
-                    raise ValueError(f"An axisymmetric run has force only along its symmetry axis {self.frame.axis.direction}, not along {axis.direction}.")
-
-                return quantity(force.y * cosine, "newton")
-            case Solid():
-                if axis is None:
-                    raise ValueError("A solid run has no symmetry axis; pass the axis to project onto.")
-
-                return quantity(force.dot(axis.direction), "newton")
+        return quantity(self.frame.along(force, axis), "newton")

@@ -21,7 +21,6 @@ from femforge.artifacts.kind import Produced
 from femforge.artifacts.lock import HEARTBEAT_S, LOCK_SUFFIX, DirLock, keep_alive
 from femforge.artifacts.sidecar import ArtifactOrigin, ArtifactRef, ToolVersions
 from femforge.common.files import BundleFile, BundleGlob, RunFile
-from femforge.common.frame import Axisymmetric
 from femforge.common.log import TELEMETRY_ENV, log, run_log_context, telemetry_scope
 from femforge.common.names import bundle_name
 from femforge.config import SimulationConfig
@@ -33,7 +32,6 @@ from femforge.elmer.runtime.solve import solve_case
 from femforge.elmer.runtime.tools import native_elmer_installed
 from femforge.elmer.sim import Sim
 from femforge.execution.docker.image import DockerImage
-from femforge.geometry.frame import apply_frame
 from femforge.meshing.backend import GmshMesher, MeshBackend, MeshJob, MeshReport
 from femforge.run.artifacts import BundlePolicy, MeshGroupsFile, bundle_files, rebind_groups
 from femforge.run.bundle import write_bundle, write_manifest
@@ -76,7 +74,7 @@ def materialize_geometry(config: SimulationConfig, sim_dir: Path) -> SimulationC
     """
     step_path: Path = sim_dir / BundleFile.GEOMETRY_STEP
     authored: Path = Path(config.mesh.step)
-    writes_step: bool = config.geometry is not None or isinstance(config.frame, Axisymmetric)
+    writes_step: bool = config.geometry is not None or config.frame.rewrites_geometry
 
     if writes_step and step_path.resolve() != authored.resolve():
         # A cached run of this config may have left geometry.step as a hardlink into the store; never write through it.
@@ -85,7 +83,7 @@ def materialize_geometry(config: SimulationConfig, sim_dir: Path) -> SimulationC
     if config.geometry is not None:
         authored = config.geometry.build_step(step_path)
 
-    solve_step: Path = apply_frame(authored, step_path, config.frame)
+    solve_step: Path = config.frame.prepare_geometry(authored, step_path)
 
     if solve_step == Path(config.mesh.step):
         return config
@@ -594,7 +592,7 @@ class Driver:
 
     def _mesh_into(self, state: SolveState, spec: MeshSpec, workdir: Path) -> MeshReport:
         """Mesh the run's STEP into ``workdir``, convert it there with ElmerGrid, and write ``groups.json`` beside the Elmer mesh."""
-        report: MeshReport = self.mesher.mesh(MeshJob(spec=spec, step=state.config.mesh.step), workdir)
+        report: MeshReport = self.mesher.mesh(MeshJob(spec=spec, frame=state.config.frame, step=state.config.mesh.step), workdir)
         _ = self.backend.grid_convert(workdir, report.msh, out_dir=workdir)
         _ = report.groups.write(workdir)
 

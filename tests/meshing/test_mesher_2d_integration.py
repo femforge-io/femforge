@@ -14,7 +14,7 @@ pytest.importorskip("build123d")
 
 import build123d as b3d  # imported after the gate so the file still collects where the CAD stack is absent
 
-from femforge.common.frame import Axisymmetric
+from femforge.frames import Axisymmetric
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.geometry.tags import TaggedCompound, TaggedFace

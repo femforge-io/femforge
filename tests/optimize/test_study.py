@@ -5,7 +5,7 @@ from collections.abc import Hashable
 import pandas as pd
 import pytest
 
-from femforge.common.frame import Solid
+from femforge.frames import Solid
 from femforge.common.vector import Vec3
 from femforge.optimize.parameterization import ParamSpec
 from femforge.optimize.study import Study

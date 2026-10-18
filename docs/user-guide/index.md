@@ -6,7 +6,7 @@ The user guide covers one task per page, in the order a simulation flows through
 - [Materials](materials.md): the material models, their property functions and units.
 - [Conditions and physics](conditions.md): body forces, boundary conditions and the physics presets femforge solves.
 - [Mesh](mesh.md): element sizes, gmsh options, deterministic meshing and the mesh backends.
-- [Frames](frames.md): solve the model in 3D or as an axisymmetric 2D section.
+- [Frames](frames/index.md): map the authored model onto the solve, whole or as a section.
 - [Driver and runs](driver.md): how the driver stages, reuses and records each run.
 - [Results](results.md): load results, read forces and fields, and validate them.
 - [Artifacts and retention](artifacts.md): the artifact store, reuse across processes and the retention policy.

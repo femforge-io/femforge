@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from pathlib import Path
 from typing import Mapping
@@ -34,11 +33,6 @@ def _vector_triples(raw: Mapping[str, float], keyword: str) -> dict[str, Vec3]:
 def force_triples(raw: Mapping[str, float]) -> dict[str, Vec3]:
     """Column stem -> per-component force Vec3 (N, per radian in an axisymmetric run) from the SaveScalars columns in ``Result.raw``."""
     return _vector_triples(raw, "force")
-
-
-def revolve(vec: Vec3) -> Vec3:
-    """Full-revolution total of a per-radian axisymmetric vector integral: the axial (y) component picks up 2π and the transverse ones cancel to zero."""
-    return Vec3(0.0, math.tau * vec.y, 0.0)
 
 
 def _join_components(triples: Mapping[str, Vec3], names_by_component: Mapping[int, str]) -> dict[str, Vec3]:

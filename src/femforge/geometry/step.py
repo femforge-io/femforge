@@ -1,12 +1,10 @@
-"""Convert an authored STEP into the frame the solve meshes."""
+"""Read an authored STEP into tagged parts."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, cast
 
-from femforge.common.frame import Axisymmetric, Frame, Solid
-from femforge.common.log import log
 from femforge.common.tags import TagDict, parse_tags
 
 
@@ -42,24 +40,3 @@ def import_tagged_step(path: Path) -> TaggedCompound:
     read_step = cast("Callable[[Path], b3d.Compound]", b3d.import_step)
     imported: b3d.Compound = read_step(path)
     return TaggedCompound(children=tagged_leaves(imported, {}))
-
-
-def apply_frame(step_in: Path, step_out: Path, frame: Frame) -> Path:
-    """The STEP the solve meshes: ``step_in`` itself for a solid frame, else its axisymmetric section written to ``step_out``.
-
-    Args:
-        step_in: The authored STEP.
-        step_out: Where an axisymmetric section is written.
-        frame: The solve frame.
-    """
-    match frame:
-        case Solid():
-            return step_in
-
-        case Axisymmetric(axis=axis, radial=radial):
-            from femforge.geometry.section import axisymmetric_cross_section
-
-            section: TaggedCompound = axisymmetric_cross_section(import_tagged_step(step_in), axis, radial)
-            section.export_step(str(step_out))
-            log.bind(step=str(step_out), axis=axis.model_dump(mode="json")).info("Axisymmetric section written.")
-            return step_out

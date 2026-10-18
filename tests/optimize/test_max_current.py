@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from femforge.common.frame import Solid
+from femforge.frames import Solid
 from femforge.config import SimulationConfig
 from femforge.optimize.max_current import (
     DirectDrive,

@@ -7,11 +7,11 @@ import warnings
 from enum import StrEnum
 from typing import TYPE_CHECKING, Mapping, Protocol, cast
 
-from femforge.common.frame import Frame, Solid
 from femforge.elmer import sif
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, PhysicsConfig, SaveScalarsSolver, SifValue, solved_stack
 from femforge.elmer.physics import Physics, condition_physics, runtime_variables
 from femforge.elmer.variables import ElmerVariable
+from femforge.frames import Frame, Solid
 from femforge.materials.properties import MATERIAL_KEY_EQUIVALENTS, ElmerMaterialKeyword, MaterialProperties
 from femforge.physical.conditions import CoilDrive, Condition, ConditionTarget, ForceComponent, Magnetization
 from femforge.physical.domain import EntityTag, conditions_for
@@ -89,7 +89,7 @@ class Sim:
         except ValueError:
             raise ValueError(f"Unknown physics {physics!r}; choose from {[p.value for p in Physics]}.") from None
 
-        self.physics: Physics = selected.in_frame(frame)
+        self.physics: Physics = frame.solves(selected)
         # The typed, editable solver stack: the caller's authored config when given, else the physics' preset in the frame.
         # Cheap (pure pydantic); the sif object graph is built in generate().
         self.config: PhysicsConfig = config if config is not None else solved_stack(selected, frame)

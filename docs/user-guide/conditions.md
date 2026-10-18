@@ -31,20 +31,20 @@ The STEP holds an air box and a body named `Magnet` tagged `Material=N52`. The `
 
 ## Physics
 
-| Member | Solves | Preset solver stack | Frames |
-| --- | --- | --- | --- |
-| `MAGNETOSTATICS` | The static magnetic field of magnets and steel. | `MagnetoDynamicsSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` | `Solid`; `Axisymmetric` as `MAGNETOSTATICS_2D` |
-| `MAGNETOSTATICS_2D` | Axisymmetric magnetostatics on the r-z half-plane, with `CurrentDensity` coil drives. | `MagnetoDynamics2DSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` | `Axisymmetric` only |
-| `THERMAL` | Steady-state heat conduction. | `HeatSolver`, `SaveScalarsSolver` (peak temperature), `ResultOutputSolver` | `Solid`, `Axisymmetric` |
-| `ELECTROSTATICS` | The electrostatic potential and field. | `ElectrostaticsSolver`, `ResultOutputSolver` | `Solid` |
-| `CURRENT_CONDUCTION` | The static current density driven by electrode potentials. | `StatCurrentSolver`, `SaveScalarsSolver`, `ResultOutputSolver` | `Solid` |
-| `JOULE_HEATING` | Current conduction coupled to heat conduction: the temperature its Joule losses produce. | `StatCurrentSolver`, `HeatSolver`, `SaveScalarsSolver`, `ResultOutputSolver` | `Solid` |
-| `COIL_MAGNETOSTATICS` | Current conduction chained into magnetostatics: the field of a coil's solved current distribution. | `CoilCurrentSolver`, `MagnetoDynamicsSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` | `Solid` |
-| `LINEAR_ELASTICITY` | Linear elastic stress and strain. | `StressSolver`, `ResultOutputSolver` | `Solid` |
+| Member | Solves | Preset solver stack |
+| --- | --- | --- |
+| `MAGNETOSTATICS` | The static magnetic field of magnets and steel. | `MagnetoDynamicsSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
+| `MAGNETOSTATICS_2D` | Axisymmetric magnetostatics on the r-z half-plane, with `CurrentDensity` coil drives. | `MagnetoDynamics2DSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
+| `THERMAL` | Steady-state heat conduction. | `HeatSolver`, `SaveScalarsSolver` (peak temperature), `ResultOutputSolver` |
+| `ELECTROSTATICS` | The electrostatic potential and field. | `ElectrostaticsSolver`, `ResultOutputSolver` |
+| `CURRENT_CONDUCTION` | The static current density driven by electrode potentials. | `StatCurrentSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
+| `JOULE_HEATING` | Current conduction coupled to heat conduction: the temperature its Joule losses produce. | `StatCurrentSolver`, `HeatSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
+| `COIL_MAGNETOSTATICS` | Current conduction chained into magnetostatics: the field of a coil's solved current distribution. | `CoilCurrentSolver`, `MagnetoDynamicsSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
+| `LINEAR_ELASTICITY` | Linear elastic stress and strain. | `StressSolver`, `ResultOutputSolver` |
 
 `LINEAR_ELASTICITY` is a scaffold: no condition targets it yet, and the material model has no Poisson ratio.
 
-Select a physics with [PhysicsSelection][femforge.elmer.config.PhysicsSelection]. You never select `MAGNETOSTATICS_2D` yourself: select `MAGNETOSTATICS` with `frame=ff.Axisymmetric()` and the config solves it as `MAGNETOSTATICS_2D`. A physics with no form in the frame raises when you build the config. See [Frames](frames.md).
+Select a physics with [PhysicsSelection][femforge.elmer.config.PhysicsSelection]. The config's frame decides the form a selection solves as, and a physics with no form in the frame raises when you build the config. You never select `MAGNETOSTATICS_2D` yourself; each frame's page lists the physics it solves and as what, see [Frames](frames/index.md).
 
 ## Conditions
 
@@ -86,7 +86,7 @@ For example, with a copper body named `Trace` on an FR4 body named `Board`:
 Some conditions need no authoring:
 
 - The magnetic physics pin the potential to zero on every outer shell, a far-field condition.
-- An axisymmetric solve pins the potential to zero on the symmetry axis (`<BODY>__AXIS`), which is exact there.
+- A section solved about an axis pins the potential to zero on the symmetry axis (`<BODY>__AXIS`), which is exact there; see [Axisymmetric](frames/axisymmetric.md).
 - Every magnet body gets its own force Component, named after its body group. An authored `ForceComponent` that matches the magnet replaces it.
 
 ## Which conditions a physics reads
@@ -104,11 +104,7 @@ A coupled physics also reads the conditions of the physics it couples, so the sa
 
 ## Checks before the solve
 
-The config rejects a condition its frame cannot solve as soon as you build or assign it:
-
-- `CurrentDensity` needs `frame=ff.Axisymmetric()`.
-- An axisymmetric `Magnetization` must point along the symmetry axis.
-- An axisymmetric `ForceComponent` cannot ask for torque.
+The config rejects a condition its frame cannot solve as soon as you build or assign it: a condition whose physics has no form in the frame, a direction with no form in solve coordinates, or torque in a frame that lumps none. Each frame's page lists its rules; see [Frames](frames/index.md).
 
 The sif writer checks the rest before it writes:
 

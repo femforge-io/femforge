@@ -37,17 +37,30 @@ from femforge_workbench.widgets.dropdown_menu import DropdownMenu, DropdownMenuC
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.module import asset_url
 from femforge_workbench.widgets.theme import Theme
+from femforge_workbench.widgets.tour import Tour, TourStep
 
 
 APP_WINDOW_SIZE = "1600,1000"
 APP_PROFILE = "app-profile"
 APP_FLAG = "--app"
 TITLE_VAR = "trame__title"
+FAVICON_VAR = "trame__favicon"
+"""The trame state variable the client puts in the page's icon link."""
+
+BRAND = "femforge"
+LOGO = "ff-logo.svg"
+FAVICON = "favicon.png"
 """The state variable trame's client shows as the page title."""
 BROWSERS = (Path("C:/Program Files/Google/Chrome/Application/chrome.exe"), Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"))
 POPOUT_PAGE = "popout.html"
 PANEL_PARAM = "panel"
 """The render-prop parameter carrying a dock panel's params to its server template."""
+TOUR_DELAY = 1.0
+"""Seconds after the first scene shows before the tour opens on its own."""
+HELP_ID = "tour-help"
+"""The id of the app bar's help button, the tour's last stop."""
+TOUR_LABEL = "Take the Tour"
+REPLAY_STEP: TourStep = {"target": f"#{HELP_ID}", "title": "Replay This Tour", "body": "Open this tour again from here at any time.", "side": "bottom"}
 
 
 class WidgetLibrary(Protocol):
@@ -82,6 +95,9 @@ class Cls(StrEnum):
     ROOT = "flex h-full flex-col"
     HEADER = "flex shrink-0 items-center gap-3 border-b border-border bg-background px-3 h-(--ff-bar-height)"
     HEADER_SLOT = "flex items-center gap-3"
+    BRAND = "flex shrink-0 items-center gap-1.5 font-semibold tracking-tight"
+    BRAND_MARK = "size-5"
+    DIVIDER = "h-5 w-px shrink-0 bg-border"
     TITLE = "gap-1 font-semibold"
     MENU_ITEM = "flex-col items-start gap-0"
     MENU_DESCRIPTION = "text-label text-muted-foreground"
@@ -116,6 +132,14 @@ class StateVar(StrEnum):
     DARK = "wb_dark"
     WORKBENCHES = "wb_workbenches"
     OPENED = "wb_opened"
+    TOUR_OPEN = "wb_tour_open"
+    TOUR_STEPS = "wb_tour_steps"
+
+
+class TourKey(StrEnum):
+    """The fields of the persisted tour document."""
+
+    SEEN = "seen"
 
 
 class Hook(StrEnum):
@@ -237,6 +261,8 @@ class Workbench(TrameApp):
         """Panel ids the dock last reported visible; the dock reports a panel only when it mounts, so a panel rebuilt in place learns it from here."""
         self.catalogue = list(catalogue) if catalogue is not None else self.load_catalogue()
         """The cards the title menu and a launcher panel list: the discovered ones unless the constructor was given its own."""
+        self.tour_steps: list[TourStep] = []
+        """The tour's stops in order, before the shell's own closing one; panels add theirs through `add_tour_steps`."""
         self.dock: Dock | None = None
         self.header = DivLayout(self.server, template_name=str(Template.HEADER), classes=str(Cls.HEADER_SLOT))
         """The header's slot for a workbench's own controls: build widgets inside `with app.header:` and flush_content() after a later change."""
@@ -249,7 +275,10 @@ class Workbench(TrameApp):
                 StateVar.DARK: self.palette.is_dark,
                 StateVar.WORKBENCHES: cards,
                 StateVar.OPENED: [],
+                StateVar.TOUR_OPEN: False,
+                StateVar.TOUR_STEPS: [REPLAY_STEP],
                 TITLE_VAR: title,
+                FAVICON_VAR: asset_url(FAVICON),
             }
         )
 
@@ -274,6 +303,11 @@ class Workbench(TrameApp):
                 client.Script(reload_script())
 
             with html.Header(classes=str(Cls.HEADER)):
+                with html.Div(classes=str(Cls.BRAND)):
+                    html.Img(src=asset_url(LOGO), alt="", classes=str(Cls.BRAND_MARK))
+                    html.Span(BRAND)
+
+                html.Div(classes=str(Cls.DIVIDER), aria_hidden=True)
                 if self.catalogue:
                     self.build_switcher()
                 else:
@@ -293,6 +327,10 @@ class Workbench(TrameApp):
                     Icon("layout-grid")
 
                 html.Span([react.Bind(StateVar.STATUS)], classes=str(Cls.STATUS))
+                with Button(size="icon-sm", variant="ghost", id=HELP_ID, title=TOUR_LABEL, aria_label=TOUR_LABEL, on_click=react.Callback(self.start_tour)):
+                    Icon("circle-help")
+
+            Tour(model=StateVar.TOUR_OPEN, steps=react.Bind(StateVar.TOUR_STEPS), on_finish=react.Callback(self.on_tour_finish, args="[$event]"))
 
             with html.Main(classes=str(Cls.MAIN)):
                 with react.Slot(params=[PANEL_PARAM]) as render_panel:
@@ -331,6 +369,39 @@ class Workbench(TrameApp):
     def root(self) -> dock.Split | None:
         """The authored Split, None before `add`."""
         return self.authored.root if self.authored is not None else None
+
+    def add_tour_steps(self, steps: Sequence[TourStep]) -> None:
+        """Adds stops to the tour before the shell's closing one; a stop at a target already listed replaces it, so a rebuilt panel adds nothing twice."""
+        for step in steps:
+            self.tour_steps = [kept for kept in self.tour_steps if kept["target"] != step["target"]]
+            self.tour_steps.append(step)
+
+        with self.state:
+            self.state[StateVar.TOUR_STEPS] = [*self.tour_steps, REPLAY_STEP]
+
+    @guard
+    def start_tour(self) -> None:
+        """Opens the tour at its first stop."""
+        with self.state:
+            self.state[StateVar.TOUR_OPEN] = True
+
+    def offer_tour(self) -> None:
+        """Opens the tour on its own a moment after the first scene shows, until the user has finished or skipped it once."""
+        saved = self.persist.load(self.scope, StateKey.TOUR) or {}
+        if saved.get(TourKey.SEEN) or self.state[StateVar.TOUR_OPEN]:
+            return
+
+        if self.loop is None:
+            self.start_tour()
+            return
+
+        _ = self.loop.call_later(TOUR_DELAY, self.start_tour)
+
+    @guard
+    def on_tour_finish(self, reason: str) -> None:
+        """Records that the user has seen the tour, finished or skipped; the status line keeps whatever the panels last reported."""
+        self.persist.save(self.scope, StateKey.TOUR, {str(TourKey.SEEN): True})
+        log.bind(workbench=self.name, reason=reason).info("Tour ended.")
 
     def add(self, root: dock.Split, *, spec: WorkbenchSpec | None = None, watch: Sequence[Path] = ()) -> None:
         """Builds every panel's component and template; the dock arranges them once the client reports ready.

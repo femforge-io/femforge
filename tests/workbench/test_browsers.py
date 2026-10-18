@@ -10,7 +10,7 @@ from typing import cast
 import polars as pl
 import pytest
 
-from femforge.common.frame import Solid
+from femforge.frames import Solid
 from femforge.artifacts.local import LocalArtifactStore
 from femforge.common.utils import title
 from femforge.common.vector import Vec3

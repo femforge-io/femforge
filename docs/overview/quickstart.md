@@ -25,7 +25,7 @@ The first run downloads everything once:
 1. uv reads the script's header and installs Python and `femforge[workbench]`: about 1.2 GB, a few minutes.
 2. When Elmer is not installed natively, femforge pulls the solver's Docker image, about 1.3 GB. When the pull fails, it builds the image instead, which takes a few minutes longer.
 3. The four solves run, each in seconds. The terminal logs the force on the plate for each gap and the run that holds it.
-4. Your browser opens the workbench at http://localhost:8080 on the magnetic field of the newest run, the last gap. Pick another run in the **Run** list to compare.
+4. Your browser opens the workbench at http://localhost:8080 on the magnetic field of the newest run, the last gap, revolved from its section into 3D with the field lines drawn. A short tour points out the controls on the first start. Pick another run in the **Run** list to compare.
 
 Press `Ctrl+C` to stop. A later run loads each solved gap from `magnet-plate/runs/` instead of solving it again, and starts in seconds.
 
@@ -36,7 +36,7 @@ Press `Ctrl+C` to stop. A later run loads each solved gap from `magnet-plate/run
 ```
 
 - `MagnetAndPlate` is the geometry: a build123d model whose parts carry their material and name. See [Geometry and tags](../user-guide/geometry.md).
-- `config()` builds one `SimulationConfig`: the axisymmetric frame, the mesh sizes, the materials and the conditions. See [Conditions and physics](../user-guide/conditions.md), [Frames](../user-guide/frames.md) and [Mesh](../user-guide/mesh.md).
+- `config()` builds one `SimulationConfig`: the solve frame, the mesh sizes, the materials and the conditions. See [Conditions and physics](../user-guide/conditions.md), [Frames](../user-guide/frames/index.md) and [Mesh](../user-guide/mesh.md).
 - `solve()` runs each gap through a `Driver` and reads the force from the typed `Result`. See [Driver and runs](../user-guide/driver.md) and [Results](../user-guide/results.md).
 - `viewer()` and `show()` serve the field viewer. See [Workbench](../user-guide/workbench.md).
 

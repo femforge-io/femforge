@@ -54,7 +54,7 @@ Open a terminal in this folder and run:
 uv run main.py
 ```
 
-The terminal logs the force on the plate for each gap and the run that holds it. Then your browser opens the workbench at http://localhost:8080 on the magnetic field of the last gap. Pick another run in the **Run** list to compare. Press `Ctrl+C` in the terminal to stop.
+The terminal logs the force on the plate for each gap and the run that holds it. Then your browser opens the workbench at http://localhost:8080 on the magnetic field of the last gap, revolved from its section into 3D. A short tour points out the controls on the first start. Pick another run in the **Run** list to compare. Press `Ctrl+C` in the terminal to stop.
 
 ## The first run is slow
 

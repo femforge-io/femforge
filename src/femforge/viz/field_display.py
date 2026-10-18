@@ -13,18 +13,26 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from femforge.common.files import BundleFile
 from femforge.common.log import log
 from femforge.common.utils import title
+from femforge.elmer.physics import Physics
+from femforge.elmer.variables import variable_unit
+from femforge.frames import Frame, SolvePlane, default_frame
 from femforge.run.fields import GEOMETRY_IDS_ARRAY, select_array
 from femforge.viz.colormaps import register_paraview
 from femforge.viz.field_lines import (
+    Bounds,
     FieldLineOptions,
     StreamlineActor,
     StreamlineActors,
     build_streamlines,
+    build_swept_streamlines,
     draw_streamlines,
     integrates_like,
     prepare_streamline_source,
     ramp_alpha,
+    seed_points,
+    select_flux_density_array,
 )
+from femforge.viz.symmetry import Basis, Expansion, mirror, revolve
 
 
 if TYPE_CHECKING:
@@ -32,6 +40,7 @@ if TYPE_CHECKING:
 
     from femforge.run.entities import Bodies
     from femforge.run.inspect import Run
+    from femforge.run.manifest import RunManifest
 
 
 type FloatArray = np.typing.NDArray[np.float64]
@@ -39,8 +48,6 @@ type Float32Array = np.typing.NDArray[np.float32]
 type IntArray = np.typing.NDArray[np.int64]
 type AnyArray = np.typing.NDArray[np.generic]
 type Colormapper = Callable[[FloatArray], FloatArray]
-type Colorscale = list[list[float | str]]
-type TraceDict = dict[str, object]
 
 SCALARS_ARRAY = "display_scalars"
 """The point/cell array every reduction is written to, so one mapper name serves every field and mode."""
@@ -60,6 +67,25 @@ POLAR_BLEND = 0.25
 POLAR_STEEPNESS = 10.0
 """Slope of the sigmoid that turns a normalized polar magnitude into brightness, centered on the mid-range."""
 
+FLAT_RATIO = 1e-9
+"""The Z extent, as a share of the largest extent, below which a grid is a flat section."""
+
+BAR_LABELS = 5
+"""Tick labels on a color bar."""
+
+BAR_FORMAT = "%.3g"
+BAR_TITLE_EXTRA = 2
+"""Points the color bar's title is larger than its labels."""
+
+FULL_SWEEP = 360.0
+"""`[deg]`: A revolution that closes the solid."""
+
+MM = 1e-3
+"""Metres per millimetre: the authored frame is in millimetres, the solved mesh in metres."""
+
+AXIS_SLACK = 1e-9
+"""`[rad]`: How far past a cut face a seed may fold and still count as inside the sweep."""
+
 
 class Association(StrEnum):
     """Whether a VTU array lives on mesh points or cells (pyvista's ``preference``)."""
@@ -69,11 +95,6 @@ class Association(StrEnum):
 
     CELL = "cell"
     """One value per mesh cell."""
-
-    @property
-    def intensitymode(self) -> str:
-        """The plotly ``Mesh3d.intensitymode`` name for this association."""
-        return "vertex" if self is Association.POINT else "cell"
 
 
 class DisplayMode(StrEnum):
@@ -109,6 +130,22 @@ class DisplayMode(StrEnum):
 VECTOR_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.MAGNITUDE, DisplayMode.POLAR_XY})
 """The modes that need a 3-component array; the rest accept any width."""
 
+ROTATION_FREE_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.VALUE, DisplayMode.ABSVALUE, DisplayMode.MAGNITUDE})
+"""The modes whose value a mirrored or revolved copy keeps; the others turn with it."""
+
+
+class Legend(StrEnum):
+    """Whether and how the color bar of the shown field is drawn."""
+
+    HIDDEN = "hidden"
+    """No color bar; the controls show the colormap and its range."""
+
+    VERTICAL = "vertical"
+    """Upright at the right of the view."""
+
+    HORIZONTAL = "horizontal"
+    """Along the bottom of the view."""
+
 
 class SceneActor(StrEnum):
     """The plotter actor names a [`FieldScene`][] registers, so a toggle removes exactly one."""
@@ -143,12 +180,20 @@ class FieldInfo:
     dtype: str
     """The array's numpy dtype name."""
 
+    unit: str | None = None
+    """The unit the values are in, None when unknown."""
+
     @property
     def display_name(self) -> str:
         """The array's name as it reads in a picker, with the [`FIELD_RENAMES`][] overrides applied."""
         label: str = title(self.name)
 
         return FIELD_RENAMES.get(label, label)
+
+    @property
+    def title(self) -> str:
+        """The display name with the unit in brackets, as a color bar is titled."""
+        return titled(self.display_name, self.unit)
 
     @property
     def modes(self) -> tuple[DisplayMode, ...]:
@@ -159,8 +204,19 @@ class FieldInfo:
         return (DisplayMode.VALUE, DisplayMode.ABSVALUE)
 
 
-def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, AnyArray]) -> list[FieldInfo]:
-    """Every displayable array of a VTU as a [`FieldInfo`][], ``GeometryIds`` excluded, sorted by display name."""
+def titled(name: str, unit: str | None) -> str:
+    """``name`` with ``unit`` in brackets after it, or alone when there is none."""
+    return f"{name} [{unit}]" if unit is not None else name
+
+
+def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, AnyArray], physics: Physics | None = None) -> list[FieldInfo]:
+    """Every displayable array of a VTU as a [`FieldInfo`][], ``GeometryIds`` excluded, sorted by display name.
+
+    Args:
+        point_arrays: The VTU's point arrays by name.
+        cell_arrays: The VTU's cell arrays by name.
+        physics: The physics the run solved, which names the unit of its potential; None leaves it unitless.
+    """
     infos: list[FieldInfo] = []
     for association, arrays in ((Association.POINT, point_arrays), (Association.CELL, cell_arrays)):
         for name, values in arrays.items():
@@ -170,7 +226,7 @@ def field_infos(point_arrays: Mapping[str, AnyArray], cell_arrays: Mapping[str, 
             array: AnyArray = np.asarray(values)
             shape: tuple[int, ...] = array.shape
             components: int = shape[-1] if array.ndim > 1 else 1
-            infos.append(FieldInfo(name=name, association=association, components=components, dtype=str(array.dtype)))
+            infos.append(FieldInfo(name=name, association=association, components=components, dtype=str(array.dtype), unit=variable_unit(name, physics)))
 
     return sorted(infos, key=lambda info: info.display_name)
 
@@ -224,7 +280,7 @@ class DisplaySpec(BaseModel):
     mode: DisplayMode = DisplayMode.VALUE
     """How the array is reduced to the displayed value."""
 
-    colormap: str = "viridis"
+    colormap: str = "turbo"
     """Colormap name, resolved through pyvista's ``get_cmap_safe`` (matplotlib and colorcet names both work)."""
 
     log_scale: bool = False
@@ -239,16 +295,25 @@ class DisplaySpec(BaseModel):
     robust: bool = True
     """Clamp the automatic limits to the 2-98 percentiles so a few outlier cells cannot flatten the picture."""
 
+    legend: Legend = Legend.HIDDEN
+    """Whether and where the color bar is drawn; field lines mapped like the field share it."""
+
+    expansion: Expansion = Expansion.REVOLVE
+    """How a run solved on a section is shown; a run solved in 3D is shown as is."""
+
+    sweep: float = Field(default=FULL_SWEEP, gt=0.0, le=FULL_SWEEP)
+    """`[deg]`: The turn a revolved section sweeps; less than a full one leaves a cutaway."""
+
     hidden_bodies: tuple[str, ...] = ()
     """Body names to hide, by their ``entities.json`` name."""
 
-    outline: bool = True
+    outline: bool = False
     """Draw the black feature-edge wireframe over the visible bodies."""
 
     opacity: float = Field(default=1.0, ge=0.0, le=1.0)
     """`[-]`: Multiplies every body's own opacity."""
 
-    opacity_map: tuple[Annotated[float, Field(ge=0.0, le=1.0)], Annotated[float, Field(ge=0.0, le=1.0)]] | None = None
+    opacity_map: tuple[Annotated[float, Field(ge=0.0, le=1.0)], Annotated[float, Field(ge=0.0, le=1.0)]] | None = (0.15, 1.0)
     """`[-]`: The opacity at the low and high color limits, linear in the color mapping between them; None draws ``opacity`` throughout."""
 
     body_styles: tuple[BodyStyle, ...] = ()
@@ -281,7 +346,7 @@ class DisplaySpec(BaseModel):
         named: list[str] = [*self.hidden_bodies, *(style.body for style in self.body_styles)]
         return [name for name in dict.fromkeys(named) if name not in present]
 
-    streamlines: FieldLineOptions | None = Field(default=None)
+    streamlines: FieldLineOptions | None = Field(default_factory=FieldLineOptions)
     """Options for the field-line overlay, or None to draw none."""
 
     def fitted(self, fields: Sequence[FieldInfo]) -> DisplaySpec:
@@ -450,177 +515,44 @@ def camera_needs_reset(position: Sequence[float], focal: Sequence[float], bounds
     return not bool(np.any(cosines >= math.cos(math.radians(half_angle_deg))))
 
 
-def plotly_colorscale(samples: AnyArray, *, invert: bool = False) -> Colorscale:
-    """A plotly colorscale from sampled RGB(A) rows: evenly-spaced stops paired with ``"rgb(r,g,b)"`` strings."""
-    rows: FloatArray = np.asarray(samples, dtype=np.float64)
-    if rows.ndim != 2 or rows.shape[1] not in (3, 4):
-        raise ValueError(f"colormap samples must be (N, 3) or (N, 4), got shape {rows.shape}")
+@dataclass(frozen=True)
+class BarPlacement:
+    """Where a color bar sits, in normalized viewport coordinates."""
 
-    if rows.shape[0] < 2:
-        raise ValueError(f"a colorscale needs at least 2 samples, got {rows.shape[0]}")
+    vertical: bool
+    """Whether the bar stands upright."""
 
-    ordered: FloatArray = rows[::-1] if invert else rows
-    channels: IntArray = np.clip(ordered[:, :3] * 255.0, 0.0, 255.0).round().astype(np.int64)
-    triplets: list[list[int]] = cast("list[list[int]]", channels.tolist())
+    x: float
+    """`[-]`: The left edge, as a share of the view's width."""
 
-    last: int = len(triplets) - 1
-    scale: Colorscale = []
-    for index, (red, green, blue) in enumerate(triplets):
-        scale.append([index / last, f"rgb({red},{green},{blue})"])
+    y: float
+    """`[-]`: The bottom edge, as a share of the view's height."""
 
-    return scale
+    width: float
+    """`[-]`: The width, as a share of the view's width."""
 
-
-def log_colorbar_ticks(lo: float, hi: float) -> tuple[list[float], list[str]]:
-    """Decade tick positions spanning a log color range, with their ``1e``-notation labels."""
-    if lo <= 0.0 or hi <= 0.0:
-        raise ValueError(f"log colorbar ticks need positive bounds, got ({lo}, {hi})")
-
-    first: int = math.floor(math.log10(min(lo, hi)))
-    last: int = math.ceil(math.log10(max(lo, hi)))
-    exponents: list[int] = list(range(first, last + 1))
-    return ([10.0**exponent for exponent in exponents], [f"1e{exponent}" for exponent in exponents])
+    height: float
+    """`[-]`: The height, as a share of the view's height."""
 
 
-def log_intensity(values: AnyArray, floor: float) -> FloatArray:
-    """``log10`` of the values with everything at or below ``floor`` clamped to it, so a plotly colorscale can map a log range linearly."""
-    if floor <= 0.0:
-        raise ValueError(f"a log intensity needs a positive floor, got {floor}")
-
-    array: FloatArray = np.asarray(values, dtype=np.float64)
-    return np.log10(np.maximum(array, floor))
-
-
-def nice_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
-    """Round-number tick positions inside ``[lo, hi]``: 1, 2 or 5 times a power of ten, spaced to give about ``count`` of them.
+def bar_placement(legend: Legend, *, second: bool = False) -> BarPlacement:
+    """The color bar's place for a legend: upright at the right, or along the bottom clear of the axes corner; a second bar sits beside the first.
 
     Args:
-        lo: The low end of the range.
-        hi: The high end of the range.
-        count: The rough number of ticks wanted.
+        legend: The legend asked for.
+        second: Whether this bar joins one already placed.
     """
-    if hi <= lo:
-        raise ValueError(f"nice ticks need lo < hi, got ({lo}, {hi})")
+    if legend is Legend.HORIZONTAL:
+        return BarPlacement(vertical=False, x=0.3, y=0.14 if second else 0.02, width=0.4, height=0.1)
 
-    rough: float = (hi - lo) / count
-    magnitude: float = 10.0 ** math.floor(math.log10(rough))
-    residual: float = rough / magnitude
-    factor: float = 1.0 if residual < 1.5 else 2.0 if residual < 3.5 else 5.0 if residual < 7.5 else 10.0
-    step: float = factor * magnitude
-
-    first: int = math.ceil(lo / step)
-    last: int = math.floor(hi / step)
-    return [index * step for index in range(first, last + 1)]
+    return BarPlacement(vertical=True, x=0.72 if second else 0.86, y=0.25, width=0.03, height=0.5)
 
 
-def log_colorbar(lo: float, hi: float) -> TraceDict:
-    """The plotly ``colorbar`` for a log-scaled intensity: decade ticks at their ``log10`` positions, or round-number ticks when fewer than two decades fall inside the range."""
-    ticks, labels = log_colorbar_ticks(lo, hi)
-    inside: list[tuple[float, str]] = [(tick, label) for tick, label in zip(ticks, labels, strict=True) if lo <= tick <= hi]
-    if len(inside) < 2:
-        inside = [(tick, f"{tick:g}") for tick in nice_ticks(lo, hi) if tick > 0.0]
-
-    return {"tickvals": [math.log10(tick) for tick, _ in inside], "ticktext": [label for _, label in inside]}
-
-
-def mesh3d_traces(
-    points: FloatArray,
-    triangles: IntArray,
-    intensity: FloatArray | None,
-    *,
-    name: str,
-    color: str | None = None,
-    opacity: float = 1.0,
-    intensitymode: Association = Association.POINT,
-    colorscale: Colorscale | None = None,
-    cmin: float | None = None,
-    cmax: float | None = None,
-    showscale: bool = False,
-    hovertemplate: str | None = None,
-    customdata: FloatArray | None = None,
-    colorbar: TraceDict | None = None,
-    visible: bool = True,
-) -> list[TraceDict]:
-    """One plotly ``Mesh3d`` trace as a plain JSON dict: a body's triangulated surface colored by ``intensity``, or by ``color`` alone.
-
-    Args:
-        points: The ``(N, 3)`` vertex coordinates.
-        triangles: The ``(M, 3)`` vertex indices of each triangle.
-        intensity: The values the colorscale maps, per vertex or per triangle; None colors by ``color`` alone.
-        name: The legend name.
-        color: A solid color for a body without an intensity.
-        opacity: The trace opacity.
-        intensitymode: Whether ``intensity`` lives on the vertices or the triangles.
-        colorscale: The plotly colorscale ``intensity`` maps through.
-        cmin: The intensity at the low end of the colorscale.
-        cmax: The intensity at the high end of the colorscale.
-        showscale: Draw the colorbar.
-        hovertemplate: The plotly hover text template.
-        customdata: Per-vertex values the hover template reads.
-        colorbar: The plotly colorbar settings.
-        visible: Draw the body; a hidden one stays in the legend as ``legendonly``.
-    """
-    trace: TraceDict = {
-        "type": "mesh3d",
-        "name": name,
-        "x": points[:, 0].tolist(),
-        "y": points[:, 1].tolist(),
-        "z": points[:, 2].tolist(),
-        "i": triangles[:, 0].tolist(),
-        "j": triangles[:, 1].tolist(),
-        "k": triangles[:, 2].tolist(),
-        "intensity": intensity.tolist() if intensity is not None else None,
-        "intensitymode": intensitymode.intensitymode,
-        "color": color,
-        "opacity": opacity,
-        "colorscale": colorscale,
-        "cmin": cmin,
-        "cmax": cmax,
-        "showscale": showscale,
-        "colorbar": colorbar,
-        "flatshading": True,
-        "hovertemplate": hovertemplate,
-        "customdata": customdata.tolist() if customdata is not None else None,
-        "visible": True if visible else "legendonly",
-        "showlegend": True,
-    }
-    return [trace]
-
-
-def outline_traces(segments: FloatArray, *, name: str = "outline", color: str = "black") -> list[TraceDict]:
-    """One plotly ``Scatter3d`` lines trace drawing every ``(N, 2, 3)`` segment, NaN-separated so the segments stay disjoint.
-
-    Args:
-        segments: The ``(N, 2, 3)`` line segments.
-        name: The trace name.
-        color: The line color.
-    """
-    if segments.size == 0:
-        return []
-
-    padded: FloatArray = np.full((segments.shape[0], 3, 3), np.nan, dtype=np.float64)
-    padded[:, 0:2, :] = segments
-    flat: FloatArray = padded.reshape(-1, 3)
-
-    trace: TraceDict = {
-        "type": "scatter3d",
-        "mode": "lines",
-        "name": name,
-        "x": flat[:, 0].tolist(),
-        "y": flat[:, 1].tolist(),
-        "z": flat[:, 2].tolist(),
-        "line": {"color": color, "width": 2},
-        "hoverinfo": "skip",
-        "showlegend": False,
-    }
-    return [trace]
-
-
-def list_fields(grid: pv.DataSet) -> list[FieldInfo]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-    """Every displayable field of a VTU grid (``GeometryIds`` excluded), sorted by display name."""
+def list_fields(grid: pv.DataSet, physics: Physics | None = None) -> list[FieldInfo]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+    """Every displayable field of a VTU grid (``GeometryIds`` excluded), sorted by display name, with the units ``physics`` decides."""
     point_arrays: dict[str, AnyArray] = {name: np.asarray(grid.point_data[name]) for name in grid.point_data.keys()}
     cell_arrays: dict[str, AnyArray] = {name: np.asarray(grid.cell_data[name]) for name in grid.cell_data.keys()}
-    return field_infos(point_arrays, cell_arrays)
+    return field_infos(point_arrays, cell_arrays, physics)
 
 
 def split_by_body(grid: pv.UnstructuredGrid, bodies: Bodies) -> pv.MultiBlock:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
@@ -668,7 +600,35 @@ def feature_outline(blocks: pv.MultiBlock) -> pv.PolyData | None:  # pragma: no 
 def model_dim_of(grid: pv.DataSet) -> int:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
     """2 for a flat (axisymmetric slice) grid with no Z extent, else 3."""
     bounds: Sequence[float] = grid.bounds
-    return 2 if bounds[5] - bounds[4] <= 0.0 else 3
+    extents: list[float] = [bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]]
+    # Elmer writes a 2D mesh with a Z extent of a few 1e-18, never exactly zero.
+    return 2 if extents[2] <= FLAT_RATIO * max(extents) else 3
+
+
+def flatten(grid: pv.DataSet, blocks: pv.MultiBlock) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+    """Puts a section's points exactly on Z = 0: Elmer leaves them a few 1e-18 off it, which a data-aspect plot scales up by 1e17."""
+    for dataset in (grid, *(cast("pv.DataSet", blocks[name]) for name in blocks.keys())):
+        points: FloatArray = np.asarray(dataset.points, dtype=np.float64)
+        points[:, 2] = 0.0
+        dataset.points = points
+
+
+def scaled_basis(plane: SolvePlane) -> Basis:
+    """Where the section sits in the authored model, with the plane's origin brought from millimetres to the mesh's metres."""
+    basis: Basis = Basis.of(plane)
+    origin: tuple[float, float, float] = (basis.origin[0] * MM, basis.origin[1] * MM, basis.origin[2] * MM)
+
+    return Basis(origin=origin, radial=basis.radial, axis=basis.axis)
+
+
+def run_manifest(run: Run) -> RunManifest | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+    """The run's manifest, None when the bundle has none to read."""
+    try:
+        return run.manifest
+    except (FileNotFoundError, ValueError):
+        log.bind(run_id=run.path.name).opt(exception=True).warning("Run manifest unreadable; the frame is taken from the grid and the fields stay unitless.")
+
+        return None
 
 
 def spread_colors(name: str, count: int) -> list[str]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
@@ -686,30 +646,23 @@ def sample_colormap(name: str, count: int = 256) -> FloatArray:  # pragma: no co
     return np.asarray(cmap(np.linspace(0.0, 1.0, count)), dtype=np.float64)
 
 
-def surface_triangles(block: pv.DataSet) -> tuple[FloatArray, IntArray]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-    """A block's outer surface as ``(points, triangles)``: an ``(N, 3)`` coordinate array and an ``(M, 3)`` vertex-index array."""
-    surface: pv.PolyData = cast("pv.PolyData", cast("pv.PolyData", block.extract_surface(algorithm=None)).triangulate())
-    # A triangulated PolyData's `faces` is a flat [3, a, b, c, ...] stream; the leading count column is dropped.
-    faces: IntArray = np.asarray(surface.faces, dtype=np.int64).reshape(-1, 4)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista's faces property is untyped
-    return (np.asarray(surface.points, dtype=np.float64), faces[:, 1:])
-
-
-def outline_segments(edges: pv.PolyData) -> FloatArray:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-    """The feature edges as an ``(N, 2, 3)`` array of line segments."""
-    points: FloatArray = np.asarray(edges.points, dtype=np.float64)
-    lines: IntArray = np.asarray(edges.lines, dtype=np.int64).reshape(-1, 3)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista's lines property is untyped
-    return points[lines[:, 1:]]
-
-
 class FieldScene:
     """
     One run's solved bodies as a recolorable field display.
 
-    It is a [`Renderable`][femforge.viz.scene.Renderable] for the pyvista path and the trace source for the 2D plotly path; both read the same [`DisplaySpec`][].
+    It is a [`Renderable`][femforge.viz.scene.Renderable] whose [`DisplaySpec`][] picks the field, its reduction, its colors and how a section is expanded.
     """
 
     def __init__(
-        self, *, grid: pv.UnstructuredGrid, blocks: pv.MultiBlock, fields: Sequence[FieldInfo], model_dim: int, run_id: str, bodies: Bodies | None = None
+        self,
+        *,
+        grid: pv.UnstructuredGrid,
+        blocks: pv.MultiBlock,
+        fields: Sequence[FieldInfo],
+        model_dim: int,
+        run_id: str,
+        bodies: Bodies | None = None,
+        frame: Frame | None = None,
     ) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
         """Hold one run's solved grid, split into bodies, under a default display.
 
@@ -720,14 +673,30 @@ class FieldScene:
             model_dim: 2 for an axisymmetric slice, else 3.
             run_id: The run bundle's name.
             bodies: The named bodies from ``entities.json``; None names none.
+            frame: The solve frame; None takes the first shipped frame that solves on the grid's dimension.
         """
         from femforge.run.entities import Bodies
 
         register_paraview()
+        self.frame: Frame = frame if frame is not None else default_frame(model_dim)
+        self.model_dim: int = self.frame.model_dim
+        if self.model_dim == 2:
+            flatten(grid, blocks)
+
+        self.section_grid: pv.UnstructuredGrid = grid
+        """The grid as solved."""
+        self.section_blocks: pv.MultiBlock = blocks
+        """The bodies as solved, whose values set every range."""
         self.grid: pv.UnstructuredGrid = grid
+        """The grid as shown: the section, its mirror, or the section again under a revolved display."""
         self.blocks: pv.MultiBlock = blocks
+        """The bodies as shown."""
         self.fields: list[FieldInfo] = list(fields)
-        self.model_dim: int = model_dim
+        plane: SolvePlane | None = self.frame.plane
+        self.basis: Basis | None = scaled_basis(plane) if plane is not None else None
+        """Where the section sits in the authored model, None for a run solved whole."""
+        self.expanded: tuple[Expansion, float] = (Expansion.SECTION, FULL_SWEEP)
+        """The expansion and sweep the shown blocks were built for."""
         self.run_id: str = run_id
         self.bodies: Bodies = bodies if bodies is not None else Bodies([])
         self.spec: DisplaySpec = DisplaySpec().fitted(self.fields) if self.fields else DisplaySpec()
@@ -742,6 +711,8 @@ class FieldScene:
         """The styled options of the lines the plotter holds."""
         self._lines_bar: str | None = None
         """The title of the field lines' scalar bar the plotter holds."""
+        self._field_bar: str | None = None
+        """The title of the field's scalar bar the plotter holds."""
 
     @classmethod
     def from_run(cls, run: Run) -> FieldScene:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
@@ -757,10 +728,75 @@ class FieldScene:
 
         grid: pv.UnstructuredGrid = cast("pv.UnstructuredGrid", pv.read(str(run.vtu_path)))
         blocks: pv.MultiBlock = split_by_body(grid, bodies)
-        fields: list[FieldInfo] = list_fields(grid)
+        manifest: RunManifest | None = run_manifest(run)
+        fields: list[FieldInfo] = list_fields(grid, manifest.physics if manifest is not None else None)
+        frame: Frame | None = manifest.config.frame if manifest is not None else None
 
-        log.bind(run_id=run.path.name, bodies=len(blocks), fields=len(fields)).info("Field scene loaded.")
-        return cls(grid=grid, blocks=blocks, fields=fields, model_dim=model_dim_of(grid), run_id=run.path.name, bodies=bodies)
+        log.bind(run_id=run.path.name, bodies=len(blocks), fields=len(fields), frame=frame.label if frame is not None else None).info("Field scene loaded.")
+        return cls(grid=grid, blocks=blocks, fields=fields, model_dim=model_dim_of(grid), run_id=run.path.name, bodies=bodies, frame=frame)
+
+    @property
+    def expandable(self) -> bool:
+        """Whether the run was solved on a section that can be mirrored or revolved."""
+        return self.basis is not None
+
+    @property
+    def display_dim(self) -> int:
+        """2 while the run is shown flat, 3 when it is solid or revolved."""
+        return self.expanded[0].dim if self.basis is not None else self.model_dim
+
+    @property
+    def bounds(self) -> Bounds:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+        """The bounds of the shown bodies."""
+        return cast("Bounds", tuple(self.blocks.bounds))
+
+    def expansion_of(self, spec: DisplaySpec) -> tuple[Expansion, float]:
+        """The expansion and sweep a spec asks of this run: a run solved in 3D is always shown as is, and only a revolution has a sweep."""
+        if self.basis is None or spec.expansion is not Expansion.REVOLVE:
+            return (Expansion.SECTION if self.basis is None else spec.expansion, FULL_SWEEP)
+
+        return (spec.expansion, spec.sweep)
+
+    def dim_for(self, spec: DisplaySpec) -> int:
+        """The dimension the run shows in under a spec."""
+        return self.expansion_of(spec)[0].dim if self.basis is not None else self.model_dim
+
+    def expand(self, spec: DisplaySpec) -> bool:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+        """Rebuilds the shown blocks and grid for the spec's expansion when it changed, dropping the field lines integrated for the old one; True when it did."""
+        import pyvista as pv
+
+        wanted: tuple[Expansion, float] = self.expansion_of(spec)
+        if wanted == self.expanded:
+            return False
+
+        expansion, sweep = wanted
+        basis: Basis | None = self.basis
+
+        def rebuilt(build: Callable[[pv.DataSet], pv.DataSet]) -> pv.MultiBlock:
+            """Every section block through ``build``, under its name."""
+            shown: pv.MultiBlock = pv.MultiBlock()
+            for name in (str(key) for key in self.section_blocks.keys()):
+                shown.append(build(cast("pv.DataSet", self.section_blocks[name])), name=name)
+
+            return shown
+
+        match expansion:
+            case Expansion.SECTION:
+                self.blocks, self.grid = self.section_blocks, self.section_grid
+            case Expansion.MIRROR:
+                self.blocks, self.grid = rebuilt(mirror), mirror(self.section_grid)
+            case Expansion.REVOLVE:
+                assert basis is not None, "a run without a basis is shown as is"
+                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep)), self.section_grid
+
+        # Recorded only once the blocks stand, so a build that raised is tried again by the next draw; the body actor holds the old blocks, so it is added anew.
+        self.expanded = wanted
+        self._actor = None
+        self._lines = None
+        self.drawn_lines = None
+        log.bind(run_id=self.run_id, expansion=str(expansion), sweep=sweep).info("Section expanded.")
+
+        return True
 
     def field_info(self, name: str) -> FieldInfo:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
         """The [`FieldInfo`][] for an array name, resolved the same way a field query resolves one."""
@@ -773,6 +809,7 @@ class FieldScene:
 
         fitted: DisplaySpec = spec.fitted(self.fields)
         info: FieldInfo = self.field_info(fitted.field)
+        _ = self.expand(fitted)
 
         def raw_values(block: pv.DataSet) -> FloatArray:
             """One block's copy of the displayed array, zero-filled when the block never carried it."""
@@ -784,12 +821,16 @@ class FieldScene:
             return np.asarray(arrays[info.name], dtype=np.float64)
 
         names: list[str] = [str(key) for key in self.blocks.keys()]
+        solved: list[AnyArray] = [reduce_field(raw_values(cast("pv.DataSet", self.section_blocks[name])), fitted.mode) for name in names]
+        shown: list[AnyArray] = solved if self.blocks is self.section_blocks else [reduce_field(raw_values(cast("pv.DataSet", self.blocks[name])), fitted.mode) for name in names]
         sources: list[FloatArray] = [raw_values(cast("pv.DataSet", self.blocks[name])) for name in names]
-        reductions: list[AnyArray] = [reduce_field(values, fitted.mode) for values in sources]
+        reductions: list[AnyArray] = shown
 
-        # Every body counts, each through its own range, whatever it is shown as: the scale belongs to the field, not the view.
-        self.data_range = color_range(reductions, robust=False)
-        clim: tuple[float, float] = fitted.clim if fitted.clim is not None else color_range(reductions, log_scale=fitted.log_scale, robust=fitted.robust)
+        # Every body counts, each through its own range, whatever it is shown as: the scale belongs to the field, not the view. A
+        # component or an in-plane direction turns with the expansion, so its range comes from the values drawn.
+        ranged: list[AnyArray] = solved if fitted.mode in ROTATION_FREE_MODES else shown
+        self.data_range = color_range(ranged, robust=False)
+        clim: tuple[float, float] = fitted.clim if fitted.clim is not None else color_range(ranged, log_scale=fitted.log_scale, robust=fitted.robust)
 
         if fitted.mode is DisplayMode.POLAR_XY:
             cmap = pv.get_cmap_safe(fitted.colormap)  # pyright: ignore[reportUnknownMemberType]  # pyvista returns an untyped matplotlib Colormap
@@ -803,7 +844,9 @@ class FieldScene:
         for name, scalars in zip(names, reductions, strict=True):
             block: pv.DataSet = cast("pv.DataSet", self.blocks[name])
             arrays = block.point_data if info.association is Association.POINT else block.cell_data
-            arrays.set_scalars(scalars, name=SCALARS_ARRAY)  # pyright: ignore[reportUnknownMemberType]  # pyvista's set_scalars carries **kwargs: Unknown
+            # VTK's SetScalars replaces whichever array is active, the displayed field itself when it is, so the reduction is added beside it and then made active.
+            arrays[SCALARS_ARRAY] = scalars
+            arrays.active_scalars_name = SCALARS_ARRAY
 
         self.spec = fitted
         self.clim = clim
@@ -833,8 +876,9 @@ class FieldScene:
         self._redraw(plotter, spec)
 
     def update(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated integration test
-        """Recolor an already-rendered scene in place — the cheap path a panel calls on every knob change; field lines are re-integrated only when their options changed."""
-        if self._actor is None:
+        """Recolor an already-rendered scene in place, the cheap path a panel calls on every knob change; a changed expansion draws the scene anew."""
+        if self._actor is None or self.expansion_of(spec.fitted(self.fields)) != self.expanded:
+            self.spec = spec
             self.render(plotter)
             return
 
@@ -895,6 +939,7 @@ class FieldScene:
         self._update_styled(plotter, {body: (color, fitted.body_opacity(body)) for body, color in solid.items()})
         self._update_outline(plotter, fitted)
         self._update_streamlines(plotter, fitted)
+        self._update_lines_bar(plotter)
 
     def _update_styled(self, plotter: pv.Plotter, styled: Mapping[str, tuple[str, float]]) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Give every solid body an actor of its own in its ``(color, opacity)``, replacing only the ones that changed and removing the ones dropped."""
@@ -934,27 +979,69 @@ class FieldScene:
     def _update_scalar_bar(
         self, plotter: pv.Plotter, mapper: pv.CompositePolyDataMapper, info: FieldInfo, spec: DisplaySpec | None
     ) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
-        """Re-add the scalar bar under the current field's title (pyvista keys bars by title), or none for a None spec: no visible body takes the colormap."""
+        """Re-add the field's color bar under its title (pyvista keys bars by title) where the legend asks for one, or none for a None spec: no visible body takes the colormap."""
         bars: Mapping[str, object] = plotter.scalar_bars  # pyright: ignore[reportAny]  # pyvista's ScalarBars container is untyped
         for name in [name for name in bars.keys() if name != self._lines_bar]:
             plotter.remove_scalar_bar(name, render=False)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista's _Wrapped stub loses `self`
 
-        if spec is None or spec.mode is DisplayMode.POLAR_XY:
+        self._field_bar = None
+        if spec is None or spec.mode is DisplayMode.POLAR_XY or spec.legend is Legend.HIDDEN:
             return
 
-        # Upright at the right, inset so the centred title stays on screen: a horizontal bar centres its title over the middle tick label, which a large title font overlaps.
+        self._add_bar(plotter, info.title, mapper, spec.legend)
+        self._field_bar = info.title
+
+    def _add_bar(self, plotter: pv.Plotter, title: str, mapper: object, legend: Legend, *, second: bool = False) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
+        """A compact color bar in the theme's font, placed by the legend beside any bar already there.
+
+        Args:
+            plotter: The plotter the bar is added to.
+            title: The bar's title, which pyvista keys it by.
+            mapper: The mapper whose lookup table the bar shows.
+            legend: Where the legend goes.
+            second: Whether the field's bar is already placed.
+        """
+        placement: BarPlacement = bar_placement(legend, second=second)
+        size: int = int(plotter.theme.font.size)
         _ = cast(
             "object",
             plotter.add_scalar_bar(  # pyright: ignore[reportCallIssue, reportUnknownMemberType]  # pyvista's _Wrapped stub loses `self`
-                title=info.display_name,
+                title=title,
                 mapper=mapper,
-                vertical=True,
-                position_x=0.86,
-                position_y=0.2,
-                width=0.035,
-                height=0.6,
+                n_labels=BAR_LABELS,
+                title_font_size=size + BAR_TITLE_EXTRA,
+                label_font_size=size,
+                fmt=BAR_FORMAT,
+                vertical=placement.vertical,
+                position_x=placement.x,
+                position_y=placement.y,
+                width=placement.width,
+                height=placement.height,
             ),
         )
+
+    def _update_lines_bar(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
+        """Gives the drawn field lines a color bar of their own where the legend asks for one and the field's bar does not already show their mapping."""
+        import pyvista as pv
+
+        self._remove_lines_bar(plotter)
+        styled: FieldLineOptions | None = self.drawn_lines
+        drawn: object = plotter.renderer.actors.get(str(StreamlineActor.LINES))
+        if styled is None or self._lines is None or self.spec.legend is Legend.HIDDEN or not isinstance(drawn, pv.Actor):
+            return
+
+        if self._field_bar is not None and self.lines_share(styled):
+            return
+
+        self._lines_bar = self.lines_title(self._lines[0].b_name)
+        self._add_bar(plotter, self._lines_bar, drawn.mapper, self.spec.legend, second=self._field_bar is not None)
+
+    def lines_share(self, styled: FieldLineOptions) -> bool:
+        """Whether lines drawn with ``styled`` map like the field: the same colormap, inversion, log scale, opacity map and limits."""
+        spec: DisplaySpec = self.spec
+        same_map: bool = styled.colormap == spec.colormap and styled.invert == spec.invert and styled.log_scale == spec.log_scale
+
+        return same_map and styled.opacity_map == spec.opacity_map and styled.clim == self.clim
 
     def _update_outline(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Add or remove the black feature-edge wireframe of the visible bodies, by its own actor name."""
@@ -966,8 +1053,8 @@ class FieldScene:
         _ = plotter.add_mesh(edges, color="black", line_width=2.0, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
 
     def _update_streamlines(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
-        """Draw the field-line overlay when it or the display it is styled by changed, integrating only new lines, or remove it when the spec turns it off."""
-        if spec.streamlines is None:
+        """Draw the field-line overlay when it or the display it is styled by changed, integrating only new lines, or remove it when the spec turns it off or the grid has no field to follow."""
+        if spec.streamlines is None or self.lines_array(spec.streamlines) is None:
             for actor in StreamlineActor:
                 _ = plotter.remove_actor(str(actor))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
             self._remove_lines_bar(plotter)
@@ -980,6 +1067,17 @@ class FieldScene:
 
         self.show_streamlines(plotter, cached or self.integrate_streamlines(spec.streamlines), spec.streamlines)
 
+    def lines_array(self, options: FieldLineOptions) -> str | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+        """The array the field lines would follow: the one asked for, else the flux density, None when the grid has neither."""
+        names: list[str] = list(self.grid.array_names)
+        if options.vectors is not None:
+            return options.vectors if options.vectors in names else None
+
+        try:
+            return select_flux_density_array(names)
+        except KeyError:
+            return None
+
     def integrated(self, options: FieldLineOptions) -> StreamlineActors | None:
         """The cached field lines when ``options`` only restyle them, None when they need integrating."""
         if self._lines is None or not integrates_like(self._lines[1], options):
@@ -988,21 +1086,51 @@ class FieldScene:
         return self._lines[0]
 
     def integrate_streamlines(self, options: FieldLineOptions) -> StreamlineActors:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """Seed and integrate the field lines through this scene's grid — the compute half, safe off the UI thread."""
-        source, b_name = prepare_streamline_source(self.grid, options)
-        actors: StreamlineActors = build_streamlines(source, b_name, options)
+        """Seed and integrate the field lines through the shown grid, or through the section and swept into a revolved display — the compute half, safe off the UI thread."""
+        basis: Basis | None = self.basis
+        if self.expanded[0] is Expansion.REVOLVE and basis is not None:
+            source, b_name = prepare_streamline_source(self.section_grid, options)
+            bounds: Bounds = self.region_bounds(options)
+            actors: StreamlineActors = build_swept_streamlines(source, b_name, options, basis, bounds, seeds=self.swept_seeds(options, bounds))
+        else:
+            source, b_name = prepare_streamline_source(self.grid, options)
+            actors = build_streamlines(source, b_name, options)
+
         return replace(actors, magnitudes=self.region_magnitudes(b_name, options.region_id))
 
+    def region_bounds(self, options: FieldLineOptions) -> Bounds:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+        """The shown bounds the field lines seed: the integration region's body when the options confine them to one, else every body."""
+        region: int | None = options.region_id if options.clip_to_region else None
+        named: list[str] = [body.name for body in self.bodies if region is not None and body.mesh_id == region and body.name in self.blocks.keys()]
+        if not named:
+            return self.bounds
+
+        return cast("Bounds", tuple(cast("pv.DataSet", self.blocks[named[0]]).bounds))
+
+    def swept_seeds(self, options: FieldLineOptions, bounds: Bounds) -> FloatArray | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+        """The seeds of the revolved display as a solid run would place them in ``bounds``, less the ones a partial sweep cuts away; None leaves a full sweep to seed itself."""
+        basis: Basis | None = self.basis
+        sweep: float = self.expanded[1]
+        if basis is None or sweep >= FULL_SWEEP:
+            return None
+
+        filling: FloatArray = np.asarray(seed_points(bounds, options), dtype=np.float64)
+        _, theta = basis.fold(filling)
+        # Shifted by the slack before the wrap, so a seed a rounding error below the first cut face counts as on it, like one past the last.
+        inside = cast("np.typing.NDArray[np.bool_]", np.mod(theta + AXIS_SLACK, 2.0 * math.pi) <= math.radians(sweep) + 2.0 * AXIS_SLACK)
+
+        return filling[inside]
+
     def region_magnitudes(self, name: str, region_id: int | None) -> list[FloatArray]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """The magnitudes of array ``name`` per body of a region (every body for None), the chunks a field-line range spans."""
+        """The magnitudes of array ``name`` per body of a region (every body for None) as solved, the chunks a field-line range spans."""
 
         chunks: list[FloatArray] = []
-        for block_name in (str(key) for key in self.blocks.keys()):
+        for block_name in (str(key) for key in self.section_blocks.keys()):
             body = self.bodies.get(block_name)
             if region_id is not None and (body is None or body.mesh_id != region_id):
                 continue
 
-            block: pv.DataSet = cast("pv.DataSet", self.blocks[block_name])
+            block: pv.DataSet = cast("pv.DataSet", self.section_blocks[block_name])
             arrays = block.cell_data if name in block.cell_data else block.point_data
             if name in arrays:
                 chunks.append(reduce_field(np.asarray(arrays[name]), DisplayMode.MAGNITUDE))
@@ -1019,8 +1147,6 @@ class FieldScene:
             actors: The integrated field lines.
             options: The options the lines were integrated with.
         """
-        import pyvista as pv
-
         styled: FieldLineOptions = self.line_style(options, actors)
         draw_streamlines(actors, styled, plotter)
         self._lines = (actors, options)
@@ -1028,33 +1154,18 @@ class FieldScene:
         self.spec = self.spec.model_copy(update={"streamlines": options})
 
         # The bar holds the mapper it was made with, and a redraw replaces the lines' actor, so it is made again every time.
-        self._remove_lines_bar(plotter)
-        drawn: object = plotter.renderer.actors.get(str(StreamlineActor.LINES))
-        if not isinstance(drawn, pv.Actor):
-            return
+        self._update_lines_bar(plotter)
 
-        self._lines_bar = self.lines_title(actors.b_name)
-        _ = cast(
-            "object",
-            plotter.add_scalar_bar(  # pyright: ignore[reportCallIssue, reportUnknownMemberType]  # pyvista's _Wrapped stub loses `self`
-                title=self._lines_bar,
-                mapper=drawn.mapper,
-                vertical=True,
-                position_x=0.1,
-                position_y=0.2,
-                width=0.035,
-                height=0.6,
-            ),
-        )
-
-    def lines_pinned(self, vectors: str) -> bool:
-        """Whether field lines following ``vectors`` take the display's pinned range: it is pinned and shows that field's magnitude."""
+    def lines_follow(self, vectors: str) -> bool:
+        """Whether field lines following ``vectors`` take the display's range: it shows that field's magnitude, so one scale reads for both."""
         spec: DisplaySpec = self.spec
-        return spec.clim is not None and spec.mode is DisplayMode.MAGNITUDE and spec.field == vectors
+        return spec.mode is DisplayMode.MAGNITUDE and spec.field == vectors
 
     def lines_title(self, b_name: str) -> str:
-        """The field lines' scalar bar title: the integrated field's name."""
-        return f"{title(b_name)}{LINES_SUFFIX}"
+        """The field lines' scalar bar title: the integrated field's name and unit."""
+        info: FieldInfo = self.field_info(b_name)
+
+        return titled(f"{info.display_name}{LINES_SUFFIX}", info.unit)
 
     def _remove_lines_bar(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         if self._lines_bar is not None and self._lines_bar in cast("Mapping[str, object]", plotter.scalar_bars):
@@ -1066,7 +1177,7 @@ class FieldScene:
         """
         The field lines in the display's colormap, inversion, log scale and opacity map; a polar display leaves them as asked.
 
-        Their range is the display's pinned one while it shows their field's magnitude, else the automatic range of that magnitude over their own region, whatever the bodies show.
+        Their range is the display's while it shows their field's magnitude, else the automatic range of that magnitude over their own region, whatever the bodies show.
         """
         spec: DisplaySpec = self.spec
         if spec.mode is DisplayMode.POLAR_XY:
@@ -1078,88 +1189,6 @@ class FieldScene:
                 "invert": spec.invert,
                 "log_scale": spec.log_scale,
                 "opacity_map": spec.opacity_map,
-                "clim": spec.clim if self.lines_pinned(actors.b_name) else color_range(actors.magnitudes, log_scale=spec.log_scale, robust=spec.robust),
+                "clim": self.clim if self.lines_follow(actors.b_name) else color_range(actors.magnitudes, log_scale=spec.log_scale, robust=spec.robust),
             }
         )
-
-    def figure(self, spec: DisplaySpec) -> dict[str, object]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """The plotly figure dict for the 2D path: one ``Mesh3d`` per body (hidden ones ``legendonly``) plus the outline, under an orthographic top-down camera.
-
-        ``POLAR_XY`` falls back to the magnitude, a log scale plots ``log10`` with decade ticks, and ``opacity_map`` draws as ``opacity``.
-        """
-        fitted: DisplaySpec = spec.fitted(self.fields)
-        plotted: DisplaySpec = fitted if fitted.mode is not DisplayMode.POLAR_XY else fitted.model_copy(update={"mode": DisplayMode.MAGNITUDE})
-        info: FieldInfo = self.field_info(plotted.field)
-        lo, hi = self.apply(plotted)
-
-        colorscale: Colorscale = plotly_colorscale(sample_colormap(plotted.colormap), invert=plotted.invert)
-        colorbar: TraceDict = {"title": {"text": info.display_name}, **(log_colorbar(lo, hi) if plotted.log_scale else {})}
-        cmin, cmax = (math.log10(lo), math.log10(hi)) if plotted.log_scale else (lo, hi)
-        hovertemplate: str = f"{info.display_name}: %{{customdata:.4g}}<extra>%{{fullData.name}}</extra>"
-
-        solid: dict[str, str] = plotted.solid()
-        traces: list[TraceDict] = []
-        scale_shown: bool = False
-        for name in (str(key) for key in self.blocks.keys()):
-            block: pv.DataSet = cast("pv.DataSet", self.blocks[name])
-            surface: pv.PolyData = cast("pv.PolyData", cast("pv.PolyData", block.extract_surface(algorithm=None)).triangulate())
-            points, triangles = surface_triangles(surface)
-            visible: bool = name not in plotted.hidden_bodies
-            color: str | None = solid.get(name)
-            if color is not None:
-                traces.extend(mesh3d_traces(points, triangles, None, name=name, color=color, opacity=plotted.body_opacity(name), visible=visible))
-                continue
-
-            arrays = surface.point_data if info.association is Association.POINT else surface.cell_data
-            values: FloatArray = np.asarray(arrays[SCALARS_ARRAY], dtype=np.float64)
-            intensity: FloatArray = log_intensity(values, lo) if plotted.log_scale else values
-
-            traces.extend(
-                mesh3d_traces(
-                    points,
-                    triangles,
-                    intensity,
-                    name=name,
-                    opacity=plotted.body_opacity(name),
-                    intensitymode=info.association,
-                    colorscale=colorscale,
-                    cmin=cmin,
-                    cmax=cmax,
-                    showscale=visible and not scale_shown,
-                    hovertemplate=hovertemplate,
-                    customdata=values,
-                    colorbar=colorbar,
-                    visible=visible,
-                )
-            )
-            scale_shown = scale_shown or visible
-
-        edges: pv.PolyData | None = feature_outline(self.shown_blocks(plotted.hidden_bodies)) if plotted.outline else None
-        if edges is not None:
-            traces.extend(outline_traces(outline_segments(edges)))
-
-        return {"data": traces, "layout": self._layout()}
-
-    def _layout(self) -> dict[str, object]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """The figure layout: an orthographic top-down 3D scene keyed to this run so a redraw keeps the user's camera, with the body legend top-left clear of the colorbar."""
-        camera: dict[str, object] = {
-            "projection": {"type": "orthographic"},
-            "eye": {"x": 0.0, "y": 0.0, "z": 1.6},
-            "up": {"x": 0.0, "y": 1.0, "z": 0.0},
-        }
-        axis: dict[str, object] = {"visible": False, "showspikes": False}
-        scene: dict[str, object] = {
-            "camera": camera,
-            "aspectmode": "data",
-            "xaxis": axis,
-            "yaxis": axis,
-            "zaxis": axis,
-        }
-        legend: dict[str, object] = {"x": 0.0, "y": 1.0, "xanchor": "left", "yanchor": "top", "bgcolor": "rgba(0,0,0,0)"}
-        return {
-            "scene": scene,
-            "margin": {"l": 0, "r": 0, "t": 0, "b": 0},
-            "uirevision": self.run_id,
-            "showlegend": True,
-            "legend": legend,
-        }

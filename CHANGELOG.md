@@ -4,6 +4,32 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 
 ## [Unreleased]
 
+### Added
+
+- The field viewer's Symmetry section expands a run solved on an axisymmetric section: as solved, mirrored into the full r–z plane, or revolved around its axis into a solid in the authored frame, with a sweep angle for a cutaway. Revolve is the default, so the first view of the magnet-plate project is 3D. Field lines of a revolved run are seeded as in a solid run, integrated in the section and swept to their seeds.
+- A Legend setting, Hidden, Vertical or Horizontal, for the color bar; the field lines share the field's bar while the field shows their magnitude, and get one beside it otherwise.
+- A guided tour of the field viewer on the first start, replayed from the help button in the app bar.
+- The femforge logo: the docs site shows it in place of the book icon, and the workbench shows it with the femforge name at the left of the app bar and as the browser tab's icon.
+- The color bars are titled with the field's unit, which `ElmerVariable.unit` and `variable_unit` name for every solver output; the potential's unit follows the physics solved.
+
+### Changed
+
+- The field viewer starts with the Turbo colormap, no outline, opacity mapping from 0.15 to 1.0, and field lines on from 18 × 18 seeds on the center plane.
+- The range slider wears the colormap between its thumbs, and moving a thumb pins the range.
+- The run picker lists each run by its description and id.
+- The controls' sections are spaced apart, the run picker is wider, and the bundle path beside it is a read-only readout of the open run.
+- The field viewer draws every run in its one view; the plotly 2D tab and the `FieldScene.figure` path are gone.
+- Solve frames moved to the `femforge.frames` package. `Frame` is now an abstract base class that every frame subclasses, and each pipeline stage calls a hook on it instead of naming `Solid` or `Axisymmetric`; `FrameUnion` types the serialized frame fields, and `ff.Frame` joins `ff.Solid`, `ff.Axisymmetric` and `ff.Axis`. `femforge.common.frame` is gone.
+- `Axisymmetric.plane` gives the section's plane in the authored model as a `SolvePlane`, and `axisymmetric_cross_section` takes that plane instead of an axis and a radial direction.
+- `geometry.frame.apply_frame` is replaced by `Frame.prepare_geometry`, and `import_tagged_step` moved to `femforge.geometry.step`. `Physics.in_frame` is replaced by `Frame.solves`, and `run.magnetic.revolve` by `Frame.total`.
+- A `MeshJob` carries the solve frame, so the mesher no longer rebuilds one from the mesh dimension.
+- The Frames guide is a section: a page on the concept and one page per frame.
+
+### Fixed
+
+- An axisymmetric run was shown as 3D, with Volume seeds offered, because Elmer writes its flat mesh with a Z extent of a few 1e-18 rather than zero.
+- The run picker listed an opened bundle beside its indexed run; it now picks the indexed run.
+
 ## [0.1.0rc1] - 2026-10-17
 
 The first public release candidate.

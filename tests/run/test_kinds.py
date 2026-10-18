@@ -6,7 +6,7 @@ from typing import Annotated, cast
 import pytest
 
 from femforge.artifacts.keys import artifact_key
-from femforge.common.frame import Axis, Axisymmetric, Solid
+from femforge.frames import Axis, Axisymmetric, Solid
 from femforge.common.pydantic import HashExclude
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig

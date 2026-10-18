@@ -11,7 +11,7 @@ try:
     from femforge_workbench.dock import Panel, Split, Tabs
     from femforge_workbench.panels import PanelComponent
     from femforge_workbench.panels.browsers import artifact_store
-    from femforge_workbench.panels.field_viewer import FieldControlsPanel, FieldPlot2DPanel, FieldViewerPanel, workbench as field_viewer
+    from femforge_workbench.panels.field_viewer import FieldControlsPanel, FieldViewerPanel, workbench as field_viewer
     from femforge_workbench.panels.figure import FigurePanel
     from femforge_workbench.panels.runs import RunBrowserPanel, RunDetailPanel
     from femforge_workbench.panels.table import TablePanel
@@ -25,7 +25,6 @@ except ModuleNotFoundError as error:
 
 __all__ = [
     "FieldControlsPanel",
-    "FieldPlot2DPanel",
     "FieldViewerPanel",
     "FigurePanel",
     "Panel",

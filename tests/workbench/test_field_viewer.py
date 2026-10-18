@@ -1,6 +1,7 @@
 """The field viewer: the built-in spec, the controller's drawing path by model dimension, the controls the shell builds and the state they bind."""
 
 import asyncio
+import time
 from pathlib import Path
 from typing import cast
 
@@ -9,13 +10,16 @@ import pytest
 
 from femforge.common.files import BundleFile
 from femforge.common.log import TELEMETRY_ENV
-from femforge.config import SimulationConfig
+from femforge.config import RunMeta, SimulationConfig
 from femforge.meshing.config import MeshConfig
 from femforge.run.bundle import write_manifest
 from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
+from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
+from femforge.telemetry.paths import Telemetry
 from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, SceneActor
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, StreamlineActor
+from femforge.viz.symmetry import Expansion
 from femforge_workbench.dock import Split, panels, template_name
 from femforge_workbench.persist import LocalJsonStore
 from femforge_workbench.registry import FIELD_VIEWER, resolve
@@ -31,12 +35,11 @@ from trame.app import get_server  # noqa: E402
 from femforge_workbench.app import Hook, StateVar, Template, Workbench  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import Shared  # noqa: E402
-from femforge_workbench.panels.figure import FIGURE_KEY  # noqa: E402
+from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
 from femforge_workbench.panels.scene import StateVar as SceneVar  # noqa: E402
 from femforge_workbench.panels.field_viewer import (  # noqa: E402
     FieldControlsPanel,
     FieldPanel,
-    FieldPlot2DPanel,
     FieldVar,
     FieldViewerController,
     FieldViewerPanel,
@@ -50,13 +53,12 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     number_of,
     pair_of,
     run_items,
+    bundle_label,
     seed_count,
     similar_bounds,
     workbench,
 )
 
-
-type Trace = dict[str, object]
 
 MAX_LABEL = 23
 """The longest colormap label the pickers' label column fits."""
@@ -110,15 +112,8 @@ def _template(app: Workbench, panel_id: FieldPanel) -> Node:
     return cast("Node", app.state[f"trame__template_{template_name(panel_id)}"])
 
 
-def _figure_traces(app: Workbench) -> list[Trace]:
-    plot = app.panel(FieldPanel.PLOT_2D, FieldPlot2DPanel)
-    figure = cast("dict[str, object]", app.state[plot.key(FIGURE_KEY)])
-
-    return cast("list[Trace]", figure["data"])
 
 
-def _mesh_names(traces: list[Trace]) -> list[str]:
-    return [str(trace["name"]) for trace in traces if trace["type"] == "mesh3d"]
 
 
 def _bound(node: Node, name: str) -> object:
@@ -137,7 +132,7 @@ def _start(app: Workbench) -> object:
 # --- spec and shell -----------------------------------------------------------
 
 
-def test_the_builtin_spec_resolves_to_a_split_with_the_three_panel_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_builtin_spec_resolves_to_a_split_with_the_two_panel_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(TELEMETRY_ENV, raising=False)
     factory = resolve(FIELD_VIEWER.target)
     assert callable(factory)
@@ -156,14 +151,15 @@ def test_a_shell_builds_the_templates_the_controls_defaults_and_the_open_hook(tm
     assert app.state.has(f"trame__template_{Template.HEADER}")
     assert isinstance(app.panel(FieldPanel.CONTROLS, FieldControlsPanel), FieldControlsPanel)
     assert controller.viewer is app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
-    assert controller.plot is app.panel(FieldPanel.PLOT_2D, FieldPlot2DPanel)
     assert app.ctrl[Hook.FIELD_OPEN].exists()
 
     assert app.state[FieldVar.RUN_ITEMS] == []
-    assert app.state[FieldVar.COLORMAP] == "viridis" and app.state[FieldVar.MODE] == "value"
-    assert app.state[FieldVar.AUTO_CLIM] is True and app.state[FieldVar.OUTLINE] is True
-    assert app.state[FieldVar.LOG_SCALE] is False and app.state[FieldVar.STREAMLINES] is False
-    assert app.state[FieldVar.LINES_BODY] == "" and app.state[FieldVar.LINE_COUNT] == [12]
+    assert app.state[FieldVar.COLORMAP] == "turbo" and app.state[FieldVar.MODE] == "value"
+    assert app.state[FieldVar.AUTO_CLIM] is True and app.state[FieldVar.OUTLINE] is False
+    assert app.state[FieldVar.LOG_SCALE] is False and app.state[FieldVar.STREAMLINES] is True
+    assert app.state[FieldVar.LEGEND] == "hidden" and app.state[FieldVar.OPACITY_MAPPING] is True
+    assert app.state[FieldVar.LINES_BODY] == "" and app.state[FieldVar.LINE_COUNT] == [FieldLineOptions().line_count]
+    assert app.state[FieldVar.SEED_PLACEMENT] == str(SeedPlacement.CENTER_PLANE)
     assert app.state[Shared.SELECTED_RUN_ID] is None
 
 
@@ -181,6 +177,7 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
     assert comboboxes == [str(FieldVar.COLORMAP), str(FieldVar.BODY_COLORMAP_SHOWN)]
     assert switches == [str(var) for var in (FieldVar.INVERT, FieldVar.LOG_SCALE, FieldVar.OUTLINE, FieldVar.AUTO_CLIM, FieldVar.OPACITY_MAPPING, FieldVar.STREAMLINES)]
     assert [_bound(node, "value") for node in sliders] == [
+        str(FieldVar.SWEEP),
         str(FieldVar.CLIM),
         str(FieldVar.OPACITY_RANGE),
         str(FieldVar.LINE_COUNT),
@@ -189,9 +186,14 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
         f"item.{RowKey.OPACITY}",
     ]
     assert all(prop(node, "onValueCommit") is not None for node in sliders)
-    assert _bound(sliders[0], "min") == str(FieldVar.CLIM_MIN) and _bound(sliders[0], "disabled") == str(FieldVar.AUTO_CLIM)
+    assert _bound(sliders[1], "min") == str(FieldVar.CLIM_MIN) and prop(sliders[1], "disabled") is None, "a moved thumb pins the range instead"
+    assert str(FieldVar.FIELD_GRADIENT) in str(prop(sliders[1], "style")), "the range track wears the colormap"
+    assert [_bound(node, "value") for node in find(template, "ff-toggle-group")] == [str(FieldVar.EXPANSION), str(FieldVar.LEGEND)]
+    assert [texts(node) for node in find(template, "ff-toggle-group-item")] == [["Section"], ["Mirrored"], ["Revolved"], ["Hidden"], ["Vertical"], ["Horizontal"]]
+    assert [prop(node, "aria-label") for node in find(template, "ff-toggle-group")] == ["Show as", "Legend"]
     assert len(rows) == 1 and find(template, "ff-tree") == []
-    assert [texts(node)[0] for node in find(template, "ff-accordion-trigger")] == ["Field", "Field Lines", "Bodies"]
+    assert [texts(node)[0] for node in find(template, "ff-accordion-trigger")] == ["Symmetry", "Field", "Field Lines", "Bodies"]
+    assert [prop(node, "id") for node in find(template, "ff-accordion-item")] == ["tour-symmetry", "tour-field", "tour-lines", "tour-bodies"]
     assert [prop(node, "htmlFor") for node in find(template, "ff-field-label") if prop(node, "htmlFor")] == [prop(node, "id") for node in find(template, "ff-switch")]
     assert _bound(find(template, "ff-progress")[0], "value") == 100.0
 
@@ -205,8 +207,7 @@ def test_the_run_picker_and_the_bundle_path_field_sit_in_the_app_bar(tmp_path: P
 
     assert _bound(picker, "value") == str(FieldVar.RUN)
     assert _bound(find(header, "ReactFor")[0], "items") == str(FieldVar.RUN_ITEMS)
-    assert _bound(path, "defaultValue") == str(FieldVar.RUN_TEXT)
-    assert str(FieldVar.RUN) in str(cast("dict[str, object]", prop(path, "onKeyDown"))["callback"])
+    assert _bound(path, "value") == str(FieldVar.RUN_TEXT) and prop(path, "readOnly") is True, "the path follows the open run and is not typed into"
     assert find(header, "ff-tree") == []
 
 
@@ -223,7 +224,7 @@ def test_a_3d_run_draws_in_the_plotter_and_integrates_field_lines_off_the_loop(t
         await controller.load(bundle)
         await controller.settle()
 
-        assert controller.model_dim == 3 and controller.path is FieldPanel.VIEW_3D
+        assert controller.model_dim == 3
         assert str(SceneActor.BODIES) in viewer.plotter.renderer.actors
         assert viewer.renderable is controller.scene
         assert app.state[FieldVar.RUN_ID] == "hex" and app.state[FieldVar.RUN_TEXT] == str(bundle)
@@ -268,7 +269,7 @@ def test_the_field_lines_follow_the_shown_vector_field_and_fall_back_to_the_flux
         followed: list[str | None] = []
         for field in ("magnetic field strength", "joule heating", "magnetic flux density"):
             app.state[FieldVar.FIELD] = field
-            followed.append(controller.streamline_options().vectors)
+            followed.append(controller.streamline_options(3).vectors)
 
         return followed
 
@@ -293,43 +294,6 @@ def test_a_run_without_a_flux_array_draws_with_the_field_line_switch_left_on(tmp
     asyncio.run(run())
 
 
-def test_a_small_2d_run_draws_as_a_plotly_figure_whose_legend_feeds_the_visible_bodies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def run() -> None:
-        app = _shell("two-d", tmp_path, monkeypatch)
-        controller = _controller(app)
-        plot = app.panel(FieldPanel.PLOT_2D, FieldPlot2DPanel)
-        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
-        flat = _bundle(tmp_path / "quad", _quad_grid())
-        solid = _bundle(tmp_path / "hex", _hex_grid())
-
-        await controller.load(flat)
-        await controller.settle()
-
-        assert controller.model_dim == 2 and controller.path is FieldPanel.PLOT_2D
-        assert _mesh_names(_figure_traces(app)) == ["LEFT", "RIGHT"] and plot.bodies == ["LEFT", "RIGHT"]
-        assert str(SceneActor.BODIES) not in viewer.plotter.renderer.actors
-
-        plot.on_restyle([{"visible": ["legendonly"]}, [1]])
-        assert app.state[FieldVar.VISIBLE_BODIES] == ["LEFT"]
-
-        controller.request_redraw()
-        await controller.settle()
-        assert [trace["visible"] for trace in _figure_traces(app)[:2]] == [True, "legendonly"]
-
-        plot.on_restyle([{"visible": [True, True]}, [0, 1]])
-        assert app.state[FieldVar.VISIBLE_BODIES] == ["LEFT", "RIGHT"]
-
-        await controller.load(solid)
-        await controller.settle()
-        assert controller.path is FieldPanel.VIEW_3D
-        assert _figure_traces(app) == [] and str(SceneActor.BODIES) in viewer.plotter.renderer.actors
-
-        await controller.load(flat)
-        await controller.settle()
-        assert controller.path is FieldPanel.PLOT_2D
-        assert str(SceneActor.BODIES) not in viewer.plotter.renderer.actors and _mesh_names(_figure_traces(app)) == ["LEFT", "RIGHT"]
-
-    asyncio.run(run())
 
 
 def test_state_changes_redraw_and_a_field_change_snaps_the_mode_on_a_running_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -518,7 +482,8 @@ def test_a_2d_run_seeds_its_center_plane_and_offers_no_volume(tmp_path: Path, mo
     async def run() -> tuple[list[object], list[object]]:
         app = _shell("seeds", tmp_path, monkeypatch)
         controller = _controller(app)
-        assert app.state[FieldVar.SEED_PLACEMENT] == SeedPlacement.VOLUME
+        app.state[FieldVar.SEED_PLACEMENT] = str(SeedPlacement.VOLUME)
+        app.state[FieldVar.EXPANSION] = str(Expansion.SECTION)
 
         await controller.load(_bundle(tmp_path / "quad", _quad_grid()))
         await controller.settle()
@@ -550,18 +515,18 @@ def test_each_seed_placement_keeps_its_own_count_within_its_own_range(tmp_path: 
 
         return app.state[FieldVar.LINE_COUNT], app.state[FieldVar.LINE_COUNT_MAX]
 
-    assert (app.state[FieldVar.LINE_COUNT], app.state[FieldVar.LINE_COUNT_MAX]) == ([12], 16)
-    assert place(SeedPlacement.CENTER_PLANE) == ([12], 60)
+    assert (app.state[FieldVar.LINE_COUNT], app.state[FieldVar.LINE_COUNT_MAX]) == ([18], 60)
+    assert place(SeedPlacement.VOLUME) == ([16], 16), "the volume's range caps the plane's count"
 
-    app.state[FieldVar.LINE_COUNT] = [50]
+    app.state[FieldVar.LINE_COUNT] = [12]
 
-    assert place(SeedPlacement.VOLUME) == ([12], 16), "a count raised for the plane never lands on the volume"
-    assert place(SeedPlacement.CENTER_PLANE) == ([50], 60)
-    assert place(SeedPlacement.GAP_LINE) == ([12], 200)
+    assert place(SeedPlacement.CENTER_PLANE) == ([18], 60), "a count lowered for the volume never lands on the plane"
+    assert place(SeedPlacement.VOLUME) == ([12], 16)
+    assert place(SeedPlacement.GAP_LINE) == ([18], 200)
 
     controller.on_placement()
 
-    assert app.state[FieldVar.LINE_COUNT] == [12], "picking the shown placement again changes nothing"
+    assert app.state[FieldVar.LINE_COUNT] == [18], "picking the shown placement again changes nothing"
 
 
 def test_every_section_starts_open_and_the_seed_readout_counts_the_seeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -571,7 +536,7 @@ def test_every_section_starts_open_and_the_seed_readout_counts_the_seeds(tmp_pat
     accordion = find(template, "ff-accordion")[0]
     readouts = [node for node in find(template, "span") if any(_bound_child(child) == seed_count() for child in cast("list[object]", node.get("children", [])))]
 
-    assert prop(accordion, "defaultValue") == OPEN_SECTIONS == ["field", "lines", "bodies"]
+    assert prop(accordion, "defaultValue") == OPEN_SECTIONS == ["symmetry", "field", "lines", "bodies"]
     assert len(readouts) == 1
     assert seed_count().startswith("Math.pow(") and seed_count().endswith(".toLocaleString()"), "the readout is the seed total alone"
     assert str(SeedPlacement.CENTER_PLANE) in seed_count()
@@ -640,24 +605,6 @@ def test_a_run_given_to_the_dock_opens_once_the_server_runs_with_the_display_ask
     asyncio.run(run())
 
 
-def test_the_bundle_path_field_opens_what_it_holds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def run() -> str:
-        app = _shell("typed", tmp_path, monkeypatch)
-        controller = _controller(app)
-        bundle = _bundle(tmp_path / "quad", _quad_grid())
-
-        controller.open_text()
-        assert controller.scene is None, "an empty path opens nothing"
-
-        app.state[FieldVar.RUN_TEXT] = str(bundle)
-        controller.open_text()
-        await controller.settle()
-
-        assert controller.scene is not None
-
-        return controller.scene.run_id
-
-    assert asyncio.run(run()) == "quad"
 
 
 def test_the_last_panel_to_leave_the_dock_releases_the_controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -667,41 +614,21 @@ def test_the_last_panel_to_leave_the_dock_releases_the_controller(tmp_path: Path
     app = _shell("dispose", tmp_path, monkeypatch)
     controller = _controller(app)
     controls = app.panel(FieldPanel.CONTROLS, FieldControlsPanel)
-    plot = app.panel(FieldPanel.PLOT_2D, FieldPlot2DPanel)
 
     assert app.ctrl[Hook.FIELD_OPEN].exists() and listening()
     assert controller.attached == {str(panel_id) for panel_id in FieldPanel}
 
-    plot.dispose()
+    controls.dispose()
 
-    assert controller.plot is None and controller.live and listening(), "the viewer is still on screen"
+    assert controller.live and listening(), "the viewer is still on screen"
     assert app.ctrl[Hook.FIELD_OPEN].exists()
 
-    controls.dispose()
     app.panel(FieldPanel.VIEW_3D, FieldViewerPanel).dispose()
 
     assert not app.ctrl[Hook.FIELD_OPEN].exists() and not listening()
     assert controller.viewer is None and controls.bound == [] and not controller.live
 
 
-def test_closing_the_2d_tab_leaves_the_plotter_drawing_a_2d_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def run() -> None:
-        app = _shell("closed-plot", tmp_path, monkeypatch)
-        controller = _controller(app)
-        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
-        flat = _bundle(tmp_path / "quad", _quad_grid())
-
-        app.on_panel_removed({"id": str(FieldPanel.PLOT_2D)})
-
-        assert controller.plot is None and str(FieldPanel.PLOT_2D) not in app.panel_ids
-
-        await controller.load(flat)
-        await controller.settle()
-
-        assert controller.model_dim == 2 and controller.path is FieldPanel.VIEW_3D
-        assert str(SceneActor.BODIES) in viewer.plotter.renderer.actors, "the 2D run draws in the plotter the tab left"
-
-    asyncio.run(run())
 
 
 def test_a_rebuilt_panel_takes_the_controller_back_and_redraws_the_open_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -746,7 +673,86 @@ def test_the_run_picker_names_a_bundle_the_index_does_not_know(tmp_path: Path, m
 
         assert cast("list[object]", app.state[FieldVar.RUN_ITEMS]) == items, "the same run is offered once"
 
+        app.state[FieldVar.RUN_ITEMS] = [{"title": "4 mm gap - hex", "value": "hex"}]
+        controller.open(bundle)
+        await controller.settle()
+
+        assert app.state[FieldVar.RUN] == "hex" and len(cast("list[object]", app.state[FieldVar.RUN_ITEMS])) == 1, "a bundle the index lists is picked as its indexed run"
+
+        app.state[FieldVar.RUN_ITEMS] = [{"title": "hex", "value": str(bundle)}, {"title": "old", "value": "old"}]
+        by_id = controller.offered("hex", Run(bundle), "hex")
+
+        assert by_id == (str(bundle), app.state[FieldVar.RUN_ITEMS]), "a bundle added by path is picked again when opened by id"
+
+        def indexed(_telemetry: Telemetry | None) -> list[dict[str, object]]:
+            return [{"title": "4 mm gap - hex", "value": "hex"}, {"title": "new", "value": "new"}]
+
+        monkeypatch.setattr(field_viewer_module, "run_items", indexed)
+        controller.telemetry = Telemetry(tmp_path)
+        refreshed = controller.offered(str(bundle), Run(bundle), "hex")
+
+        assert refreshed == ("hex", [{"title": "old", "value": "old"}, {"title": "4 mm gap - hex", "value": "hex"}, {"title": "new", "value": "new"}]), "the index is read again and an added bundle it now lists is dropped"
+
     asyncio.run(run())
+
+
+def test_a_bundle_is_labelled_from_its_manifest(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path / "hex", _hex_grid())
+    plain = bundle_label(Run(bundle), "hex")
+    _ = write_manifest(bundle, RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), meta=RunMeta(description="4 mm gap")), status="ok", run_id="hex"))
+
+    assert plain == "hex" and bundle_label(Run(bundle), "hex") == "4 mm gap · hex"
+
+
+def test_a_run_cleared_while_it_expands_is_not_drawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> tuple[object, bool]:
+        app = _shell("cleared", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_bundle(tmp_path / "quad", _quad_grid()))
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None
+        expand = scene.expand
+
+        def slowly(spec: DisplaySpec) -> bool:
+            time.sleep(0.3)
+            return expand(spec)
+
+        monkeypatch.setattr(scene, "expand", slowly)
+        app.state[FieldVar.EXPANSION] = str(Expansion.SECTION)
+        controller.request_redraw()
+        await asyncio.sleep(0.05)
+        controller.clear("gone")
+        await controller.settle()
+
+        return controller.drawn, str(SceneActor.BODIES) in viewer.plotter.renderer.actors
+
+    assert asyncio.run(run()) == (None, False), "the expansion that finished after the clear draws nothing"
+
+
+def test_a_failed_expansion_puts_the_show_as_choice_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> tuple[object, str]:
+        app = _shell("failed-expansion", tmp_path, monkeypatch)
+        controller = _controller(app)
+
+        await controller.load(_bundle(tmp_path / "quad", _quad_grid()))
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None
+
+        def failing(_spec: DisplaySpec) -> bool:
+            raise RuntimeError("no mirror today")
+
+        monkeypatch.setattr(scene, "expand", failing)
+        app.state[FieldVar.EXPANSION] = str(Expansion.MIRROR)
+        controller.request_redraw()
+        await controller.settle()
+
+        return app.state[FieldVar.EXPANSION], str(app.state[StateVar.STATUS])
+
+    assert asyncio.run(run()) == (str(Expansion.REVOLVE), "RuntimeError: no mirror today")
 
 
 def test_opening_something_that_is_not_a_bundle_ends_in_the_status_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -878,6 +884,7 @@ def test_the_body_table_sets_visibility_colors_and_opacities_that_reach_the_draw
             app.state[FieldVar.OPACITY_RANGE] = [0.1, 0.8]
             app.state[FieldVar.OPACITY_MAPPING] = True
 
+        controller.on_commit()
         await controller.settle()
         mapped = scene.spec.opacity_map
 
@@ -972,7 +979,7 @@ def test_the_controls_offer_a_color_input_per_row_and_a_swatch_per_colormap(tmp_
     assert _bound(pickers[1], "lead") == str(FieldVar.BODY_LEAD)
     assert [prop(node, "compact") for node in pickers] == [None, True], "the body colormap sits in the color column as a swatch"
     assert str(FieldVar.OPACITY_MAPPING) in str(conditions)
-    assert app.state[FieldVar.FIELD_GRADIENT] == colormap_gradient("viridis")
+    assert app.state[FieldVar.FIELD_GRADIENT] == colormap_gradient("turbo")
 
 
 def test_a_startup_field_line_region_names_its_body_on_the_first_run_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1069,3 +1076,108 @@ def test_the_body_colormap_picker_reads_same_as_field_until_a_pick_paints_the_sh
         (SAME_AS_FIELD, {"LEFT": "field", "RIGHT": "field"}),
         ("viridis", {"LEFT": "colormap", "RIGHT": "field"}),
     ], "with no shown field-colored body, a pick takes every shown body"
+
+
+# --- symmetry and the tour ------------------------------------------------------
+
+
+def test_a_flat_run_revolves_into_the_plotter_by_default_and_flattens_on_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> tuple[list[object], list[object], list[object]]:
+        app = _shell("symmetry", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        started = _start(app)
+        _ = await app.server.ready
+
+        await controller.load(_bundle(tmp_path / "quad", _quad_grid()))
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None
+        revolved: list[object] = [app.state[FieldVar.SYMMETRY], app.state[FieldVar.SOLVED_AS], scene.display_dim, viewer.plotter.bounds[0], controller.drawn_dim]
+
+        with app.state:
+            app.state[FieldVar.EXPANSION] = str(Expansion.MIRROR)
+
+        await controller.settle()
+        mirrored: list[object] = [scene.display_dim, viewer.plotter.bounds[0], viewer.plotter.bounds[5], controller.drawn_dim]
+
+        await controller.load(_bundle(tmp_path / "hex", _hex_grid()))
+        await controller.settle()
+        solid: list[object] = [app.state[FieldVar.SYMMETRY], app.state[FieldVar.SOLVED_AS]]
+
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+
+        return revolved, mirrored, solid
+
+    revolved, mirrored, solid = asyncio.run(run())
+
+    assert revolved == ["open", "Axisymmetric About Z", 3, pytest.approx(-2.0), 3], "a section opens revolved into a solid"
+    assert mirrored == [2, pytest.approx(-2.0), pytest.approx(0.0), 2], "a mirrored section is flat and draws in the same view"
+    assert solid == ["fixed", "Solid"]
+
+
+def test_the_tour_opens_once_after_the_first_run_shows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from femforge_workbench import app as shell
+    from femforge_workbench.persist import StateKey
+
+    monkeypatch.setattr(shell, "TOUR_DELAY", 0.0)
+
+    async def run() -> tuple[object, object, object, object, list[str]]:
+        app = _shell("tour", tmp_path, monkeypatch)
+        controller = _controller(app)
+        started = _start(app)
+        _ = await app.server.ready
+
+        await controller.load(_bundle(tmp_path / "hex", _hex_grid()))
+        await controller.settle()
+        await asyncio.sleep(0.05)
+        opened = app.state[StateVar.TOUR_OPEN]
+        unseen = app.persist.load(app.scope, StateKey.TOUR)
+
+        with app.state:
+            app.state[StateVar.TOUR_OPEN] = False
+
+        app.on_tour_finish("skipped")
+        seen = app.persist.load(app.scope, StateKey.TOUR)
+        app.offer_tour()
+        await asyncio.sleep(0.05)
+        again = app.state[StateVar.TOUR_OPEN]
+        targets = [str(cast("dict[str, object]", step)["target"]) for step in cast("list[object]", app.state[StateVar.TOUR_STEPS])]
+
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+
+        return opened, unseen, seen, again, targets
+
+    opened, unseen, seen, again, targets = asyncio.run(run())
+
+    assert opened is True and unseen is None, "a tour counts as seen once it ends, not once it opens"
+    assert seen == {"seen": True}
+    assert again is False, "a tour finished or skipped once never opens on its own again"
+    assert targets[:2] == ["#field3d-view", "#tour-run"] and targets[-1] == "#tour-help"
+
+
+def test_a_moved_range_thumb_pins_the_range(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> tuple[object, object]:
+        app = _shell("pin", tmp_path, monkeypatch)
+        controller = _controller(app)
+        started = _start(app)
+        _ = await app.server.ready
+
+        await controller.load(_bundle(tmp_path / "hex", _hex_grid()))
+        await controller.settle()
+        app.state[FieldVar.CLIM] = [2.2, 2.8]
+        controller.on_clim_commit()
+        await controller.settle()
+        scene = controller.scene
+        pinned = (app.state[FieldVar.AUTO_CLIM], scene.spec.clim if scene is not None else None)
+
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+
+        return pinned
+
+    auto, clim = asyncio.run(run())
+
+    assert auto is False and clim == (2.2, 2.8)

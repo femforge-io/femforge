@@ -5,12 +5,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
-from femforge.common.frame import Axisymmetric, Frame, Solid
 from femforge.common.vector import DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
 from femforge.elmer.variables import ElmerVariable
@@ -26,6 +25,10 @@ from femforge.physical.units import (
     Unit,
     Voltage,
 )
+
+
+if TYPE_CHECKING:
+    from femforge.frames import Frame
 
 
 __all__ = [
@@ -132,40 +135,24 @@ class Magnetization(Condition):
         if unit is None:
             raise ValueError("A Magnetization without a direction has no components to emit.")
 
-        match frame:
-            case Solid():
-                m: Vec3 = unit * magnitude
-                return {
-                    "Magnetization 1": f"{m.x:.6g}",
-                    "Magnetization 2": f"{m.y:.6g}",
-                    "Magnetization 3": f"{m.z:.6g}",
-                }
-            case Axisymmetric():
-                along: float | None = frame.axis.along(unit)
+        components: tuple[float, ...] = frame.solve_vector(unit)
 
-                if along is None:
-                    raise ValueError(f"Magnetization direction {self.direction} is not along the symmetry axis {frame.axis.direction}; a transverse magnetization is not axisymmetric.")
-
-                return {
-                    "Magnetization 1": "0",
-                    "Magnetization 2": f"{along * magnitude:.6g}",
-                }
+        return {f"Magnetization {index}": f"{component * magnitude:.6g}" for index, component in enumerate(components, start=1)}
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise when an axisymmetric ``frame`` meets a direction off its symmetry axis."""
+        """Raise when ``frame`` has no form for the direction."""
         # A missing direction is left to Sim.validate, which reports it as a missing direction rather than a frame mismatch.
-        if not isinstance(frame, Axisymmetric) or self.direction is None:
+        if self.direction is None:
             return
 
-        if frame.axis.along(self.direction) is None:
-            raise ValueError(f"Magnetization direction {self.direction} is not along the symmetry axis {frame.axis.direction}; a transverse magnetization is not axisymmetric.")
+        try:
+            _ = frame.solve_vector(self.direction)
+        except ValueError as error:
+            raise ValueError(f"Magnetization direction {self.direction} has no form in the {frame.label} frame: {error}") from None
 
 
 class CurrentDensity(Condition):
-    """Uniform signed azimuthal current density J = N·I/A over a winding window (axisymmetric magnetostatics, body target), the homogenized stranded-coil drive.
-
-    Requires ``frame=Axisymmetric()``.
-    """
+    """Uniform signed azimuthal current density J = N·I/A over a winding window (axisymmetric magnetostatics, body target), the homogenized stranded-coil drive."""
 
     kind: Literal["current_density"] = "current_density"
     """Discriminator that names this condition type in a serialized config."""
@@ -180,9 +167,9 @@ class CurrentDensity(Condition):
     """`J` `[A/m²]`: Azimuthal current density (signed) imposed uniformly over the body."""
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise unless ``frame`` is axisymmetric."""
-        if isinstance(frame, Solid):
-            raise ValueError("CurrentDensity is the axisymmetric coil drive; it requires frame=Axisymmetric().")
+        """Raise when ``frame`` has no azimuthal magnetostatic solve for this drive to feed."""
+        if not frame.supports(Physics.MAGNETOSTATICS_2D):
+            raise ValueError(f"CurrentDensity is the azimuthal coil drive of '{Physics.MAGNETOSTATICS_2D.value}', which the {frame.label} frame has no form for.")
 
 
 class FixedTemperature(Condition):
@@ -411,11 +398,11 @@ class ForceComponent(Condition):
         return out
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise when torque is requested under an axisymmetric ``frame``."""
+        """Raise when torque is requested under a ``frame`` whose force lumping yields none."""
         torque: bool = self.calculate_magnetic_torque or self.torque_origin is not None or self.torque_axis is not None
 
-        if torque and isinstance(frame, Axisymmetric):
-            raise ValueError("ForceComponent torque has no axisymmetric form; drop calculate_magnetic_torque, torque_origin and torque_axis under frame=Axisymmetric().")
+        if torque and not frame.lumps_torque:
+            raise ValueError(f"ForceComponent torque has no form in the {frame.label} frame; drop calculate_magnetic_torque, torque_origin and torque_axis.")
 
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.

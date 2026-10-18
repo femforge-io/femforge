@@ -74,10 +74,13 @@ class Cls(StrEnum):
     CONTROLS = "flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden text-label"
     CONTROL = "w-full shrink-0 gap-1"
     BUSY = "h-0.5 shrink-0 animate-pulse"
-    SECTIONS = "w-full shrink-0"
-    SECTION_ITEM = "border-b-0"
-    SECTION_TRIGGER = "items-center rounded-none border-t border-border bg-muted/50 px-2 py-2 text-label font-semibold hover:bg-muted hover:no-underline focus-visible:ring-inset"
+    SECTIONS = "flex w-full shrink-0 flex-col gap-2"
+    SECTION_ITEM = "border-y border-border first:border-t-0"
+    SECTION_TRIGGER = "items-center rounded-none bg-muted/50 px-2 py-2 text-label font-semibold hover:bg-muted hover:no-underline focus-visible:ring-inset data-[state=open]:border-b"
     SECTION_BODY = "flex flex-col gap-3 px-2 pt-3 pb-4"
+    SECTION_BODY_STACK = "flex flex-col gap-3"
+    SEGMENTED = "grid w-full grid-cols-3"
+    SEGMENT = "h-6 px-1 text-label data-[state=off]:text-muted-foreground data-[state=on]:bg-primary/20 data-[state=on]:font-semibold data-[state=on]:text-foreground"
 
 
 class Shared(StrEnum):

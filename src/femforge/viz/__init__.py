@@ -18,18 +18,12 @@ from femforge.viz.field_display import (
     feature_outline,
     field_infos,
     list_fields,
-    log_colorbar_ticks,
-    mesh3d_traces,
     model_dim_of,
-    outline_segments,
-    outline_traces,
-    plotly_colorscale,
     polar_angle,
     polar_rgba,
     reduce_field,
     sample_colormap,
     split_by_body,
-    surface_triangles,
 )
 from femforge.viz.field_lines import (
     FLUX_DENSITY,
@@ -45,6 +39,7 @@ from femforge.viz.field_lines import (
     StreamlineActors,
     build_streamlines,
     build_streamlines_from_vtu,
+    build_swept_streamlines,
     draw_streamlines,
     prepare_streamline_source,
     render_field_lines,
@@ -53,6 +48,7 @@ from femforge.viz.field_lines import (
     select_flux_density_array,
 )
 from femforge.viz.scene import Renderable, Scene
+from femforge.viz.symmetry import Basis, Expansion, mirror, revolve
 
 
 __all__ = [
@@ -71,6 +67,7 @@ __all__ = [
     "seed_points",
     "build_streamlines",
     "build_streamlines_from_vtu",
+    "build_swept_streamlines",
     "prepare_streamline_source",
     "draw_streamlines",
     "render_streamlines",
@@ -91,17 +88,15 @@ __all__ = [
     "polar_rgba",
     "color_range",
     "camera_needs_reset",
-    "plotly_colorscale",
-    "log_colorbar_ticks",
-    "mesh3d_traces",
-    "outline_traces",
     "list_fields",
     "split_by_body",
     "feature_outline",
     "model_dim_of",
     "sample_colormap",
-    "surface_triangles",
-    "outline_segments",
     "Renderable",
     "Scene",
+    "Expansion",
+    "Basis",
+    "mirror",
+    "revolve",
 ]

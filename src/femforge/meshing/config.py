@@ -5,7 +5,7 @@ from typing import Protocol
 from pydantic import ConfigDict, Field
 
 from femforge.common.config import ConfigArea
-from femforge.common.frame import Frame
+from femforge.frames import Frame
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.physical.domain import DomainConfig
 from femforge.physical.units import Length, quantity
@@ -38,8 +38,10 @@ class MeshConfig(ConfigArea):
 class SupportsMeshing(Protocol):
     """The config surface the gmsh `Mesher` requires, which [`SimulationConfig`][femforge.config.SimulationConfig] satisfies structurally."""
 
-    frame: Frame
-    """The solve frame, whose ``model_dim`` is the body dimension of the STEP."""
+    @property
+    def frame(self) -> Frame:
+        """The solve frame, whose ``model_dim`` is the body dimension of the STEP."""
+        ...
 
     mesh: MeshConfig
     """The gmsh mesh settings (STEP source, element size, gmsh options)."""

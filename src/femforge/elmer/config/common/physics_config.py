@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from femforge.common.frame import Axisymmetric, Frame
 from femforge.elmer.config.common.constants import Constants
 from femforge.elmer.config.common.generic import GenericSolver
 from femforge.elmer.config.common.operating_point import OperatingPoint
@@ -23,6 +22,10 @@ from femforge.elmer.config.output.result_output import ResultOutputSolver
 from femforge.elmer.config.output.save_scalars import SaveScalarsSolver
 from femforge.elmer.config.thermal.heat import HeatSolver
 from femforge.elmer.solver_log import LoopTargets, normalize_solver_key
+
+
+if TYPE_CHECKING:
+    from femforge.frames import Frame
 
 
 # The discriminated union PhysicsConfig stores: full subclass fields survive model_dump/validate round-trips
@@ -69,11 +72,10 @@ class PhysicsConfig(BaseModel):
         raise KeyError(f"No {kind.__name__} in this physics' solver stack ({[type(s).__name__ for s in self.solvers]}).")
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise when this stack's coordinate system disagrees with ``frame``: per-radian exactly when the frame is axisymmetric."""
+        """Raise when this stack's coordinate system disagrees with ``frame``'s: one integrates per radian and the other does not."""
         coordinate_system: CoordinateSystem = self.simulation.coordinate_system
-        axisymmetric: bool = isinstance(frame, Axisymmetric)
 
-        if coordinate_system.per_radian == axisymmetric:
+        if coordinate_system.per_radian == frame.coordinate_system.per_radian:
             return
 
         raise ValueError(f"The solver stack's Coordinate System '{coordinate_system.value}' cannot solve frame={type(frame).__name__}(); re-customize the physics after setting the frame.")

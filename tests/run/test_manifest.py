@@ -12,7 +12,7 @@ from typing import cast
 import pytest
 
 import femforge.run.manifest as manifest_module
-from femforge.common.frame import Axisymmetric
+from femforge.frames import Axisymmetric
 from femforge.elmer.config import PhysicsSelection
 from femforge.elmer.physics import Physics
 from femforge.config import SimulationConfig

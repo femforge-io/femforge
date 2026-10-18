@@ -128,7 +128,7 @@ def test_convergence_targets_multiword_equation_and_none_fields() -> None:
 
 
 def test_solved_stack_applies_the_frame() -> None:
-    from femforge.common.frame import Axisymmetric, Solid
+    from femforge.frames import Axisymmetric, Solid
     from femforge.elmer.config import CoordinateSystem, MagnetoDynamics2DSolver, solved_stack
 
     assert solved_stack(Physics.MAGNETOSTATICS, Solid()).model_dump() == physics_config(Physics.MAGNETOSTATICS).model_dump()

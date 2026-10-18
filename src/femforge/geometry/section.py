@@ -6,8 +6,7 @@ from typing import Callable, Iterable, cast
 
 import build123d as b3d
 
-from femforge.common.frame import Axis
-from femforge.common.vector import Vec3
+from femforge.frames.base import SolvePlane
 from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
 
 
@@ -76,24 +75,17 @@ def cross_section_3D(
     return result
 
 
-def axisymmetric_cross_section(compound: TaggedCompound, axis: Axis = Axis.Z, radial: Vec3 | None = None, margin: float = 1.0) -> TaggedCompound:
-    """Section every tagged solid on the half-plane through ``axis`` toward ``radial`` into the solve frame (X = radial >= 0, Y = along the axis, Z = 0); a missed solid raises.
+def axisymmetric_cross_section(compound: TaggedCompound, plane: SolvePlane, margin: float = 1.0) -> TaggedCompound:
+    """Section every tagged solid on the X >= 0 half of ``plane`` into the solve frame (X = radial >= 0, Y = along the axis, Z = 0); a missed solid raises.
 
     Args:
         compound: The tagged assembly to section.
-        axis: The axis of symmetry.
-        radial: The direction from the axis toward the half-plane; None picks the world axis least aligned with ``axis``.
+        plane: The solve plane, from [`Axisymmetric.plane`][femforge.frames.Axisymmetric.plane].
         margin: How far the half-plane reaches past the parts.
     """
-    direction: b3d.Vector = b3d.Vector(axis.direction.x, axis.direction.y, axis.direction.z)
-
-    # By default the half-plane faces the world axis least aligned with the symmetry axis (X first): Axis.Z maps
-    # authored X to radial, and Axis.Y is the identity.
-    basis: tuple[b3d.Vector, ...] = (b3d.Vector(1, 0, 0), b3d.Vector(0, 1, 0), b3d.Vector(0, 0, 1))
-    seed: b3d.Vector = min(basis, key=lambda unit: abs(unit.dot(direction))) if radial is None else b3d.Vector(radial.x, radial.y, radial.z)
-    toward: b3d.Vector = (seed - direction * seed.dot(direction)).normalized()
-    origin: b3d.Vector = b3d.Vector(axis.origin.x, axis.origin.y, axis.origin.z)
-    solve_frame = b3d.Plane(origin=origin, x_dir=toward, z_dir=toward.cross(direction))
+    toward: b3d.Vector = b3d.Vector(*plane.radial.to_tuple())
+    direction: b3d.Vector = b3d.Vector(*plane.axis.to_tuple())
+    solve_frame = b3d.Plane(origin=b3d.Vector(*plane.origin.to_tuple()), x_dir=toward, z_dir=toward.cross(direction))
 
     leaves = compound.placed_leaves(solve_frame.location.inverse())
     parts: list[TaggedPart] = [leaf for leaf in leaves if isinstance(leaf, TaggedPart)]
@@ -113,7 +105,7 @@ def axisymmetric_cross_section(compound: TaggedCompound, axis: Axis = Axis.Z, ra
         section = common(half_plane)
         section_faces: list[b3d.Face] = list(section.faces()) if section is not None else []
         if not section_faces:
-            raise ValueError(f"the axisymmetric section missed the solid tagged {part.tags_str()!r}: it does not reach the half-plane through {axis!r}.")
+            raise ValueError(f"the axisymmetric section missed the solid tagged {part.tags_str()!r}: it does not reach the half-plane through {plane.origin} along {plane.axis}.")
 
         for face in section_faces:
             box: b3d.BoundBox = face.bounding_box()

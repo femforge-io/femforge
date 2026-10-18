@@ -12,11 +12,10 @@ from pydantic import BaseModel, ConfigDict, SerializeAsAny
 from femforge.artifacts.keys import artifact_key, sha256_json, spec_payload
 from femforge.artifacts.kind import ArtifactKind, BuiltinKind, Produced
 from femforge.common.files import BundleFile
-from femforge.common.frame import Frame, Solid
 from femforge.common.pydantic import HashExclude
 from femforge.config import SimulationConfig
+from femforge.frames import FrameUnion
 from femforge.geometry.config import GeometryArea
-from femforge.geometry.frame import apply_frame
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.spec import MeshSpec, TagSelectorSpec
 from femforge.physical.units import CANONICAL_UNITS, Quantity, quantity
@@ -64,13 +63,13 @@ class StepSpec(BaseModel):
     source: SerializeAsAny[GeometryArea] | AuthoredStep
     """The parametric geometry or the authored STEP file, in its authored frame."""
 
-    frame: Frame
+    frame: FrameUnion
     """How the authored model maps onto the solve."""
 
     @property
     def passes_through(self) -> bool:
         """Whether the solve meshes the authored file itself: nothing is built or converted, so nothing is cached."""
-        return isinstance(self.source, AuthoredStep) and isinstance(self.frame, Solid)
+        return isinstance(self.source, AuthoredStep) and not self.frame.rewrites_geometry
 
 
 def _build_step(spec: StepSpec, workdir: Path) -> Produced:
@@ -82,7 +81,7 @@ def _build_step(spec: StepSpec, workdir: Path) -> Produced:
         case GeometryArea():
             authored = spec.source.build_step(step_path)
 
-    _ = apply_frame(authored, step_path, spec.frame)
+    _ = spec.frame.prepare_geometry(authored, step_path)
     return Produced(files=(BundleFile.GEOMETRY_STEP,))
 
 

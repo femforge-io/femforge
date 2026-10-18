@@ -4,4 +4,4 @@ The composed simulation config that ties the mesh, the domain and the Elmer phys
 
 ::: femforge.config
 
-::: femforge.common.frame
+::: femforge.frames

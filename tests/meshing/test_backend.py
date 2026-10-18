@@ -9,7 +9,7 @@ from typing import Literal
 import pytest
 
 import femforge.meshing
-from femforge.common.frame import Axisymmetric, Solid
+from femforge.frames import Axisymmetric, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction
 from femforge.config import SimulationConfig
@@ -52,7 +52,7 @@ def _report() -> MeshReport:
 
 
 def test_a_job_writes_geometry_msh_unless_told_otherwise_and_round_trips() -> None:
-    job = MeshJob(spec=_spec(), step="runs/a/geometry.step")
+    job = MeshJob(spec=_spec(), frame=Solid(), step="runs/a/geometry.step")
 
     restored = MeshJob.model_validate_json(job.model_dump_json())
 
@@ -61,7 +61,7 @@ def test_a_job_writes_geometry_msh_unless_told_otherwise_and_round_trips() -> No
 
 
 def test_mesh_inputs_rebuild_the_frame_the_mesh_settings_and_a_bare_domain() -> None:
-    inputs = mesh_inputs(MeshJob(spec=_spec(), step="model.step"))
+    inputs = mesh_inputs(MeshJob(spec=_spec(), frame=Solid(), step="model.step"))
 
     assert isinstance(inputs.frame, Solid)
     assert inputs.mesh.step == "model.step"
@@ -69,13 +69,13 @@ def test_mesh_inputs_rebuild_the_frame_the_mesh_settings_and_a_bare_domain() -> 
     assert inputs.mesh.resolved_gmsh_options().num_threads == 1
     assert [(material.name, material.tag) for material in inputs.domain.materials] == [("Air", "Air"), ("N42", "N42")]
     assert [(dict(tag.selector), tag.mesh_size, tag.conditions) for tag in inputs.domain.tags] == [({"Magnetization": "N"}, 0.5 * U.mm, [])]
-    assert isinstance(mesh_inputs(MeshJob(spec=_spec(model_dim=2), step="model.step")).frame, Axisymmetric)
+    assert isinstance(mesh_inputs(MeshJob(spec=_spec(model_dim=2), frame=Axisymmetric(), step="model.step")).frame, Axisymmetric)
 
 
 def test_mesh_inputs_name_each_group_as_the_full_config_would() -> None:
     magnet = EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 0, 1))])
     config = SimulationConfig(mesh=MeshConfig(step="model.step"), domain=DomainConfig(materials=[N42(), Air()], tags=[magnet]))
-    inputs = mesh_inputs(MeshJob(spec=mesh_spec(config, "0" * 64), step="model.step"))
+    inputs = mesh_inputs(MeshJob(spec=mesh_spec(config, "0" * 64), frame=config.frame, step="model.step"))
     warnings: list[str] = []
 
     rebuilt = {material.tag: compose_group_name(material, inputs.domain.tags, warnings.append) for material in inputs.domain.materials}
@@ -95,7 +95,7 @@ def test_gmsh_mesher_hands_the_job_to_the_in_process_mesher(tmp_path: Path, monk
         return _report()
 
     monkeypatch.setattr(gmsh_backend, "mesh_with_gmsh", mesh_with_gmsh)
-    job = MeshJob(spec=_spec(), step="model.step")
+    job = MeshJob(spec=_spec(), frame=Solid(), step="model.step")
 
     report = GmshMesher().mesh(job, tmp_path)
 

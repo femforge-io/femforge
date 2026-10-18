@@ -8,7 +8,7 @@ One typed model, [SimulationConfig][femforge.config.SimulationConfig], describes
 
 - [SimulationConfig][femforge.config.SimulationConfig] (`src/femforge/config.py:37-61`)
     - `geometry`: a [GeometryArea][femforge.geometry.GeometryArea] or None (`src/femforge/geometry/config.py`), read by the driver's geometry stage
-    - `frame`: [Solid][femforge.common.frame.Solid] or [Axisymmetric][femforge.common.frame.Axisymmetric] (`src/femforge/common/frame.py`), read by the geometry stage, the mesher and the sif writer
+    - `frame`: a [Frame][femforge.frames.Frame] (`src/femforge/frames`), read by the geometry stage, the mesher, the sif writer and the parser
     - `mesh`: [MeshConfig][femforge.meshing.MeshConfig] (`src/femforge/meshing/config.py`), read by the mesher
     - `domain`: [DomainConfig][femforge.physical.DomainConfig] with materials and [EntityTag][femforge.physical.EntityTag] overrides (`src/femforge/physical/domain.py`), read by the mesher and, through the mesh groups, by the sif writer
     - `physics`: [PhysicsSelection][femforge.elmer.config.PhysicsSelection] (`src/femforge/elmer/config/common/selection.py`), resolved into a [PhysicsConfig][femforge.elmer.config.PhysicsConfig] solver stack
@@ -24,9 +24,9 @@ A backend reads a Protocol slice or plain data, never `SimulationConfig`, so the
 
 | Consumer | Reads | Where |
 |---|---|---|
-| `Mesher` | [SupportsMeshing][femforge.meshing.SupportsMeshing]: `frame`, `mesh`, `domain` | `src/femforge/meshing/config.py:38-48`, `src/femforge/meshing/mesher.py:77-79` |
+| `Mesher` | [SupportsMeshing][femforge.meshing.SupportsMeshing]: `frame`, `mesh`, `domain` | `src/femforge/meshing/config.py:38-50`, `src/femforge/meshing/mesher.py:77-79` |
 | `MeshEntity` | the bare `DomainConfig` | `src/femforge/meshing/mesh_entity.py:16-27` |
-| [MeshBackend][femforge.meshing.MeshBackend] | a [MeshJob][femforge.meshing.MeshJob]: the mesh spec and the STEP path | `src/femforge/meshing/backend.py:66-104` |
+| [MeshBackend][femforge.meshing.MeshBackend] | a [MeshJob][femforge.meshing.MeshJob]: the mesh spec, the frame and the STEP path | `src/femforge/meshing/backend.py:66-107` |
 | `Sim` | the mesh groups, a physics, a solver stack and a frame | `src/femforge/elmer/sim.py:65-72` |
 | [ExecutionBackend][femforge.elmer.ExecutionBackend] | directories | `src/femforge/elmer/runtime/backend.py:14-35` |
 
@@ -66,31 +66,41 @@ The interface has three rules:
 
 - **The parameters are the identity.** The STEP spec hashes the geometry model itself, so two configs with equal parameters and an equal frame share one STEP, and a changed parameter makes a new one (`src/femforge/run/kinds.py:97-100`). The STEP file is derived output.
 - **Subclass fields survive a round trip.** The `geometry` field is `SerializeAsAny[GeometryArea]`, so a dump carries the subclass's fields (`src/femforge/config.py:43`), and `GeometryArea` sets `extra="allow"`, so a manifest loaded back as the base class keeps them readable (`src/femforge/geometry/config.py:15-16`).
-- **The geometry builds in the authored frame.** The driver calls `build_step` into the run directory, converts the result with [apply_frame][femforge.geometry.frame.apply_frame], and repoints `mesh.step` at the solve-frame STEP (`src/femforge/run/driver.py:71-92`). The repointed path uses forward slashes, because ElmerGrid on Windows fails on backslashes in its mesh path (`src/femforge/run/driver.py:65-68`).
+- **The geometry builds in the authored frame.** The driver calls `build_step` into the run directory, converts the result with the frame's [prepare_geometry][femforge.frames.Frame.prepare_geometry], and repoints `mesh.step` at the solve-frame STEP (`src/femforge/run/driver.py:70-91`). The repointed path uses forward slashes, because ElmerGrid on Windows fails on backslashes in its mesh path (`src/femforge/run/driver.py:65-68`).
 
 `import femforge.geometry` stays light: `build123d_geometry.py` imports `TaggedCompound`, and with it build123d, only under `TYPE_CHECKING` (`src/femforge/geometry/build123d_geometry.py:12-13`).
 
 ## The frame area
 
-The frame is a discriminated union on `kind` (`src/femforge/common/frame.py:131`). Both members are frozen, and each states the mesh dimension it solves on.
+The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-150`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`) and [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
 
-| Frame | `model_dim` | The STEP the solve meshes | `MAGNETOSTATICS` solves as |
-|---|---|---|---|
-| `Solid()` | 3 | the authored STEP itself | `MAGNETOSTATICS` |
-| `Axisymmetric(axis, radial)` | 2 | the r–z section [apply_frame][femforge.geometry.frame.apply_frame] writes | `MAGNETOSTATICS_2D` |
+`FrameUnion`, the discriminated union on `kind`, types every serialized frame field: `SimulationConfig.frame`, `Result.frame`, `StepSpec.frame` and `MeshJob.frame` (`src/femforge/frames/__init__.py:12`). Every function and attribute that only calls the hooks takes the base `Frame`.
 
-`src/femforge/common/frame.py:63-128` defines both, and `src/femforge/geometry/frame.py:47-65` converts the STEP. An unset `radial` is left out of every dump, so it adds nothing to the run identity (`src/femforge/common/frame.py:93-94`).
-
-The frame decides what the physics selection solves as, in four places:
-
-| Check | Effect | Where |
+| Hook | What it answers | Called by |
 |---|---|---|
-| `Physics.in_frame` | maps `MAGNETOSTATICS` to `MAGNETOSTATICS_2D` and keeps `THERMAL` under `Axisymmetric`; raises for a physics with no axisymmetric form | `src/femforge/elmer/physics.py:37-49` |
-| `solved_stack` | builds the preset of the mapped physics and sets the `Axi Symmetric` coordinate system under `Axisymmetric` | `src/femforge/elmer/config/common/presets.py:24-31` |
-| `PhysicsSelection.selected` | rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum | `src/femforge/elmer/config/common/selection.py:15-36` |
-| `PhysicsConfig.check_frame` | rejects authored overrides whose coordinate system is per radian when the frame is solid, or the reverse | `src/femforge/elmer/config/common/physics_config.py:71-79` |
+| `label` | a short name for messages and the UI | condition errors, the workbench |
+| `model_dim` | the body dimension the mesher meshes | `Mesher.body_dim` (`src/femforge/meshing/mesher.py:93-95`), `mesh_spec`, the run index |
+| `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-34`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-81`) |
+| `plane` | the solve plane in the authored model, None for a whole-model solve | `axisymmetric_cross_section`, the workbench's symmetry expansion |
+| `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:70-91`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:69-72`) |
+| `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:75-85`) |
+| `solves` | the form a physics solves as, raising when it has none | `SimulationConfig.solved_physics`, `PhysicsSelection.check_frame`, `solved_stack`, `Sim` |
+| `supports` | whether `solves` has a form; concrete on the base | `CurrentDensity.check_frame` |
+| `lumps_torque` | whether Elmer's force lumping yields a torque | `ForceComponent.check_frame` |
+| `solve_vector` | an authored vector in solve coordinates | `Magnetization.to_elmer` and `check_frame` (`src/femforge/physical/conditions.py:131-151`) |
+| `total` | the whole-model total of a vector Elmer integrated over the solve domain | `parse_result` (`src/femforge/run/parse.py:213-216`) |
+| `along` | a solve-frame vector's component along an authored axis | `Result.axial_force` (`src/femforge/run/result.py:105-109`) |
 
-Each condition also checks the frame (`src/femforge/physical/conditions.py:105-106`), and `Sim` repeats the check for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:98-102`). [Frames](../../user-guide/frames.md) covers the frames from the user side.
+The config checks the frame on construction and on assignment through `SimulationConfig`'s three validators, each condition's `check_frame` and `PhysicsSelection.check_frame`, and `Sim` repeats the condition check for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:96-102`). `PhysicsSelection.selected` rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum, because it is the form `MAGNETOSTATICS` solves as under `Axisymmetric` (`src/femforge/elmer/config/common/selection.py:18-38`).
+
+A frame imports `femforge.elmer.physics` and nothing else from the solver side: `coordinate_system` imports `CoordinateSystem` in its body, and `Axisymmetric.prepare_geometry` imports the geometry stack in its body, so `femforge.elmer.config` and `femforge.physical` can import the frame without a cycle.
+
+To add a frame:
+
+1. Subclass `Frame` in a new module under `src/femforge/frames/` with a `kind: Literal["..."]` default and its fields, and implement every abstract hook.
+2. Add it to `FrameUnion` and `__all__` in `src/femforge/frames/__init__.py`, and to the root stub `src/femforge/__init__.pyi`.
+3. Give it a test module under `tests/frames/` that covers every hook.
+4. Write its user-guide page under `docs/user-guide/frames/`, add a row to the shipped-frames table on the [Frames](../../user-guide/frames/index.md) page and an entry to the `mkdocs.yml` nav, and update the coordinate systems table in [Status](../../overview/status.md#frames).
 
 ## How conditions and tags bind
 

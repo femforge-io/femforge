@@ -66,6 +66,7 @@ class ToggleGroup(Element):
         orientation: Prop[Orientation] = None,
         disabled: Prop[bool] = None,
         spacing: Prop[float] = None,
+        aria_label: Prop[str] = None,
         **kwargs: Unpack[Shared],
     ) -> None:
         """Creates the group; a prop left None keeps the component's default.
@@ -82,6 +83,7 @@ class ToggleGroup(Element):
             orientation: The direction the items run.
             disabled: Disables every item.
             spacing: The gap between items in Tailwind spacing units; 0 joins them.
+            aria_label: The accessible name of the group.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         if model is not None and on_value_change is None:

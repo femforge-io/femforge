@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 from pydantic import TypeAdapter
 
-from femforge.common.frame import Axis, Axisymmetric, Solid
+from femforge.frames import Axis, Axisymmetric, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.physics import Physics
 from femforge.physical.conditions import (
@@ -68,7 +68,7 @@ def test_magnetization_projects_onto_the_axisymmetric_axis() -> None:
 
 
 def test_magnetization_off_the_axisymmetric_axis_raises() -> None:
-    with pytest.raises(ValueError, match="not axisymmetric"):
+    with pytest.raises(ValueError, match="not along the symmetry axis"):
         Magnetization(direction=Direction(1, 0, 1)).to_elmer(magnitude=10.0, frame=Axisymmetric())
 
 
@@ -226,3 +226,10 @@ def test_a_magnetization_without_a_direction_has_nothing_to_emit() -> None:
 
     with pytest.raises(ValueError, match="without a direction"):
         unmagnetized.to_elmer(magnitude=10.0, frame=Solid())
+
+
+def test_a_zero_magnitude_magnetization_emits_zeros_in_every_frame() -> None:
+    cond = Magnetization(direction=Direction(0, 0, 1))
+
+    assert cond.to_elmer(magnitude=0.0, frame=Solid()) == {"Magnetization 1": "0", "Magnetization 2": "0", "Magnetization 3": "0"}
+    assert cond.to_elmer(magnitude=0.0, frame=Axisymmetric()) == {"Magnetization 1": "0", "Magnetization 2": "0"}

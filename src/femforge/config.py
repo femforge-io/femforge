@@ -5,10 +5,10 @@ from typing import Mapping
 from pydantic import ConfigDict, Field, SerializeAsAny, ValidationInfo, field_validator
 
 from femforge.common.config import ConfigArea
-from femforge.common.frame import Axisymmetric, Frame, Solid
 from femforge.common.tags import TagDict
 from femforge.elmer.config import PhysicsConfig, PhysicsSelection, solved_stack
 from femforge.elmer.physics import Physics
+from femforge.frames import Frame, FrameUnion, Solid
 from femforge.geometry.config import GeometryArea
 from femforge.meshing.config import MeshConfig
 from femforge.physical.domain import DomainConfig
@@ -45,8 +45,8 @@ class SimulationConfig(ConfigArea):
     meshing and repoints ``mesh.step`` at it — the STEP is derived output, and the run identity comes from these
     parameters rather than an authored file."""
 
-    frame: Frame = Field(default_factory=Solid)
-    """How the authored model maps onto the solve: as-is in 3D, or its axisymmetric r–z half-plane."""
+    frame: FrameUnion = Field(default_factory=Solid)
+    """How the authored model maps onto the solve; see [`Frame`][femforge.frames.Frame]."""
 
     mesh: MeshConfig = Field(default_factory=MeshConfig)
     """The gmsh mesh settings: STEP source, global element size, gmsh options."""
@@ -81,7 +81,7 @@ class SimulationConfig(ConfigArea):
         """Reject conditions the frame cannot solve."""
         frame: object = info.data.get("frame")
 
-        if isinstance(frame, Solid | Axisymmetric):
+        if isinstance(frame, Frame):
             domain.check_frame(frame)
 
         return domain
@@ -92,14 +92,14 @@ class SimulationConfig(ConfigArea):
         """Reject a selection the frame cannot solve."""
         frame: object = info.data.get("frame")
 
-        if isinstance(frame, Solid | Axisymmetric):
+        if isinstance(frame, Frame):
             physics.check_frame(frame)
 
         return physics
 
     def solved_physics(self) -> Physics:
-        """The physics the selection solves as under ``frame`` (``MAGNETOSTATICS`` becomes ``MAGNETOSTATICS_2D`` when axisymmetric)."""
-        return self.physics.selected.in_frame(self.frame)
+        """The physics the selection solves as under ``frame``."""
+        return self.frame.solves(self.physics.selected)
 
     def resolved_stack(self) -> PhysicsConfig:
         """The solver stack the run solves: the authored ``physics.overrides``, else the solved physics' preset in ``frame``."""

@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from femforge.common.frame import Solid
+from femforge.frames import Solid
 from femforge.common.vector import Vec3
 from femforge.config import SimulationConfig
 from femforge.meshing.config import MeshConfig

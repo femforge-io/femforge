@@ -68,7 +68,7 @@ Without `geometry`, the mesher imports the file at [`MeshConfig.step`][femforge.
 
 gmsh converts the STEP from its own unit to metres on import (`GmshOptions.target_units="M"`), and build123d writes millimetres. Author the CAD in millimetres. A mesh size carries its own unit, as in `0.5 * ff.U.mm`. The mesher warns when the meshed model spans more than 2 m, which usually means a unit slip.
 
-The model stays in the frame you author it in. `SimulationConfig.frame` maps it onto the solve, for example to an axisymmetric half-plane. See [Frames](frames.md).
+The model stays in the frame you author it in. `SimulationConfig.frame` maps it onto the solve, whole or as a section. See [Frames](frames/index.md).
 
 ## Tagged shapes
 

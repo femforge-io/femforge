@@ -14,7 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from femforge.artifacts.lock import LOCK_SUFFIX, STALE_AFTER_S, DirLock
 from femforge.common.files import BundleFile, tree_size
-from femforge.common.frame import Frame
+from femforge.frames import Frame, FrameUnion
 from femforge.telemetry.context import current_sweep_point
 from femforge.telemetry.schemas import LIVE_RUN_SCHEMA, RUN_INDEX_SCHEMA, TIMESTAMP, LiveRunColumn, RunColumn, RunSource
 
@@ -32,7 +32,7 @@ __all__ = ["RunIndex", "RunQuery", "live_runs", "run_row"]
 CANDIDATE_SCHEMA = pl.Schema({RunColumn.RUN_ID: pl.String, RunColumn.MANIFEST_MTIME: TIMESTAMP})
 """The two columns the incremental pass anti-joins on: a bundle is re-read exactly when its manifest mtime is unknown."""
 
-FRAME: TypeAdapter[Frame] = TypeAdapter(Frame)
+FRAME: TypeAdapter[FrameUnion] = TypeAdapter(FrameUnion)
 """Reads a manifest's recorded ``config.frame``."""
 
 RECORDED = "_recorded"

@@ -71,7 +71,11 @@ def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_se
 
     assert prop(root, "className") == "flex h-full flex-col"
     assert children[0]["tag"] == "ff-theme" and prop(children[0], "dark") == {"js": str(StateVar.DARK)}
-    assert [child["tag"] for child in children[1:]] == ["header", "main"]
+    assert [child["tag"] for child in children[1:]] == ["header", "ff-tour", "main"]
+    header = cast("list[dict[str, object]]", children[1]["children"])
+    assert [child["tag"] for child in header[:2]] == ["div", "div"], "the brand and a divider lead the title"
+    assert [prop(node, "src") for node in find(header[0], "img")] == ["/__ff/ff-logo.svg"] and texts(find(header[0], "span")[0]) == ["femforge"]
+    assert app.state["trame__favicon"] == "/__ff/favicon.png"
     assert len(dock) == 1 and prop(dock[0], "dark") == {"js": str(StateVar.DARK)} and prop(dock[0], "popoutUrl") == "/__ff/popout.html"
     render = cast("dict[str, object]", prop(dock[0], "renderPanel"))
     slot = cast("dict[str, object]", render["slot"])
@@ -81,7 +85,7 @@ def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_se
     assert cast("dict[str, object]", cast("dict[str, object]", prop(switcher[0], "onSelect"))["callback"])["args"] == {"js": "[card.name]"}
     assert prop(close_all[0], "value") == {"js": f"{StateVar.OPENED}.length"} and texts(find(close_all[0], "ff-button")[0]) == ["Close All"]
     assert [prop(node, "templateName") for node in find(root, "trame-template")][0] == str(Template.HEADER)
-    assert [prop(node, "name") for node in find(root, "ff-icon")] == ["chevron-down", "layout-grid"]
+    assert [prop(node, "name") for node in find(root, "ff-icon")] == ["chevron-down", "layout-grid", "circle-help"]
     assert find(root, "trame-script") == [], "the reload script is served only under the dev flag"
 
 

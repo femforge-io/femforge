@@ -295,7 +295,7 @@ After the solve, [parse_result][femforge.run.parse_result] reads the finished bu
 - **Status** comes from `elmersolver.log`: `error` when the log is missing, any line holds `ERROR` or the run never printed `ALL DONE`; `diverged` on a non-convergence marker or a NaN; `ok` otherwise (`src/femforge/run/parse.py:126-174`).
 - **Scalars** come from each `.dat` and its `.dat.names` sidecar, reading the last row, because a sweep or a transient run appends rows (`src/femforge/run/parse.py:43-70`).
 - **A partitioned solve takes rank 0.** It writes per-rank `.dat.<rank>` files, and the exported values are already globally reduced, so rank 0 stands in for the whole and the parser never sums. Disagreeing ranks log a warning, because they mean a reduction without a global operator (`src/femforge/run/parse.py:90-123`).
-- **Forces** read only the global CalcFields sums, so per-Component triples never fold into the total. The per-Component values join `components.yml`, and an `Axisymmetric` frame revolves every force and torque to the full revolution (`src/femforge/run/parse.py:186-217`).
+- **Forces** read only the global CalcFields sums, so per-Component triples never fold into the total. The per-Component values join `components.yml`, and the frame's `total` turns every force and torque into its whole-model total, the full revolution under `Axisymmetric` (`src/femforge/run/parse.py:186-216`).
 
 [Results](../../user-guide/results.md#scalars) covers the user side.
 

@@ -21,7 +21,7 @@ from femforge.config import SimulationConfig
 from femforge.geometry.config import GeometryArea
 from femforge.run.artifacts import prune_store_sourced
 from femforge.run.bundle import write_manifest
-from femforge.common.frame import Solid
+from femforge.frames import Solid
 from femforge.common.log import TELEMETRY_ENV
 from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, MeshSpec, RunSpec, StepSpec, mesh_spec
 from femforge.run.manifest import RunManifest

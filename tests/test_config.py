@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
-from femforge.common.frame import Axisymmetric, Solid
+from femforge.frames import Axisymmetric, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
 from femforge.config import SimulationConfig
@@ -191,7 +191,7 @@ def test_a_transverse_magnetization_fails_at_config_construction() -> None:
     def magnets(direction: Direction | None) -> DomainConfig:
         return DomainConfig(tags=[EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=direction)])])
 
-    with pytest.raises(ValidationError, match="not axisymmetric"):
+    with pytest.raises(ValidationError, match="not along the symmetry axis"):
         SimulationConfig(frame=Axisymmetric(), domain=magnets(Direction(1, 0, 0)))
 
     assert SimulationConfig(frame=Axisymmetric(), domain=magnets(Direction(0, 0, -1))).solved_physics() is Physics.MAGNETOSTATICS_2D
@@ -200,7 +200,7 @@ def test_a_transverse_magnetization_fails_at_config_construction() -> None:
 
 
 def test_a_scaled_axis_direction_is_the_same_run() -> None:
-    from femforge.common.frame import Axis
+    from femforge.frames import Axis
     from femforge.run.kinds import cache_key
 
     unit = SimulationConfig(frame=Axisymmetric(axis=Axis(direction=Direction(0, 0, 1))))

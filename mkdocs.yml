@@ -11,6 +11,8 @@ site_dir: site
 
 theme:
   name: material
+  favicon: assets/favicon.png
+  logo: assets/ff-logo.svg
   variant: classic
   font: false
   palette:
@@ -138,7 +140,10 @@ nav:
       - Materials: user-guide/materials.md
       - Conditions and physics: user-guide/conditions.md
       - Mesh: user-guide/mesh.md
-      - Frames: user-guide/frames.md
+      - Frames:
+          - user-guide/frames/index.md
+          - Solid: user-guide/frames/solid.md
+          - Axisymmetric: user-guide/frames/axisymmetric.md
       - Driver and runs: user-guide/driver.md
       - Results: user-guide/results.md
       - Artifacts and retention: user-guide/artifacts.md

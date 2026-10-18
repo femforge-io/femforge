@@ -27,6 +27,7 @@ class Input(Element):
         *,
         model: str | None = None,
         default_value: Prop[str] = None,
+        value: Prop[str] = None,
         placeholder: Prop[str] = None,
         type_: Prop[str] = None,
         name: str | None = None,
@@ -43,6 +44,7 @@ class Input(Element):
         Args:
             model: A state variable that seeds the text and takes it back on blur and Enter; it also names the input.
             default_value: The text at mount.
+            value: The text as a controlled value, for a read-only readout that follows its state.
             placeholder: The text shown while the input is empty.
             type_: The HTML input type.
             name: The form field name; `model` by default.

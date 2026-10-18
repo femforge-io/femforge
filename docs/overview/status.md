@@ -17,12 +17,12 @@ Each stage runs behind an interface, and one backend fills each interface today.
 
 ## Frames
 
-Elmer names eight coordinate systems. femforge maps two of them to a frame; see [Frames](../user-guide/frames.md).
+Elmer names eight coordinate systems. femforge maps two of them to a frame; see [Frames](../user-guide/frames/index.md).
 
 | Elmer coordinate system | femforge | Status |
 | --- | --- | --- |
-| Cartesian 3D | [Solid][femforge.common.frame.Solid] | :material-check-circle:{ .ff-done title="Implemented" } |
-| Axi Symmetric | [Axisymmetric][femforge.common.frame.Axisymmetric] | :material-check-circle:{ .ff-done title="Implemented" } |
+| Cartesian 3D | [Solid][femforge.frames.Solid] | :material-check-circle:{ .ff-done title="Implemented" } |
+| Axi Symmetric | [Axisymmetric][femforge.frames.Axisymmetric] | :material-check-circle:{ .ff-done title="Implemented" } |
 | Cartesian 1D | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Cartesian 2D | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Polar 2D | | :material-circle-outline:{ .ff-todo title="Not started" } |
@@ -30,7 +30,7 @@ Elmer names eight coordinate systems. femforge maps two of them to a frame; see 
 | Cylindric | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Cylindric Symmetric | | :material-circle-outline:{ .ff-todo title="Not started" } |
 
-`CoordinateSystem` in `femforge.elmer.config` already names `Cylindric`, `Cylindric Symmetric` and `Polar` as keyword values, but no frame maps a model onto them. A new frame needs a model in `src/femforge/common/frame.py`, a geometry conversion in `src/femforge/geometry/frame.py` and a case in `Physics.in_frame`.
+`CoordinateSystem` in `femforge.elmer.config` already names `Cylindric`, `Cylindric Symmetric` and `Polar` as keyword values, but no frame maps a model onto them. A new frame is one [Frame][femforge.frames.Frame] subclass under `src/femforge/frames`; [Config objects](../contributing/architecture/config-objects.md#the-frame-area) lists the hooks it implements.
 
 ## Physics modules
 

@@ -186,7 +186,7 @@ trame, trame-client, trame-server and trame-rca carry floors only. Two trame-rca
 - Enabling trame-vtklocal fetches the wasm32 runtime for the installed VTK version, about 80 MB, on first use; the workbench tests point `VTK_WASM_DIR_OVERRIDE` at an empty directory to skip it (`tests/workbench/conftest.py:11-17`).
 - dockview fires `onDidRemovePanel` for its own teardown too, so the dock counts its own calls and reports only a user close (`packages/femforge-workbench/js/src/components/Dock.tsx:190-191`, `packages/femforge-workbench/js/src/components/Dock.tsx:207-209`).
 - The dock uses `defaultRenderer="always"`, which keeps inactive tabs mounted (`packages/femforge-workbench/js/src/components/Dock.tsx:270`).
-- A JS-expression `Bind` that builds an array hands Radix a fresh array on every render, and a controlled value never settles; keep the array in state (`packages/femforge-workbench/src/femforge_workbench/panels/field_viewer.py:471`).
+- A JS-expression `Bind` that builds an array hands Radix a fresh array on every render, and a controlled value never settles; keep the array in state (`packages/femforge-workbench/src/femforge_workbench/panels/field_viewer.py:599`).
 - trame's own `--app` flag means pywebview, so `run` strips it from `sys.argv` (`packages/femforge-workbench/src/femforge_workbench/app.py:875-876`).
 - The supervisor polls its child every 0.25 s, since a bare wait would hold Ctrl-C on Windows (`packages/femforge-workbench/src/femforge_workbench/dev.py:23-24`).
 - The reload probe sends HEAD to `index.html`, since the server root answers HEAD with 403 (`packages/femforge-workbench/src/femforge_workbench/dev.py:27-28`).

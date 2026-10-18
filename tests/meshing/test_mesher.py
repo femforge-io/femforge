@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from femforge.common.frame import Axisymmetric
+from femforge.frames import Axisymmetric
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.materials.neodymium import N52

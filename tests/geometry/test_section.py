@@ -8,10 +8,14 @@ from typing import cast
 import build123d as b3d
 import pytest
 
-from femforge.common.frame import Axis
 from femforge.common.vector import Direction, Vec3
+from femforge.frames import Axis, Axisymmetric, SolvePlane
 from femforge.geometry.section import axisymmetric_cross_section, cross_section_3D
 from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
+
+
+def _plane(axis: Axis = Axis.Z, radial: Direction | None = None) -> SolvePlane:
+    return Axisymmetric(axis=axis, radial=radial).plane
 
 
 def _y_axis_cylinder(outer_radius: float, length: float, inner_radius: float = 0.0, y0: float = 0.0) -> b3d.Part:
@@ -45,7 +49,7 @@ def _scene() -> TaggedCompound:
 
 def test_section_faces_lie_in_the_axisymmetric_frame() -> None:
     # X = radial (>= 0), Y = along the axis, Z = 0 — the frame the 2D solve requires.
-    section = axisymmetric_cross_section(_scene(), Axis.Y)
+    section = axisymmetric_cross_section(_scene(), _plane(Axis.Y))
     faces = _faces(section)
     assert len(faces) == 2
     for face in faces:
@@ -56,14 +60,14 @@ def test_section_faces_lie_in_the_axisymmetric_frame() -> None:
 
 def test_section_areas_match_the_wall_profiles() -> None:
     # On-axis rod: radius x length; off-axis ring: wall thickness x length — the X >= 0 clamp halves the rod's slice.
-    section = axisymmetric_cross_section(_scene(), Axis.Y)
+    section = axisymmetric_cross_section(_scene(), _plane(Axis.Y))
     areas = sorted(face.area for face in _faces(section))
     assert areas[0] == pytest.approx(2.0 * 4.0)  # ring wall: (5 - 3) x 4
     assert areas[1] == pytest.approx(2.0 * 10.0)  # rod: 2 x 10
 
 
 def test_section_copies_tags_and_colors() -> None:
-    section = axisymmetric_cross_section(_scene(), Axis.Y)
+    section = axisymmetric_cross_section(_scene(), _plane(Axis.Y))
     by_material = {face.get_tag("Material"): face for face in _faces(section)}
     assert set(by_material) == {"Steel316", "N42"}
     assert by_material["Steel316"].get_tag("Type") == "Rod"
@@ -74,12 +78,12 @@ def test_section_copies_tags_and_colors() -> None:
 def test_section_raises_when_a_solid_misses_the_plane() -> None:
     off_plane = TaggedPart(b3d.Pos(0, 0, 100) * b3d.Cylinder(radius=1.0, height=2.0), tags={"Material": "Air"})
     with pytest.raises(ValueError, match="section missed the solid tagged 'Material=Air'"):
-        _ = axisymmetric_cross_section(TaggedCompound(children=[off_plane]), Axis.Y)
+        _ = axisymmetric_cross_section(TaggedCompound(children=[off_plane]), _plane(Axis.Y))
 
 
 def test_section_requires_at_least_one_solid() -> None:
     with pytest.raises(ValueError, match="at least one TaggedPart"):
-        _ = axisymmetric_cross_section(TaggedCompound(children=[]), Axis.Y)
+        _ = axisymmetric_cross_section(TaggedCompound(children=[]), _plane(Axis.Y))
 
 
 def _z_axis_scene() -> TaggedCompound:
@@ -101,7 +105,7 @@ def _profiles(section: TaggedCompound) -> dict[str | None, tuple[float, float, f
 
 
 def test_the_default_z_axis_maps_axial_position_onto_y_below_the_origin_too() -> None:
-    profiles = _profiles(axisymmetric_cross_section(_z_axis_scene()))
+    profiles = _profiles(axisymmetric_cross_section(_z_axis_scene(), _plane()))
     assert profiles["Steel316"] == pytest.approx((20.0, 0.0, 2.0, -5.0, 5.0), abs=1e-9)
     assert profiles["N42"] == pytest.approx((8.0, 3.0, 5.0, -10.0, -6.0), abs=1e-9)
 
@@ -111,7 +115,7 @@ def test_an_offset_x_axis_sections_about_its_own_origin() -> None:
     origin = Vec3(4, -3, 7)
     placement = b3d.Pos(origin.x, origin.y, origin.z) * b3d.Rot(Y=90)
     leaves = [TaggedPart([*part.moved(placement).solids()], tags=part.current_tags) for part in _parts(_z_axis_scene())]
-    section = axisymmetric_cross_section(TaggedCompound(children=leaves), Axis(origin=origin, direction=Direction(1, 0, 0)))
+    section = axisymmetric_cross_section(TaggedCompound(children=leaves), _plane(Axis(origin=origin, direction=Direction(1, 0, 0))))
     profiles = _profiles(section)
     assert profiles["Steel316"] == pytest.approx((20.0, 0.0, 2.0, -5.0, 5.0), abs=1e-9)
     assert profiles["N42"] == pytest.approx((8.0, 3.0, 5.0, -10.0, -6.0), abs=1e-9)
@@ -121,7 +125,7 @@ def test_compound_locations_reach_their_leaves() -> None:
     # Rot * compound only relocates the compound; the section must still see the rod along X.
     nested = TaggedCompound(children=[TaggedCompound(children=[_parts(_z_axis_scene())[0]])])
     turned = cast("TaggedCompound", b3d.Rot(Y=90) * nested)
-    profiles = _profiles(axisymmetric_cross_section(turned, Axis.X))
+    profiles = _profiles(axisymmetric_cross_section(turned, _plane(Axis.X)))
     assert profiles["Steel316"] == pytest.approx((20.0, 0.0, 2.0, -5.0, 5.0), abs=1e-9)
 
 
@@ -177,7 +181,7 @@ def test_cutaway_raises_when_the_planes_share_no_volume() -> None:
 
 def _rod_section(rod: b3d.Part, axis: Axis) -> tuple[float, float, float]:
     """The single rod face's (area, min X, max X) after sectioning about ``axis``."""
-    faces = _faces(axisymmetric_cross_section(TaggedCompound(children=[TaggedPart(rod, tags={"Material": "Steel316"})]), axis))
+    faces = _faces(axisymmetric_cross_section(TaggedCompound(children=[TaggedPart(rod, tags={"Material": "Steel316"})]), _plane(axis)))
     assert len(faces) == 1
     box = faces[0].bounding_box()
     return faces[0].area, box.min.X, box.max.X
@@ -217,7 +221,7 @@ def test_any_axis_direction_sections_the_wall_profiles_at_x_at_least_zero(direct
     unit = b3d.Vector(direction.x, direction.y, direction.z).normalized()
     placement = b3d.Location(b3d.Plane(origin=(origin.x, origin.y, origin.z), z_dir=unit))
     leaves = [TaggedPart([*part.moved(placement).solids()], tags=part.current_tags) for part in _parts(_z_axis_scene())]
-    profiles = _profiles(axisymmetric_cross_section(TaggedCompound(children=leaves), Axis(origin=origin, direction=direction)))
+    profiles = _profiles(axisymmetric_cross_section(TaggedCompound(children=leaves), _plane(Axis(origin=origin, direction=direction))))
     rod_area, rod_min_x, rod_max_x, rod_min_y, rod_max_y = profiles["Steel316"]
     ring_area, ring_min_x, ring_max_x, ring_min_y, ring_max_y = profiles["N42"]
     assert (rod_area, rod_min_x, rod_max_x, rod_max_y - rod_min_y) == pytest.approx((20.0, 0.0, 2.0, 10.0), abs=1e-9)
@@ -248,9 +252,9 @@ def test_a_radial_direction_picks_the_half_plane_the_default_misses() -> None:
     half_model = TaggedCompound(children=[TaggedPart(b3d.Pos(0, 0, 2) * b3d.Box(4, 1, 2), tags={"Material": "Steel316"})])
 
     with pytest.raises(ValueError, match="missed the solid"):
-        _ = axisymmetric_cross_section(half_model, Axis.X)
+        _ = axisymmetric_cross_section(half_model, _plane(Axis.X))
 
-    section = axisymmetric_cross_section(half_model, Axis.X, Vec3(0, 0, 1))
+    section = axisymmetric_cross_section(half_model, _plane(Axis.X, Direction(0, 0, 1)))
     box = section.bounding_box()
     assert section.area == pytest.approx(8.0)
     assert (box.min.X, box.max.X) == pytest.approx((1.0, 3.0))

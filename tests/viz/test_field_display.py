@@ -20,29 +20,25 @@ from femforge.viz.field_display import (
     DisplaySpec,
     FieldInfo,
     FieldScene,
+    Legend,
     SceneActor,
+    bar_placement,
     camera_needs_reset,
     color_range,
     feature_outline,
     field_infos,
     list_fields,
-    log_colorbar,
-    log_colorbar_ticks,
-    log_intensity,
-    mesh3d_traces,
-    nice_ticks,
     model_dim_of,
-    outline_segments,
-    outline_traces,
-    plotly_colorscale,
     polar_angle,
     polar_rgba,
     reduce_field,
+    run_manifest,
     sample_colormap,
+    scaled_basis,
     split_by_body,
-    surface_triangles,
 )
-from femforge.viz.field_lines import FieldLineOptions
+from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, prepare_streamline_source
+from femforge.viz.symmetry import Expansion
 
 
 if TYPE_CHECKING:
@@ -62,9 +58,6 @@ def _infos(*specs: tuple[str, Association, int]) -> list[FieldInfo]:
 # --- names and enums --------------------------------------------------------
 
 
-def test_association_maps_to_the_plotly_intensity_mode() -> None:
-    assert Association.POINT.intensitymode == "vertex"
-    assert Association.CELL.intensitymode == "cell"
 
 
 def test_display_mode_label_reads_as_words() -> None:
@@ -73,6 +66,25 @@ def test_display_mode_label_reads_as_words() -> None:
 
 
 # --- FieldInfo / field_infos ------------------------------------------------
+
+
+def test_a_field_is_titled_with_its_unit_when_it_has_one() -> None:
+    flux = FieldInfo(name="magnetic flux density", association=Association.POINT, components=3, dtype="float64", unit="T")
+    plain = FieldInfo(name="custom", association=Association.POINT, components=1, dtype="float64")
+
+    assert flux.title == "Magnetic Flux Density [T]" and plain.title == "Custom"
+
+
+def test_field_infos_take_their_units_from_the_variable_catalogue_and_the_physics() -> None:
+    from femforge.elmer.physics import Physics
+
+    arrays = {"potential": SCALARS, "magnetic flux density e": VECTORS}
+    unitless = {info.name: info.unit for info in field_infos({}, arrays)}
+    magnetic = {info.name: info.unit for info in field_infos({}, arrays, Physics.MAGNETOSTATICS_2D)}
+    electric = {info.name: info.unit for info in field_infos({}, arrays, Physics.CURRENT_CONDUCTION)}
+
+    assert unitless == {"potential": None, "magnetic flux density e": "T"}
+    assert magnetic["potential"] == "T·m" and electric["potential"] == "V"
 
 
 def test_field_info_display_name_applies_the_renames() -> None:
@@ -286,146 +298,32 @@ def test_camera_needs_reset_when_the_box_is_off_to_the_side() -> None:
     assert camera_needs_reset((0.5, 0.5, 5.0), (500.0, 0.5, 0.0), BOX) is True
 
 
-# --- plotly colorscale and log ticks ----------------------------------------
 
 
-def test_plotly_colorscale_builds_evenly_spaced_rgb_stops() -> None:
-    samples = np.array([[0.0, 0.0, 0.0, 1.0], [1.0, 0.5, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]], dtype=np.float64)
-
-    scale = plotly_colorscale(samples)
-
-    assert scale[0] == [0.0, "rgb(0,0,0)"]
-    assert scale[1] == [0.5, "rgb(255,128,0)"]
-    assert scale[2] == [1.0, "rgb(255,255,255)"]
 
 
-def test_plotly_colorscale_inverts_the_ramp_not_the_positions() -> None:
-    samples = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float64)
-
-    scale = plotly_colorscale(samples, invert=True)
-
-    assert scale == [[0.0, "rgb(255,255,255)"], [1.0, "rgb(0,0,0)"]]
 
 
-@pytest.mark.parametrize(
-    "samples",
-    [
-        np.zeros(3),  # not a 2D array
-        np.zeros((4, 2)),  # not RGB or RGBA rows
-        np.zeros((1, 3)),  # a single stop cannot span a range
-    ],
-)
-def test_plotly_colorscale_rejects_unusable_samples(samples: np.typing.NDArray[np.float64]) -> None:
-    with pytest.raises(ValueError):
-        _ = plotly_colorscale(samples)
 
 
-def test_log_colorbar_ticks_covers_every_decade() -> None:
-    ticks, labels = log_colorbar_ticks(0.02, 300.0)
-
-    assert ticks == pytest.approx([0.01, 0.1, 1.0, 10.0, 100.0, 1000.0])
-    assert labels == ["1e-2", "1e-1", "1e0", "1e1", "1e2", "1e3"]
 
 
-def test_log_intensity_clamps_to_the_floor_and_needs_a_positive_one() -> None:
-    assert log_intensity(np.array([0.0, 1.0, 100.0]), 1.0).tolist() == [0.0, 0.0, 2.0]
-
-    with pytest.raises(ValueError, match="positive floor"):
-        _ = log_intensity(np.array([1.0]), 0.0)
 
 
-def test_log_colorbar_places_the_decades_inside_the_range_at_their_log_positions() -> None:
-    assert log_colorbar(0.5, 20.0) == {"tickvals": [0.0, 1.0], "ticktext": ["1e0", "1e1"]}
 
 
-def test_log_colorbar_falls_back_to_round_numbers_within_one_decade() -> None:
-    bar = log_colorbar(298.27, 329.52)
-
-    assert bar["ticktext"] == ["300", "305", "310", "315", "320", "325"]
-    assert bar["tickvals"] == pytest.approx([np.log10(tick) for tick in (300, 305, 310, 315, 320, 325)])
 
 
-def test_nice_ticks_step_by_one_two_or_five_times_a_power_of_ten() -> None:
-    assert nice_ticks(0.0, 1.0) == pytest.approx([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
-    assert nice_ticks(3.0, 47.0) == pytest.approx([10.0, 20.0, 30.0, 40.0])
-    assert nice_ticks(0.0, 4.0) == pytest.approx([0.0, 1.0, 2.0, 3.0, 4.0])
-    assert nice_ticks(100.0, 140.0) == pytest.approx([100.0, 110.0, 120.0, 130.0, 140.0])
-
-    with pytest.raises(ValueError, match="lo < hi"):
-        _ = nice_ticks(1.0, 1.0)
 
 
-def test_log_colorbar_ticks_rejects_non_positive_bounds() -> None:
-    with pytest.raises(ValueError, match="positive bounds"):
-        _ = log_colorbar_ticks(0.0, 10.0)
 
 
-# --- plotly traces ----------------------------------------------------------
 
 
-def test_mesh3d_traces_carries_the_surface_and_its_color_mapping() -> None:
-    points = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64)
-    triangles = np.array([[0, 1, 2]], dtype=np.int64)
-
-    traces = mesh3d_traces(
-        points,
-        triangles,
-        np.array([7.0], dtype=np.float64),
-        name="AIR",
-        intensitymode=Association.CELL,
-        colorscale=[[0.0, "rgb(0,0,0)"], [1.0, "rgb(255,255,255)"]],
-        cmin=0.0,
-        cmax=10.0,
-        showscale=True,
-        hovertemplate="%{intensity}",
-    )
-
-    assert len(traces) == 1
-    trace = traces[0]
-    assert trace["type"] == "mesh3d"
-    assert trace["name"] == "AIR"
-    assert trace["x"] == [0.0, 1.0, 0.0]
-    assert trace["i"] == [0] and trace["j"] == [1] and trace["k"] == [2]
-    assert trace["intensity"] == [7.0]
-    assert trace["intensitymode"] == "cell"
-    assert trace["cmax"] == 10.0
-    assert trace["showscale"] is True
-    assert trace["visible"] is True and trace["customdata"] is None and trace["colorbar"] is None
 
 
-def test_mesh3d_traces_carries_hover_data_the_colorbar_and_a_legend_only_body() -> None:
-    points = np.zeros((3, 3), dtype=np.float64)
-    triangles = np.array([[0, 1, 2]], dtype=np.int64)
-
-    traces = mesh3d_traces(
-        points,
-        triangles,
-        np.array([0.5], dtype=np.float64),
-        name="COIL",
-        customdata=np.array([3.0], dtype=np.float64),
-        colorbar={"tickvals": [0.0]},
-        visible=False,
-    )
-
-    trace = traces[0]
-    assert trace["customdata"] == [3.0]
-    assert trace["colorbar"] == {"tickvals": [0.0]}
-    assert trace["visible"] == "legendonly" and trace["showlegend"] is True
 
 
-def test_outline_traces_separates_segments_with_nans() -> None:
-    segments = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]]], dtype=np.float64)
-
-    traces = outline_traces(segments)
-
-    assert len(traces) == 1
-    xs = cast("list[float]", traces[0]["x"])
-    assert len(xs) == 6
-    assert np.isnan(xs[2]) and np.isnan(xs[5])
-
-
-def test_outline_traces_of_nothing_is_nothing() -> None:
-    assert outline_traces(np.zeros((0, 2, 3), dtype=np.float64)) == []
 
 
 # --- pyvista-gated: the scene half ------------------------------------------
@@ -487,54 +385,18 @@ def test_apply_in_polar_mode_writes_rgba() -> None:
     assert _block(scene, "LEFT").point_data[SCALARS_ARRAY].shape[1] == 4
 
 
-def test_feature_outline_and_surface_helpers_describe_the_wireframe() -> None:
+def test_feature_outline_describes_the_wireframe() -> None:
     pytest.importorskip("pyvista")
 
     scene = _scene()
     edges = feature_outline(scene.blocks)
 
-    assert edges is not None
-    segments = outline_segments(edges)
-    assert segments.ndim == 3 and segments.shape[1:] == (2, 3)
-
-    points, triangles = surface_triangles(_block(scene, "LEFT"))
-    assert points.shape[1] == 3 and triangles.shape[1] == 3
-
+    assert edges is not None and edges.n_lines > 0
     assert sample_colormap("viridis", 8).shape == (8, 4)
 
 
-def test_figure_builds_one_mesh_per_body_plus_the_outline_with_hidden_bodies_legend_only() -> None:
-    pytest.importorskip("pyvista")
-
-    scene = _scene()
-    figure = scene.figure(DisplaySpec(field="joule heating", hidden_bodies=("LEFT",)))
-
-    data = cast("list[dict[str, object]]", figure["data"])
-    assert [trace["type"] for trace in data] == ["mesh3d", "mesh3d", "scatter3d"]
-    assert [trace["name"] for trace in data[:2]] == ["LEFT", "RIGHT"]
-    assert data[0]["visible"] == "legendonly" and data[1]["visible"] is True
-    assert data[0]["showscale"] is False and data[1]["showscale"] is True
-    assert data[1]["customdata"] == data[1]["intensity"]
-
-    layout = cast("dict[str, object]", figure["layout"])
-    assert layout["uirevision"] == "synthetic"
-    assert layout["showlegend"] is True
 
 
-def test_figure_under_a_log_scale_plots_log10_with_decade_ticks_and_raw_hover_values() -> None:
-    pytest.importorskip("pyvista")
-
-    scene = _scene()
-    figure = scene.figure(DisplaySpec(field="joule heating", log_scale=True, clim=(1.0, 100.0), outline=False))
-
-    data = cast("list[dict[str, object]]", figure["data"])
-    left = data[0]
-    assert left["cmin"] == 0.0 and left["cmax"] == 2.0
-    assert left["intensity"] == pytest.approx([np.log10(2.0)] * len(cast("list[float]", left["intensity"])))
-    assert left["customdata"] == [2.0] * len(cast("list[float]", left["customdata"]))
-    colorbar = cast("dict[str, object]", left["colorbar"])
-    assert colorbar["tickvals"] == [0.0, 1.0, 2.0] and colorbar["ticktext"] == ["1e0", "1e1", "1e2"]
-    assert "customdata" in str(left["hovertemplate"])
 
 
 def test_apply_records_the_full_data_range_beside_the_robust_color_limits() -> None:
@@ -576,7 +438,7 @@ def test_streamlines_are_integrated_only_when_their_options_change(monkeypatch: 
     assert scene.spec.streamlines == restyled and scene.integrated(FieldLineOptions(line_count=4)) is None
     assert str(StreamlineActor.LINES) in plotter.renderer.actors
 
-    scene.update(plotter, DisplaySpec(field="magnetic flux density"))
+    scene.update(plotter, DisplaySpec(field="magnetic flux density", streamlines=None))
 
     assert str(StreamlineActor.LINES) not in plotter.renderer.actors
     plotter.close()
@@ -601,15 +463,6 @@ def test_show_streamlines_draws_a_precomputed_integration_and_records_its_option
     plotter.close()
 
 
-def test_figure_falls_back_to_the_magnitude_for_polar_mode() -> None:
-    pytest.importorskip("pyvista")
-
-    scene = _scene()
-    figure = scene.figure(DisplaySpec(field="magnetic flux density", mode=DisplayMode.POLAR_XY, outline=False))
-
-    data = cast("list[dict[str, object]]", figure["data"])
-    intensity = cast("list[float]", data[0]["intensity"])
-    assert all(isinstance(value, float) for value in intensity)
 
 
 def test_render_and_update_drive_a_real_plotter_off_screen() -> None:
@@ -715,7 +568,7 @@ def test_opacity_maps_through_the_lookup_table_from_the_low_limit_whatever_the_i
         scene.update(plotter, DisplaySpec(field="magnetic flux density", invert=invert, opacity=0.3, opacity_map=(0.1, 0.9)))
         alphas.append(ends())
 
-    scene.update(plotter, DisplaySpec(field="magnetic flux density", opacity=0.5, body_styles=(BodyStyle(body="LEFT", opacity=0.4),)))
+    scene.update(plotter, DisplaySpec(field="magnetic flux density", opacity=0.5, opacity_map=None, body_styles=(BodyStyle(body="LEFT", opacity=0.4),)))
     mapper = actor.mapper
     assert isinstance(mapper, pv.CompositePolyDataMapper)
     blocks = [round(float(mapper.block_attr[index].opacity or 0.0), 2) for index in (1, 2)]
@@ -735,14 +588,14 @@ def test_a_styled_body_draws_in_its_own_actor_and_the_outline_skips_hidden_bodie
     scene.render(plotter)
     styled = SceneActor.STYLED.of("LEFT")
 
-    scene.update(plotter, DisplaySpec(field="joule heating", body_styles=(BodyStyle(body="LEFT", paint=BodyPaint.SOLID, color="red", opacity=0.3),), hidden_bodies=("RIGHT",)))
+    scene.update(plotter, DisplaySpec(field="joule heating", outline=True, body_styles=(BodyStyle(body="LEFT", paint=BodyPaint.SOLID, color="red", opacity=0.3),), hidden_bodies=("RIGHT",)))
     style_actor = cast("pv.Actor", plotter.renderer.actors[styled])
     outline = cast("pv.Actor", plotter.renderer.actors[str(SceneActor.OUTLINE)])
     outline_bounds = outline.bounds
     bars = len(cast("dict[str, object]", plotter.scalar_bars))
     composite_bounds = cast("pv.Actor", plotter.renderer.actors[str(SceneActor.BODIES)]).GetBounds()
 
-    scene.update(plotter, DisplaySpec(field="joule heating", hidden_bodies=("LEFT", "RIGHT")))
+    scene.update(plotter, DisplaySpec(field="joule heating", outline=True, hidden_bodies=("LEFT", "RIGHT")))
 
     assert not all(map(np.isfinite, composite_bounds)) or composite_bounds[0] > composite_bounds[1], "both bodies leave the composite"
     assert style_actor.GetProperty().GetOpacity() == pytest.approx(0.3) and not style_actor.GetMapper().GetScalarVisibility()
@@ -752,20 +605,6 @@ def test_a_styled_body_draws_in_its_own_actor_and_the_outline_skips_hidden_bodie
     plotter.close()
 
 
-def test_figure_draws_a_styled_body_in_its_color_and_the_rest_at_the_field_opacity() -> None:
-    pytest.importorskip("pyvista")
-
-    scene = _scene()
-    figure = scene.figure(DisplaySpec(field="joule heating", opacity=0.5, body_styles=(BodyStyle(body="LEFT", paint=BodyPaint.SOLID, color="#ff0000", opacity=0.2),), hidden_bodies=("RIGHT",)))
-
-    data = cast("list[dict[str, object]]", figure["data"])
-    left, right = data[0], data[1]
-    outline = data[2]
-    xs = [x for x in cast("list[float]", outline["x"]) if x == x]
-
-    assert (left["color"], left["opacity"], left["intensity"]) == ("#ff0000", pytest.approx(0.1), None)
-    assert right["opacity"] == 0.5 and right["intensity"] is not None
-    assert max(xs) == pytest.approx(1.0), "the hidden RIGHT body is not outlined"
 
 
 def test_the_color_range_covers_every_body_however_it_is_shown() -> None:
@@ -808,11 +647,12 @@ def test_field_lines_take_the_display_mapping_over_their_region_range_and_restyl
 
     monkeypatch.setattr(scene, "integrate_streamlines", counted)
     lines = FieldLineOptions(line_count=2)
-    flux = DisplaySpec(field="magnetic flux density", mode=DisplayMode.MAGNITUDE, colormap="lipari", streamlines=lines)
+    flux = DisplaySpec(field="magnetic flux density", mode=DisplayMode.MAGNITUDE, colormap="lipari", opacity_map=None, legend=Legend.VERTICAL, streamlines=lines)
 
     scene.update(plotter, flux)
     plain = table()
     plain_alpha = (plain.GetTableValue(0)[3], plain.GetTableValue(plain.GetNumberOfTableValues() - 1)[3])
+    auto_bars = list(cast("dict[str, object]", plotter.scalar_bars).keys())
     region = scene.drawn_lines.clim if scene.drawn_lines is not None else None
     scene.update(plotter, flux.model_copy(update={"opacity_map": (0.1, 0.9), "clim": (0.5, 1.5)}))
     mapped = table()
@@ -821,18 +661,18 @@ def test_field_lines_take_the_display_mapping_over_their_region_range_and_restyl
     mapped_bars = list(cast("dict[str, object]", plotter.scalar_bars).keys())
     scene.update(plotter, flux.model_copy(update={"hidden_bodies": ("LEFT",), "opacity_map": (0.1, 0.9)}))
     hidden = scene.drawn_lines.clim if scene.drawn_lines is not None else None
-    scene.update(plotter, DisplaySpec(field="joule heating", streamlines=lines))
+    scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.VERTICAL, streamlines=lines))
     other = scene.drawn_lines
 
     assert len(integrations) == 1, "a display change restyles the cached lines"
     assert plain_alpha == (1.0, 1.0)
     assert mapped_alpha == (0.1, 0.9), "the lines fade like the bodies"
     assert mapped_range == pytest.approx((0.5, 1.5)), "a pinned |B| range reaches the lines"
-    assert "Magnetic Flux Density Lines" in mapped_bars
+    assert auto_bars == ["Magnetic Flux Density [T]"] and mapped_bars == ["Magnetic Flux Density [T]"], "lines of the shown field share its bar under an automatic range and a pinned one"
     assert region is not None
     assert hidden == region, "hiding a body leaves the lines' range alone"
-    assert other is not None and other.clim == region and other.opacity_map is None and other.colormap == "viridis"
-    assert "Magnetic Flux Density Lines" in cast("dict[str, object]", plotter.scalar_bars)
+    assert other is not None and other.clim == region and other.opacity_map == (0.15, 1.0) and other.colormap == "turbo"
+    assert "Magnetic Flux Density Lines [T]" in cast("dict[str, object]", plotter.scalar_bars), "lines following another field get a bar of their own, titled with their unit"
     plotter.close()
 
 
@@ -850,7 +690,7 @@ def test_field_lines_follow_their_vectors_and_range_over_each_body_of_their_regi
 
     assert whole.b_name == "magnetic field strength" and len(whole.magnitudes) == 2
     assert len(left) == 1 and float(left[0].max()) == pytest.approx(5.0 * np.sqrt(2.0))
-    assert scene.lines_pinned("magnetic field strength") and not scene.lines_pinned("magnetic flux density")
+    assert scene.lines_follow("magnetic field strength") and not scene.lines_follow("magnetic flux density")
 
 
 def test_a_polar_display_leaves_the_field_lines_as_asked() -> None:
@@ -887,6 +727,7 @@ def test_colormap_bodies_share_the_body_colormap_and_a_solid_body_needs_a_color(
 def test_the_field_lines_bar_names_the_field_and_is_made_again_for_new_lines() -> None:
     pytest.importorskip("pyvista")
     import pyvista as pv
+    from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
 
     from femforge.run.fields import GEOMETRY_IDS_ARRAY
 
@@ -896,14 +737,23 @@ def test_the_field_lines_bar_names_the_field_and_is_made_again_for_new_lines() -
     whole = FieldLineOptions(line_count=2)
     region = whole.model_copy(update={"region_array": GEOMETRY_IDS_ARRAY, "region_id": 2, "clip_to_region": True})
 
-    scene.update(plotter, DisplaySpec(field="joule heating", streamlines=whole))
+    scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.VERTICAL, streamlines=whole))
     bars = cast("dict[str, object]", plotter.scalar_bars)
-    first = bars["Magnetic Flux Density Lines"]
-    scene.update(plotter, DisplaySpec(field="joule heating", streamlines=region))
+    first = bars["Magnetic Flux Density Lines [T]"]
+    scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.VERTICAL, streamlines=region))
     titles = list(cast("dict[str, object]", plotter.scalar_bars).keys())
+    columns = {bar.GetPosition()[0] for bar in cast("dict[str, object]", plotter.scalar_bars).values() if isinstance(bar, vtkScalarBarActor)}
+    second = cast("dict[str, object]", plotter.scalar_bars)["Magnetic Flux Density Lines [T]"]
+    scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.HORIZONTAL, streamlines=region))
+    horizontal = [bar.GetOrientation() for bar in cast("dict[str, object]", plotter.scalar_bars).values() if isinstance(bar, vtkScalarBarActor)]
+    scene.update(plotter, DisplaySpec(field="joule heating", streamlines=region))
+    hidden = list(cast("dict[str, object]", plotter.scalar_bars).keys())
 
-    assert sorted(titles) == ["Joule Heating", "Magnetic Flux Density Lines"]
-    assert cast("dict[str, object]", plotter.scalar_bars)["Magnetic Flux Density Lines"] is not first, "new lines get a bar over their own mapper"
+    assert sorted(titles) == ["Joule Heating [W/m³]", "Magnetic Flux Density Lines [T]"]
+    assert second is not first, "new lines get a bar over their own mapper"
+    assert len(columns) == 2, "the lines' bar stands beside the field's, never on it"
+    assert horizontal == [0, 0], "a horizontal legend lays both bars along the bottom"
+    assert hidden == [], "a hidden legend draws no bar"
     plotter.close()
 
 
@@ -914,3 +764,187 @@ def test_unmatched_names_the_hidden_and_styled_bodies_a_run_lacks() -> None:
     )
     assert spec.unmatched(["AIR", "SEAT", "BEARING"]) == ["GONE", "STEEL1080"]
     assert DisplaySpec().unmatched([]) == []
+
+
+# --- pyvista-gated: a section and its expansions --------------------------------
+
+
+def _section_grid(columns: int = 4, rows: int = 2) -> pv.UnstructuredGrid:  # pragma: no cover - helper for the pyvista-gated tests below
+    import pyvista as pv
+
+    # A grid of quads over r in [0, 2], z in [0, 1]: the inner half is one body, the outer half the other; Elmer writes a flat mesh with a Z extent of a few 1e-18, never exactly zero.
+    points = np.array([(column * 2.0 / columns, row / rows, 0.0) for row in range(rows + 1) for column in range(columns + 1)], dtype=np.float64)
+    points[-1, 2] = 1e-18
+    quads = [[(row * (columns + 1)) + column + offset for offset in (0, 1, columns + 2, columns + 1)] for row in range(rows) for column in range(columns)]
+    cells = np.array([[4, *quad] for quad in quads]).ravel()
+    grid = pv.UnstructuredGrid(cells, np.full(len(quads), pv.CellType.QUAD), points)
+    grid.cell_data["GeometryIds"] = np.array([1 if quad[0] % (columns + 1) < columns // 2 else 2 for quad in quads], dtype=np.int32)
+    grid.point_data["magnetic flux density"] = np.column_stack([np.zeros(len(points)), np.ones(len(points)), np.zeros(len(points))])
+
+    return grid
+
+
+def _section_scene(columns: int = 4, rows: int = 2) -> FieldScene:  # pragma: no cover - helper for the pyvista-gated tests below
+    grid = _section_grid(columns, rows)
+    bodies = Bodies([Body(name="INNER", mesh_id=1), Body(name="OUTER", mesh_id=2)])
+
+    return FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=model_dim_of(grid), run_id="section", bodies=bodies)
+
+
+def test_a_flat_grid_with_a_vanishing_z_extent_is_a_section_and_is_put_exactly_on_the_plane() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _section_scene()
+
+    assert model_dim_of(_section_grid()) == 2
+    assert scene.section_grid.bounds[5] == 0.0 and all(cast("pv.DataSet", scene.section_blocks[name]).bounds[5] == 0.0 for name in scene.section_blocks.keys())
+
+
+def test_a_section_revolves_by_default_mirrors_on_request_and_keeps_its_solved_ranges() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _section_scene()
+    flat = DisplaySpec(field="magnetic flux density", expansion=Expansion.SECTION)
+    _ = scene.apply(flat)
+    flat_range = scene.data_range
+
+    assert scene.expandable and scene.model_dim == 2 and scene.display_dim == 2
+    assert scene.expansion_of(DisplaySpec()) == (Expansion.REVOLVE, 360.0) and scene.dim_for(DisplaySpec()) == 3
+    assert not scene.expand(flat), "the section is what the scene starts from"
+
+    _ = scene.apply(DisplaySpec(field="magnetic flux density"))
+    revolved = scene.bounds
+
+    assert scene.display_dim == 3 and scene.expanded == (Expansion.REVOLVE, 360.0)
+    assert all(isinstance(scene.blocks[name], pv.PolyData) for name in scene.blocks.keys()), "only the surfaces are revolved"
+    assert revolved[0] == pytest.approx(-2.0) and revolved[1] == pytest.approx(2.0) and revolved[5] == pytest.approx(1.0), "the section turns about Z into the authored frame"
+    assert scene.data_range == flat_range, "the scale belongs to the solved field, not the view"
+
+    _ = scene.apply(DisplaySpec(field="magnetic flux density", expansion=Expansion.MIRROR))
+
+    assert scene.display_dim == 2 and scene.bounds[0] == pytest.approx(-2.0) and scene.bounds[5] == pytest.approx(0.0)
+    assert scene.grid.n_cells == 16, "the mirrored grid carries both halves"
+
+
+def test_a_mirrored_section_keeps_the_field_lines_of_both_halves() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _section_scene(columns=16, rows=8)
+    _ = scene.apply(DisplaySpec(field="magnetic flux density", expansion=Expansion.MIRROR))
+
+    actors = scene.integrate_streamlines(FieldLineOptions(line_count=9))
+    points = np.asarray(actors.streamlines.points)
+
+    assert points[:, 0].min() < -1.0 and points[:, 0].max() > 1.0, "a flat mirrored grid sits on the box face, so nothing may clip its lines away"
+
+
+def test_a_revolved_section_seeds_the_swept_solid_and_sweeps_its_field_lines() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _section_scene(columns=16, rows=8)
+    _ = scene.apply(DisplaySpec(field="magnetic flux density", sweep=270.0))
+    plane = FieldLineOptions(line_count=9)
+    volume = FieldLineOptions(line_count=3, seed_placement=SeedPlacement.VOLUME)
+
+    cut = scene.swept_seeds(plane, scene.bounds)
+    actors = scene.integrate_streamlines(plane)
+    filling = scene.swept_seeds(volume, scene.bounds)
+    _ = scene.apply(DisplaySpec(field="magnetic flux density"))
+    full = scene.swept_seeds(plane, scene.bounds)
+
+    assert cut is not None and 0 < len(cut) < 81 and bool(np.all((cut[:, 0] <= 0.0) | (cut[:, 1] >= 0.0))), "a 270 degree sweep keeps the center plane seeds out of the cut-away quadrant"
+    assert filling is not None and 0 < len(filling) < 27, "volume seeds fill the swept solid only"
+    assert full is None, "a full sweep seeds its bounds like a solid run"
+    assert actors.streamlines.n_points > 0 and len(actors.magnitudes) == 2, "the lines come from the section, one magnitude chunk per solved body"
+
+
+def test_a_sweep_expanded_before_the_update_re_adds_the_body_actor() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _section_scene()
+    plotter = pv.Plotter(off_screen=True)
+    scene.render(plotter)
+    full_y = plotter.bounds[2]
+    quarter = DisplaySpec(field="magnetic flux density", sweep=90.0, streamlines=None)
+
+    assert scene.expand(quarter), "the viewer expands off the loop before it updates"
+    scene.update(plotter, quarter)
+
+    assert full_y == pytest.approx(-2.0) and plotter.bounds[2] == pytest.approx(0.0), "the body actor shows the quarter, not the blocks it was added with"
+    plotter.close()
+
+
+def test_the_revolved_seeds_fill_the_integration_region_and_keep_the_first_cut_face() -> None:
+    pytest.importorskip("pyvista")
+    from femforge.run.fields import GEOMETRY_IDS_ARRAY
+    from femforge.viz.field_lines import seed_points
+
+    scene = _section_scene(columns=16, rows=8)
+    _ = scene.apply(DisplaySpec(field="magnetic flux density", sweep=270.0))
+    whole = FieldLineOptions(line_count=9)
+    inner = whole.model_copy(update={"region_array": GEOMETRY_IDS_ARRAY, "region_id": 1, "clip_to_region": True})
+    face = (0.0, 2.0, -1e-17, -1e-17, 0.0, 1.0)
+
+    on_face = scene.swept_seeds(whole, face)
+
+    assert scene.region_bounds(whole)[1] == pytest.approx(2.0) and scene.region_bounds(inner)[1] == pytest.approx(1.0), "a region seeds its own revolved body"
+    assert on_face is not None and len(on_face) == len(seed_points(face, whole)), "seeds a rounding error below the first cut face stay"
+
+
+def test_a_changed_expansion_draws_the_scene_anew_in_the_plotter() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _section_scene()
+    plotter = pv.Plotter(off_screen=True)
+    scene.render(plotter)
+    revolved_bounds = plotter.bounds
+
+    scene.update(plotter, DisplaySpec(field="magnetic flux density", expansion=Expansion.SECTION, streamlines=None))
+
+    assert revolved_bounds[0] == pytest.approx(-2.0) and plotter.bounds[0] == pytest.approx(0.0)
+    assert scene.display_dim == 2 and str(SceneActor.BODIES) in plotter.renderer.actors
+    plotter.close()
+
+
+def test_a_solid_run_is_shown_as_is_whatever_the_spec_asks() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _scene()
+
+    assert not scene.expandable and scene.display_dim == 3
+    assert scene.expansion_of(DisplaySpec(expansion=Expansion.MIRROR)) == (Expansion.SECTION, 360.0) and scene.dim_for(DisplaySpec()) == 3
+    assert not scene.expand(DisplaySpec())
+
+
+def test_the_basis_origin_comes_from_millimetres_to_metres() -> None:
+    from femforge.frames import Axis, Axisymmetric
+    from femforge.common.vector import Direction, Vec3
+
+    basis = scaled_basis(Axisymmetric(axis=Axis(origin=Vec3(0, 0, 10), direction=Direction(0, 0, 1))).plane)
+
+    assert basis.origin == pytest.approx((0.0, 0.0, 0.01)) and basis.axis == (0.0, 0.0, 1.0)
+
+
+def test_a_bundle_without_a_manifest_takes_its_frame_from_the_grid(tmp_path: Path) -> None:
+    pytest.importorskip("pyvista")
+
+    grid = _section_grid()
+    root = tmp_path / "flat"
+    root.mkdir()
+    grid.save(str(root / "case_t0001.vtu"))  # pyright: ignore[reportUnknownMemberType]  # pyvista's save signature is partially untyped
+    _ = (root / BundleFile.ENTITIES).write_text(EntitiesFile(bodies={1: BodyRecord(name="INNER"), 2: BodyRecord(name="OUTER")}).model_dump_json(), encoding="utf-8")
+
+    scene = FieldScene.from_run(Run(root))
+
+    assert run_manifest(Run(root)) is None
+    assert scene.expandable and scene.frame.label == "axisymmetric about Z"
+
+
+def test_the_legend_places_the_bars_and_a_second_one_beside_the_first() -> None:
+    assert bar_placement(Legend.VERTICAL).vertical and not bar_placement(Legend.HORIZONTAL).vertical
+    assert bar_placement(Legend.HIDDEN) == bar_placement(Legend.VERTICAL), "a hidden legend never reaches a placement"
+    assert bar_placement(Legend.VERTICAL, second=True).x < bar_placement(Legend.VERTICAL).x
+    assert bar_placement(Legend.HORIZONTAL, second=True).y > bar_placement(Legend.HORIZONTAL).y

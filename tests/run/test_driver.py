@@ -11,7 +11,7 @@ from typing import Callable, cast
 import build123d as b3d
 import pytest
 
-from femforge.common.frame import Axisymmetric
+from femforge.frames import Axisymmetric
 from femforge.config import SimulationConfig
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver
 from femforge.elmer.physics import Physics

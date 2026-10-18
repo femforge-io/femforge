@@ -157,7 +157,7 @@ Each distinct material becomes one Elmer Material block that its bodies share. U
 | `COIL_MAGNETOSTATICS` | `Relative Permeability`, plus `Electric Conductivity` on conductors |
 | `LINEAR_ELASTICITY` | none checked |
 
-A missing keyword raises one error that names the body, the material and the keywords. Under an axisymmetric frame, `MAGNETOSTATICS` solves with the same requirement.
+A missing keyword raises one error that names the body, the material and the keywords. The form `MAGNETOSTATICS` solves as in any frame has the same requirement.
 
 ## Reference
 

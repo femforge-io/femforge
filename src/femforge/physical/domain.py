@@ -6,10 +6,10 @@ from pydantic import Field
 from rich.tree import Tree
 
 from femforge.common.config import ConfigArea
-from femforge.common.frame import Frame
 from femforge.common.tags import TagDict, TagKey
 from femforge.common.utils import COLORS
 from femforge.elmer.physics import Physics
+from femforge.frames import Frame
 from femforge.materials.properties import MaterialProperties
 from femforge.physical.conditions import Condition, ConditionTarget, ConditionUnion
 from femforge.physical.units import Length

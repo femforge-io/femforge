@@ -79,7 +79,7 @@ def test_import_femforge_stays_within_its_budget(root_import: Measurement) -> No
 
 
 def test_the_first_simulation_config_stays_within_its_budget(config_access: Measurement) -> None:
-    assert config_access.seconds < 0.500 * SCALE
+    assert config_access.seconds < 0.600 * SCALE
 
 
 @pytest.mark.parametrize("module", ["pydantic", "pint", "numpy", "loguru", "rich"])

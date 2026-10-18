@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from femforge.common.frame import Axisymmetric, Frame
+from typing import TYPE_CHECKING
+
 from femforge.elmer.config.common.constants import STEFAN_BOLTZMANN, Constants
 from femforge.elmer.config.common.operating_point import OperatingPoint
 from femforge.elmer.config.common.physics_config import PhysicsConfig
@@ -21,12 +22,14 @@ from femforge.elmer.variables import ElmerVariable, elemental
 from femforge.materials.properties import PERMEABILITY_OF_VACUUM, PERMITTIVITY_OF_VACUUM
 
 
-def solved_stack(physics: Physics, frame: Frame) -> PhysicsConfig:
-    """The preset stack ``physics`` solves as under ``frame``; an axisymmetric form runs in the Axi Symmetric coordinate system."""
-    config: PhysicsConfig = physics_config(physics.in_frame(frame))
+if TYPE_CHECKING:
+    from femforge.frames import Frame
 
-    if isinstance(frame, Axisymmetric):
-        config.simulation.coordinate_system = CoordinateSystem.AXI_SYMMETRIC
+
+def solved_stack(physics: Physics, frame: Frame) -> PhysicsConfig:
+    """The preset stack ``physics`` solves as under ``frame``, in the frame's coordinate system."""
+    config: PhysicsConfig = physics_config(frame.solves(physics))
+    config.simulation.coordinate_system = frame.coordinate_system
 
     return config
 

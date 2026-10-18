@@ -1,12 +1,11 @@
 """run.magnetic: per-component force/torque triples from Result.raw, the components.yml join, and the energy/eddy scalars."""
 
-import math
 from pathlib import Path
 
 import pytest
 
 from femforge.common.vector import Vec3
-from femforge.run.magnetic import component_forces, component_torques, eddy_current_power, force_triples, magnetic_field_energy, read_component_names, revolve
+from femforge.run.magnetic import component_forces, component_torques, eddy_current_power, force_triples, magnetic_field_energy, read_component_names
 
 
 RAW: dict[str, float] = {
@@ -30,14 +29,6 @@ RAW: dict[str, float] = {
 
 def _xyz(vec: Vec3) -> tuple[float, float, float]:
     return (vec.x, vec.y, vec.z)
-
-
-def test_revolve_keeps_only_the_axial_component_times_tau() -> None:
-    # The transverse per-radian readings cancel over the revolution; only the axial (y) integral survives, scaled by 2*pi.
-    out = revolve(Vec3(-12.58, -2.293, 0.5))
-    assert out.x == 0.0
-    assert out.z == 0.0
-    assert out.y == pytest.approx(-2.293 * math.tau)
 
 
 def test_force_triples_excludes_the_nodal_sum() -> None:

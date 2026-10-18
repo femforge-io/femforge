@@ -55,7 +55,7 @@ def _job(step: Path, materials: list[MaterialProperties]) -> MeshJob:
         domain=DomainConfig(materials=materials, tags=[EntityTag(selector={TagKey.MAGNETIZATION: "N"})]),
     )
 
-    return MeshJob(spec=mesh_spec(config, "0" * 64), step=str(step))
+    return MeshJob(spec=mesh_spec(config, "0" * 64), frame=config.frame, step=str(step))
 
 
 @pytest.mark.usefixtures("worker_imports_this_tree")

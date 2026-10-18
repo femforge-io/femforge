@@ -32,7 +32,7 @@ Each artifact belongs to a kind, a module-level [ArtifactKind][femforge.artifact
 
 A key is the hex SHA-256 of the spec's JSON with sorted keys, after every field marked `HashExclude()` is removed at any depth. The mesh key leaves out conditions, material properties, physics and metadata, so two configs that differ only in a boundary condition share one mesh. A cached mesh is rebound to the current config's domain: materials by tag and tags by selector. A mismatch raises [MeshRebindError][femforge.run.MeshRebindError], so a condition never lands on the wrong boundary.
 
-An authored STEP under a `Solid()` frame passes through: the solve meshes the file itself, so no STEP artifact is cached for it.
+An authored STEP under a frame that does not rewrite the geometry, such as `Solid()`, passes through: the solve meshes the file itself, so no STEP artifact is cached for it.
 
 ## The store
 

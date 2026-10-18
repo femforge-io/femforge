@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from femforge.common.frame import Axis, Axisymmetric, Frame, Solid
+from femforge.frames import Axis, Axisymmetric, FrameUnion, Solid
 from femforge.config import SimulationConfig
 from femforge.elmer.config import CoordinateSystem
 from femforge.meshing.config import MeshConfig
@@ -168,7 +168,7 @@ def _write_axisym_outputs(tmp_path: Path) -> None:
     (tmp_path / "components.yml").write_text("1: N42_MAGNETIZATIONN\n", encoding="utf-8")
 
 
-def _write_manifest(tmp_path: Path, frame: Frame) -> None:
+def _write_manifest(tmp_path: Path, frame: FrameUnion) -> None:
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), frame=frame)
     manifest = RunManifest.build(config, status="ok", code_sha="sha1", created_at=datetime(2026, 6, 14, tzinfo=timezone.utc))
     (tmp_path / "manifest.json").write_text(manifest.model_dump_json(), encoding="utf-8")

@@ -79,22 +79,29 @@ Without `--app` or `--webview`, the command opens a browser tab. An unknown name
 | `launcher` | Every catalogue card: open and close docks, open previews, run scripts and browse what they produced. |
 | `demo` | A sphere, a line figure and a grouped table, to try the shell without data. |
 | `browsers` | The run browser over the run detail, beside the artifact browser over the artifact detail. |
-| `field-viewer` | A solved run's fields: the 3D view, the 2D plot, colormaps, bodies and field lines. |
+| `field-viewer` | A solved run's fields: the view, the symmetry expansion, colormaps, bodies and field lines. |
 | `monitors` | A run's heartbeat, stages, convergence and logs; a sweep's progress and failures; the log browser; a terminal. |
 
 The `browsers` and `monitors` cards read the telemetry root; the [Telemetry](telemetry.md) page covers what it holds. The artifact panels read the store at `FEMFORGE_ARTIFACTS` when it is set, else the store the index rows name.
 
 ## The field viewer
 
-The field viewer puts its controls beside two tabs, a 3D view and a 2D plot. The app bar holds the run picker, which lists the 200 newest indexed runs that still have fields, and a field for a bundle path. A run that is still solving opens once its solve ends. A 2D run under 400,000 cells draws as a plotly figure in the 2D tab; every other run draws in the 3D view. The camera stays put when the next run frames alike.
+The field viewer puts its controls beside one view, which draws every run, flat or solid. The app bar holds the run picker, which lists the 200 newest indexed runs that still have fields, each by its description and run id, and shows the open run's bundle path beside it. A run that is still solving opens once its solve ends. The camera stays put when the next run frames alike.
 
-The controls come in three sections:
+The first time a run opens, a short tour points out the run picker, each section of the controls and the view's toolbar. Skip or Esc ends it, and it stays closed on later starts. The help button at the right of the app bar replays it.
+
+The controls come in four sections:
 
 | Section | Controls |
 |---|---|
-| Field | Quantity, Mode, Colormap, Invert colormap, Log scale, Outline, Auto range with the color range slider, Opacity mapping |
-| Field Lines | Show field lines, Seeds, Integrate within, the seed count, Length |
+| Symmetry | Solved As, Show As, Sweep |
+| Field | Quantity, Mode, Colormap, Invert Colormap, Log Scale, Outline, Auto Range with the color range slider, Legend, Opacity Mapping |
+| Field Lines | Show Field Lines, Seeds, Integrate Within, the seed count, Length |
 | Bodies | An All Bodies row with the body colormap and the overall opacity, then one row per body and per material that owns several bodies, each with a visibility checkbox, a color and an opacity |
+
+**Symmetry expands a run solved on a section.** Solved As names the solve frame. For an axisymmetric run, Show As shows the r–z half-plane as solved, mirrors it into the full plane, or revolves it around the axis into a solid in the frame the model was authored in. Revolve is the default, at a full Sweep of 360°; a smaller sweep cuts the solid open so the cut faces show the field inside the bodies. Only the surfaces are revolved, so a section costs about as much to draw revolved as flat. The field lines of a revolved run are seeded as in a solid run, on the center plane, the gap line or through the volume of the swept solid, integrated in the section and swept back to their seeds. A run solved in 3D has nothing to expand. [DisplaySpec][femforge.viz.DisplaySpec] holds the choice as `expansion` and `sweep`.
+
+**The legend starts hidden.** The range slider wears the colormap between its thumbs, so the controls read as the legend. Set Legend to Vertical or Horizontal to draw a color bar in the view, titled with the field's unit, before a screenshot. Field lines share that bar while they map like the field, and get a bar of their own only when their colormap or range differs. Moving a thumb of the range slider pins the range and turns Auto Range off.
 
 The Mode picker offers what the quantity supports:
 
@@ -116,7 +123,7 @@ Each body's color comes from one of three sources, its [BodyPaint][femforge.viz.
 
 **The automatic color range spans every body.** With Auto range on, the range is the union of each body's own range, over every body whether it is shown, hidden or painted another way, so hiding a body never rescales the rest. Each body is clamped to its 2nd to 98th percentile, so a small body keeps its range beside a large one. Log scale keeps only the positive values and starts at their 1st percentile. Turn Auto range off to pin the range with the slider.
 
-Field lines integrate the magnetic flux density, so the switch stays off for a run without one. Seeds sit on a grid in the domain's bounding box: a volume, the center plane or a line along X through the center. A 2D run moves volume seeds to the center plane. Length is the fraction of the domain diagonal a line may run, and each line ends at its first sharp reversal. Integrate within limits the lines to one body.
+Field lines integrate the magnetic flux density, so the switch stays off for a run without one. They start on, from 18 × 18 seeds on the center plane. Seeds sit on a grid in the domain's bounding box: a volume, the center plane or a line along X through the center. A run shown flat moves volume seeds to the center plane. Length is the fraction of the domain diagonal a line may run, and each line ends at its first sharp reversal. Integrate Within limits the lines to one body.
 
 ## Runs and figures
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from femforge.common.frame import Axis, Axisymmetric, Frame, Solid
+from femforge.frames import Axis, Axisymmetric, Frame, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, PhysicsConfig, SaveScalarsSolver, physics_config

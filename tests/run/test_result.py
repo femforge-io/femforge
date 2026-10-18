@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from femforge.common.frame import Axis, Axisymmetric, Solid
+from femforge.frames import Axis, Axisymmetric, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.physical.units import U, quantity
 from femforge.common.files import BundleFile

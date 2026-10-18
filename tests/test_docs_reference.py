@@ -28,7 +28,7 @@ REFERENCE = Path(__file__).parents[1] / "docs" / "reference"
 DIRECTIVE = re.compile(r"^:::\s+(?P<name>[\w.]+)\s*$", re.MULTILINE)
 """A mkdocstrings directive line and the dotted module path it renders."""
 
-PLAN_EXTRAS = ("femforge.common.frame", "femforge.execution.docker.image", "femforge.elmer.runtime.docker_image", "femforge.schemas")
+PLAN_EXTRAS = ("femforge.execution.docker.image", "femforge.elmer.runtime.docker_image", "femforge.schemas")
 """Modules outside the ``__all__`` rule that the reference pages render by name."""
 
 

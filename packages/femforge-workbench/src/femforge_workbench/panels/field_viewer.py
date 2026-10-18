@@ -1,4 +1,4 @@
-"""The field viewer: a controller that opens a run's VTU as a FieldScene, the controls that steer it, and the 3D and plotly 2D views that show it."""
+"""The field viewer: a controller that opens a run's VTU as a FieldScene, the controls that steer it, and the view that shows it."""
 
 import asyncio
 import json
@@ -10,7 +10,6 @@ from functools import cache, partial
 from pathlib import Path
 from typing import cast
 
-import plotly.graph_objects as go
 import polars as pl
 import pyvista as pv
 from trame.app import TrameComponent
@@ -27,14 +26,14 @@ from femforge.run.result import Result
 from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import RunColumn
-from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, sample_colormap
+from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, sample_colormap
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, select_flux_density_array
+from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES, ColormapType
 from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
-from femforge_workbench.panels.figure import FigurePanel
-from femforge_workbench.panels.scene import ScenePanel, View
+from femforge_workbench.panels.scene import ScenePanel, View, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.button import Button
@@ -47,10 +46,9 @@ from femforge_workbench.widgets.input import ColorInput, Input
 from femforge_workbench.widgets.progress import Progress
 from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.switch import Switch
+from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
+from femforge_workbench.widgets.tour import TourStep
 
-
-PLOTLY_MAX_CELLS = 400_000
-"""Cells above which a 2D run is drawn in the plotter instead of as plotly meshes in the browser."""
 
 RUN_PICKER_LIMIT = 200
 """The newest indexed runs with fields the run picker offers."""
@@ -67,7 +65,6 @@ FIELDS_PERIOD = 1.0
 LINE_COUNT_MIN = 2
 MAX_LENGTH_RANGE = (0.05, 1.0)
 MAX_LENGTH_STEP = 0.05
-RESTYLE_EVENT = "restyle"
 WHOLE_DOMAIN = ""
 WHOLE_DOMAIN_LABEL = "Whole Domain"
 NO_RUN = "No Run Open"
@@ -78,15 +75,16 @@ DEFAULTS = DisplaySpec()
 
 LINE_DEFAULTS = FieldLineOptions()
 FULL_WIDTH = "w-full"
-RUN_WIDTH = "w-72"
-PATH_WIDTH = "w-96"
+RUN_WIDTH = "w-96"
+PATH_WIDTH = "w-[28rem] shrink-0"
 BUSY_FULL = 100.0
 """The bar is pulsed, not filled: the load reports no fraction."""
 
+SYMMETRY_SECTION = "symmetry"
 FIELD_SECTION = "field"
 LINES_SECTION = "lines"
 BODIES_SECTION = "bodies"
-OPEN_SECTIONS = [FIELD_SECTION, LINES_SECTION, BODIES_SECTION]
+OPEN_SECTIONS = [SYMMETRY_SECTION, FIELD_SECTION, LINES_SECTION, BODIES_SECTION]
 OPACITY_RANGE = (0.0, 1.0)
 OPACITY_STEP = 0.01
 ALL_BODIES = "All Bodies"
@@ -110,8 +108,33 @@ CHIP_SLOT = "grid grid-cols-[minmax(0,1fr)_1rem] items-center gap-0.5"
 CHIP = "h-4 w-full min-w-0 cursor-pointer rounded-sm border border-border p-0"
 COLOR_CHIP = f"{CHIP} [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[3px] [&::-webkit-color-swatch]:border-0"
 CHIP_CLEAR = "size-4"
-ENTER = "Enter"
-PRECISION = 4
+PRECISION = 3
+"""Significant figures of the range readouts, matching the color bar's labels."""
+RANGE_VAR = "--ff-range"
+RANGE_TRACK = "[&_[data-slot=slider-range]]:[background-image:var(--ff-range)]"
+"""Paints the track between the range thumbs with the field colormap, which the slider then reads as the legend."""
+
+RUN_GROUP = "flex items-center gap-3"
+TOUR_PREFIX = "tour-"
+RUN_TOUR_ID = f"{TOUR_PREFIX}run"
+SWEEP_RANGE = (15.0, 360.0)
+SWEEP_STEP = 15.0
+DEGREES = "°"
+NOTHING_TO_EXPAND = title("nothing to expand")
+
+
+class SymmetryState(StrEnum):
+    """What the symmetry section has to offer for the open run."""
+
+    NONE = "none"
+    """No run is open."""
+
+    FIXED = "fixed"
+    """The run was solved in 3D, so there is nothing to expand."""
+
+    OPEN = "open"
+    """The run was solved on a section that can be expanded."""
+
 
 type Item = dict[str, object]
 type Location = Run | str | Path
@@ -119,11 +142,10 @@ type Location = Run | str | Path
 
 
 class FieldPanel(StrEnum):
-    """The viewer's panel ids; the two views double as the drawing paths a run takes."""
+    """The viewer's panel ids."""
 
     CONTROLS = "field-controls"
     VIEW_3D = "field3d"
-    PLOT_2D = "field2d"
 
 
 class FieldVar(StrEnum):
@@ -145,6 +167,11 @@ class FieldVar(StrEnum):
     LOG_SCALE = "field_log_scale"
     INVERT = "field_invert"
     OUTLINE = "field_outline"
+    LEGEND = "field_legend"
+    EXPANSION = "field_expansion"
+    SWEEP = "field_sweep"
+    SOLVED_AS = "field_solved_as"
+    SYMMETRY = "field_symmetry"
     AUTO_CLIM = "field_auto_clim"
     CLIM = "field_clim"
     CLIM_MIN = "field_clim_min"
@@ -173,6 +200,52 @@ class FieldVar(StrEnum):
     COLORMAP_ITEMS = "field_colormap_items"
 
 
+TOUR_STEPS: list[TourStep] = [
+    {
+        "target": f"#{view_id(FieldPanel.VIEW_3D)}",
+        "title": "Your Solved Field",
+        "body": "This view colors the solved field by the quantity you pick in Field. Drag to orbit and scroll to zoom.",
+        "side": "left",
+    },
+    {
+        "target": f"#{RUN_TOUR_ID}",
+        "title": "Switch Between Runs",
+        "body": "Every solved run of this project is listed here. Pick one to open it.",
+        "side": "bottom",
+    },
+    {
+        "target": f"#{TOUR_PREFIX}{SYMMETRY_SECTION}",
+        "title": "Expand the Section",
+        "body": "Show a 2D section as solved, or mirror or revolve it into 3D. Sweep sets how far the revolve goes.",
+        "side": "right",
+    },
+    {
+        "target": f"#{TOUR_PREFIX}{FIELD_SECTION}",
+        "title": "Choose What to Color",
+        "body": "Pick the quantity and its colormap. The range slider shows the value each color stands for.",
+        "side": "right",
+    },
+    {
+        "target": f"#{TOUR_PREFIX}{LINES_SECTION}",
+        "title": "Trace the Field",
+        "body": "Field lines follow the flux density from seeds on the center plane. Raise the seed count for denser lines.",
+        "side": "right",
+    },
+    {
+        "target": f"#{TOUR_PREFIX}{BODIES_SECTION}",
+        "title": "Show or Hide Bodies",
+        "body": "Check a body to show it, and use its chip and slider to set its color and opacity.",
+        "side": "right",
+    },
+    {
+        "target": f"#{toolbar_id(FieldPanel.VIEW_3D)}",
+        "title": "Frame and Save the View",
+        "body": "Fit, Top and Iso reset the camera, and Screenshot saves a PNG. Set Legend in the Field section first to include the color scale.",
+        "side": "bottom",
+    },
+]
+"""The tour's stops through the viewer, in order; the shell adds its own last stop."""
+
 DISPLAY_KEYS: tuple[FieldVar, ...] = (
     FieldVar.FIELD,
     FieldVar.MODE,
@@ -180,6 +253,8 @@ DISPLAY_KEYS: tuple[FieldVar, ...] = (
     FieldVar.LOG_SCALE,
     FieldVar.INVERT,
     FieldVar.OUTLINE,
+    FieldVar.LEGEND,
+    FieldVar.EXPANSION,
     FieldVar.AUTO_CLIM,
     FieldVar.VISIBLE_BODIES,
     FieldVar.STREAMLINES,
@@ -276,8 +351,19 @@ def mode_items(info: FieldInfo) -> list[Item]:
     return [{ItemField.TITLE: mode.label, ItemField.VALUE: str(mode)} for mode in info.modes]
 
 
+def expansion_label(value: str) -> str:
+    """How an expansion reads as a segment: the result, beside what the run was solved as."""
+    match Expansion(value):
+        case Expansion.SECTION:
+            return "Section"
+        case Expansion.MIRROR:
+            return "Mirrored"
+        case Expansion.REVOLVE:
+            return "Revolved"
+
+
 def placement_items(model_dim: int = 3) -> list[Item]:
-    """The seed placement select's items; a 2D run offers no volume to seed."""
+    """The seed placement select's items; a run shown flat offers no volume to seed."""
     items: list[Item] = [{ItemField.TITLE: title(placement.value), ItemField.VALUE: str(placement)} for placement in SeedPlacement]
     if model_dim == 2:
         volume = next(item for item in items if item[ItemField.VALUE] == SeedPlacement.VOLUME)
@@ -351,6 +437,33 @@ def has_flux_density(fields: Sequence[FieldInfo]) -> bool:
     return True
 
 
+def run_label(run_id: str, description: str | None, physics: str | None, dim: int | None) -> str:
+    """How a run reads in the picker: its description before its id, else its id with its physics and dimension.
+
+    Args:
+        run_id: The run's id.
+        description: The run's description, None or empty when it has none.
+        physics: The physics solved, None when unknown.
+        dim: The solved dimension, None when unknown.
+    """
+    if description:
+        return f"{description} · {run_id}"
+
+    extent = f"{dim}D" if dim is not None else ""
+
+    return " ".join(part for part in (run_id, physics or "", extent) if part)
+
+
+def bundle_label(run: Run, run_id: str) -> str:
+    """How an opened bundle reads in the picker, the id alone when it has no manifest to read."""
+    try:
+        manifest = run.manifest
+    except (FileNotFoundError, ValueError):
+        return run_id
+
+    return run_label(run_id, manifest.config.meta.description, str(manifest.physics), manifest.config.frame.model_dim)
+
+
 def run_items(telemetry: Telemetry | None) -> list[Item]:
     """The run picker's items: the newest indexed runs that still have fields, empty without a telemetry root or a readable index."""
     if telemetry is None:
@@ -365,11 +478,11 @@ def run_items(telemetry: Telemetry | None) -> list[Item]:
     run_ids = cast("list[str]", frame[RunColumn.RUN_ID].to_list())
     physics = cast("list[str | None]", frame[RunColumn.PHYSICS].to_list())
     dims = cast("list[int | None]", frame[RunColumn.MODEL_DIM].to_list())
+    descriptions = cast("list[str | None]", frame[RunColumn.DESCRIPTION].to_list())
 
     items: list[Item] = []
-    for run_id, kind, dim in zip(run_ids, physics, dims, strict=True):
-        extent = f"{dim}D" if dim is not None else ""
-        items.append({ItemField.TITLE: " ".join(part for part in (run_id, kind or "", extent) if part), ItemField.VALUE: run_id})
+    for run_id, kind, dim, description in zip(run_ids, physics, dims, descriptions, strict=True):
+        items.append({ItemField.TITLE: run_label(run_id, description, kind, dim), ItemField.VALUE: run_id})
 
     return items
 
@@ -440,6 +553,22 @@ def setting(model: FieldVar, label: str, *, disabled: react.Bind | None = None) 
         Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled)
 
 
+def segmented(model: FieldVar, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
+    """A captioned single choice among `values` as one row of equal segments; pressing the chosen segment again changes nothing.
+
+    Args:
+        model: The state variable the choice is bound to.
+        label: The caption over the segments.
+        values: The values offered, in order.
+        read: Makes the text each value reads as; Title Case by default.
+    """
+    keep = react.Callback(f"{EVENT} && trame.state.set({json.dumps(str(model))}, {EVENT})")
+    with captioned(label):
+        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, classes=str(Cls.SEGMENTED), aria_label=title(label)):
+            for value in values:
+                ToggleGroupItem(read(value), value=value, classes=str(Cls.SEGMENT))
+
+
 def readouts(left: str | react.Bind, right: str | react.Bind) -> None:
     """The row over a slider: a caption or its low end at the left, its high end at the right."""
     with html.Div(classes=READOUTS):
@@ -507,7 +636,6 @@ class FieldViewerController(TrameComponent):
         self.model_dim = 3
         self.bodies: list[str] = []
         self.viewer: FieldViewerPanel | None = None
-        self.plot: FieldPlot2DPanel | None = None
         self.attached: set[str] = set()
         """The ids of the panels that took this controller; the last to leave releases it."""
         self.live = True
@@ -516,6 +644,8 @@ class FieldViewerController(TrameComponent):
         """The scene the plotter currently holds."""
         self.framed: tuple[float, ...] | None = None
         """The bounds the plotter's camera last framed, kept through a clear so the next run that frames alike keeps the view."""
+        self.drawn_dim = 3
+        """The dimension the last draw showed the run in, so a change of it re-frames the camera."""
         self.shown: set[str] = set()
         self.syncing = False
         self.dirty = False
@@ -547,6 +677,11 @@ class FieldViewerController(TrameComponent):
                 FieldVar.LOG_SCALE: display.log_scale,
                 FieldVar.INVERT: display.invert,
                 FieldVar.OUTLINE: display.outline,
+                FieldVar.LEGEND: str(display.legend),
+                FieldVar.EXPANSION: str(display.expansion),
+                FieldVar.SWEEP: [display.sweep],
+                FieldVar.SOLVED_AS: NO_RUN,
+                FieldVar.SYMMETRY: str(SymmetryState.NONE),
                 FieldVar.AUTO_CLIM: display.clim is None,
                 FieldVar.CLIM: list(display.clim or (0.0, 1.0)),
                 FieldVar.CLIM_MIN: 0.0,
@@ -591,9 +726,6 @@ class FieldViewerController(TrameComponent):
         if panel is self.viewer:
             self.viewer = None
 
-        if panel is self.plot:
-            self.plot = None
-
         if not self.attached:
             self.release()
 
@@ -610,16 +742,6 @@ class FieldViewerController(TrameComponent):
     def visible(self) -> bool:
         """Whether either view is on screen."""
         return bool(self.shown)
-
-    @property
-    def path(self) -> FieldPanel:
-        """Which view draws the scene: the plotly figure for a 2D run under the cell limit, else the plotter."""
-        scene = self.scene
-        small = scene is not None and scene.grid.n_cells <= PLOTLY_MAX_CELLS
-        if self.model_dim == 2 and small and self.plot is not None:
-            return FieldPanel.PLOT_2D
-
-        return FieldPanel.VIEW_3D
 
     def status(self, message: str) -> None:
         """Writes `message` to the shell's status line."""
@@ -642,14 +764,6 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.RUN] = str(location.path) if isinstance(location, Run) else str(location)
 
         self.load_task = asyncio.create_task(self.load(location))
-
-    def open_text(self) -> None:
-        """Opens whatever the bundle-path field holds; the select and the field drive the same run variable."""
-        location = str(self.state[FieldVar.RUN_TEXT])
-        if not location:
-            return
-
-        self.open(location)
 
     async def load(self, location: Location) -> None:
         """Opens the run at ``location`` off the loop and shows it; a run without fields empties the views, and one still solving opens once it ends; a newer open in flight wins."""
@@ -712,9 +826,6 @@ class FieldViewerController(TrameComponent):
         if self.viewer is not None:
             self.viewer.clear()
 
-        if self.plot is not None:
-            self.plot.clear()
-
         with self.quiet():
             self.state[FieldVar.RUN_ID] = ""
             self.state[FieldVar.FIELDS] = []
@@ -723,6 +834,8 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.VISIBLE_BODIES] = []
             self.state[FieldVar.HAS_FLUX] = False
             self.state[FieldVar.LINES_BODIES] = body_items([])
+            self.state[FieldVar.SOLVED_AS] = NO_RUN
+            self.state[FieldVar.SYMMETRY] = str(SymmetryState.NONE)
 
         self.notice(reason)
         self.status(reason)
@@ -772,14 +885,19 @@ class FieldViewerController(TrameComponent):
         self.model_dim = scene.model_dim
         self.bodies = [str(key) for key in scene.blocks.keys()]
         spec = self.fit(self.spec_from_state(), scene)
+        dim = scene.dim_for(spec)
 
+        location, items = self.offered(str(self.state[FieldVar.RUN]), run, scene.run_id)
         with self.quiet():
             self.state[FieldVar.RUN_ID] = scene.run_id
             self.state[FieldVar.RUN_TEXT] = str(run.path)
-            self.state[FieldVar.RUN_ITEMS] = self.offered(str(self.state[FieldVar.RUN]), scene.run_id)
+            self.state[FieldVar.RUN] = location
+            self.state[FieldVar.RUN_ITEMS] = items
             self.state[FieldVar.MODEL_DIM] = self.model_dim
-            self.state[FieldVar.SEED_PLACEMENTS] = placement_items(self.model_dim)
-            self.state[FieldVar.SEED_PLACEMENT] = self.seeds_for(self.model_dim)
+            self.state[FieldVar.SOLVED_AS] = title(scene.frame.label)
+            self.state[FieldVar.SYMMETRY] = str(SymmetryState.OPEN if scene.expandable else SymmetryState.FIXED)
+            self.state[FieldVar.SEED_PLACEMENTS] = placement_items(dim)
+            self.state[FieldVar.SEED_PLACEMENT] = self.seeds_for(dim)
             self.state[FieldVar.FIELDS] = [{ItemField.TITLE: info.display_name, ItemField.VALUE: info.name} for info in scene.fields]
             self.state[FieldVar.FIELD] = spec.field
             self.state[FieldVar.MODES] = mode_items(scene.field_info(spec.field))
@@ -798,18 +916,19 @@ class FieldViewerController(TrameComponent):
         self.notice("")
         self.reveal = True
         self.request_redraw()
+        self.app.offer_tour()
 
-        log.bind(run_id=scene.run_id, model_dim=self.model_dim, cells=scene.grid.n_cells, path=str(self.path)).info("Run shown.")
+        log.bind(run_id=scene.run_id, model_dim=self.model_dim, cells=scene.grid.n_cells, location=location).info("Run shown.")
         self.status(f"{scene.run_id}: {len(scene.fields)} fields, {len(self.bodies)} bodies, {self.model_dim}D")
 
-    def seeds_for(self, model_dim: int) -> str:
-        """The seed placement for a run of `model_dim`: a 2D run has no volume, so Volume seeds move to the center plane until a 3D run takes them back."""
+    def seeds_for(self, dim: int) -> str:
+        """The seed placement for a run shown in `dim` dimensions: a flat one has no volume, so Volume seeds move to the center plane until a solid one takes them back."""
         current = SeedPlacement(str(self.state[FieldVar.SEED_PLACEMENT]))
-        if model_dim == 2 and current is SeedPlacement.VOLUME:
+        if dim == 2 and current is SeedPlacement.VOLUME:
             self.volume_seeds = True
             return str(SeedPlacement.CENTER_PLANE)
 
-        if model_dim != 2 and self.volume_seeds:
+        if dim != 2 and self.volume_seeds:
             self.volume_seeds = False
             if current is SeedPlacement.CENTER_PLANE:
                 return str(SeedPlacement.VOLUME)
@@ -923,13 +1042,32 @@ class FieldViewerController(TrameComponent):
         """Republishes the body table after the body colormap changed."""
         self.publish_rows()
 
-    def offered(self, location: str, run_id: str) -> list[Item]:
-        """The picker's items with the open location among them: a bundle path, or a run older than the newest RUN_PICKER_LIMIT, is no value of the index and would leave the trigger blank."""
-        items = cast("list[Item]", self.state[FieldVar.RUN_ITEMS])
-        if not location or any(item[ItemField.VALUE] == location for item in items):
-            return items
+    def offered(self, location: str, run: Run, run_id: str) -> tuple[str, list[Item]]:
+        """The picker's value and items for the open run: the index read again under the bundles it still lacks, the run picked by its id, path or location, else added on top by its path.
 
-        return [{ItemField.TITLE: run_id, ItemField.VALUE: location}, *items]
+        Args:
+            location: The location the run was opened from, as the picker holds it.
+            run: The opened run, whose manifest labels it.
+            run_id: The run's id, its label without a manifest.
+        """
+        current = cast("list[Item]", self.state[FieldVar.RUN_ITEMS])
+        path = str(run.path)
+
+        def refreshed() -> list[Item]:
+            """The index read again, with the bundles opened by path that it still does not list on top."""
+            indexed = run_items(self.telemetry)
+            ids = {str(item[ItemField.VALUE]) for item in indexed}
+            kept = [item for item in current if str(item[ItemField.VALUE]) not in ids and Path(str(item[ItemField.VALUE])).name not in ids]
+
+            return [*kept, *indexed]
+
+        items = refreshed() if self.telemetry is not None else current
+        values = {str(item[ItemField.VALUE]) for item in items}
+        for candidate in (run_id, path, location):
+            if candidate in values:
+                return candidate, items
+
+        return path, [{ItemField.TITLE: bundle_label(run, run_id), ItemField.VALUE: path}, *items]
 
     def fit(self, spec: DisplaySpec, scene: FieldScene) -> DisplaySpec:
         """The spec snapped to the scene's fields, falling back to its first field when the current one is not offered."""
@@ -948,8 +1086,11 @@ class FieldViewerController(TrameComponent):
 
         visible = set(names_of(state[FieldVar.VISIBLE_BODIES]))
         hidden = tuple(name for name in self.bodies if name not in visible)
+        expansion = Expansion(str(state[FieldVar.EXPANSION]))
+        scene = self.scene
+        dim = expansion.dim if scene is not None and scene.expandable else self.model_dim
         drawing_lines = bool(state[FieldVar.STREAMLINES]) and bool(state[FieldVar.HAS_FLUX])
-        streamlines = self.streamline_options() if drawing_lines else None
+        streamlines = self.streamline_options(dim) if drawing_lines else None
         opacity_map = pair_of(state[FieldVar.OPACITY_RANGE]) if bool(state[FieldVar.OPACITY_MAPPING]) else None
 
         return DisplaySpec(
@@ -960,6 +1101,9 @@ class FieldViewerController(TrameComponent):
             invert=bool(state[FieldVar.INVERT]),
             clim=clim,
             robust=self.robust,
+            legend=Legend(str(state[FieldVar.LEGEND])),
+            expansion=expansion,
+            sweep=only(state[FieldVar.SWEEP], DEFAULTS.sweep),
             hidden_bodies=hidden,
             outline=bool(state[FieldVar.OUTLINE]),
             opacity=only(state[FieldVar.OPACITY], DEFAULTS.opacity),
@@ -969,17 +1113,20 @@ class FieldViewerController(TrameComponent):
             streamlines=streamlines,
         )
 
-    def streamline_options(self) -> FieldLineOptions:
-        """The startup field-line options with what the controls describe, following the shown field when it is a vector and confined to the chosen body when one is picked."""
+    def streamline_options(self, dim: int) -> FieldLineOptions:
+        """The startup field-line options with what the controls describe; a run shown flat seeds its center plane in place of a volume."""
         state = self.state
         scene = self.scene
         body = scene.bodies.get(str(state[FieldVar.LINES_BODY])) if scene is not None else None
         region = body.mesh_id if body is not None else None
         vectors = self.vector_field()
+        placement = SeedPlacement(str(state[FieldVar.SEED_PLACEMENT]))
+        if dim == 2 and placement is SeedPlacement.VOLUME:
+            placement = SeedPlacement.CENTER_PLANE
 
         return self.lines.model_copy(
             update={
-                "seed_placement": SeedPlacement(str(state[FieldVar.SEED_PLACEMENT])),
+                "seed_placement": placement,
                 "line_count": int(only(state[FieldVar.LINE_COUNT], LINE_DEFAULTS.line_count)),
                 "max_length": only(state[FieldVar.MAX_LENGTH], LINE_DEFAULTS.max_length),
                 "region_array": GEOMETRY_IDS_ARRAY if region is not None else None,
@@ -1013,52 +1160,33 @@ class FieldViewerController(TrameComponent):
         while self.dirty:
             self.dirty = False
             try:
+                self.publish_seeds()
                 await self.redraw(self.spec_from_state())
             except Exception as error:  # noqa: BLE001 - a display the scene cannot draw ends in the status line
                 log.opt(exception=True).warning("Field redraw failed.")
                 self.status(f"{type(error).__name__}: {error}")
+                self.settle_expansion()
 
-    async def redraw(self, spec: DisplaySpec) -> None:
-        """Draws the spec through the scene's path, then publishes the color range it produced."""
+    def settle_expansion(self) -> None:
+        """Puts the Show As choice back to what the scene shows after a draw failed, so the controls never claim an expansion the view lacks."""
         scene = self.scene
         if scene is None:
             return
 
-        if self.path is FieldPanel.PLOT_2D:
-            await self.draw_figure(scene, spec)
-        else:
-            await self.draw_plotter(scene, spec)
+        shown = str(scene.expanded[0])
+        if str(self.state[FieldVar.EXPANSION]) != shown:
+            with self.quiet():
+                self.state[FieldVar.EXPANSION] = shown
 
+    async def redraw(self, spec: DisplaySpec) -> None:
+        """Draws the spec into the view, then publishes the color range it produced."""
+        scene = self.scene
+        if scene is None:
+            return
+
+        await self.draw_plotter(scene, spec)
         if scene is self.scene:
             self.publish_range(scene)
-
-    async def draw_figure(self, scene: FieldScene, spec: DisplaySpec) -> None:
-        """Builds the plotly figure off the loop and shows it, clearing the plotter it replaces."""
-        plot = self.plot
-        if plot is None:
-            return
-
-        figure, bodies = await asyncio.to_thread(self.build_figure, scene, spec)
-        if scene is not self.scene:
-            return
-
-        if self.drawn is not None and self.viewer is not None:
-            self.viewer.clear()
-            self.drawn = None
-
-        plot.show(figure, bodies)
-        self.activate(FieldPanel.PLOT_2D)
-
-    def build_figure(self, scene: FieldScene, spec: DisplaySpec) -> tuple[go.Figure, list[str]]:
-        """The figure for a spec, named for export, with its body traces in order."""
-        encoded = scene.figure(spec)
-        traces = cast("list[dict[str, object]]", encoded["data"])
-        bodies = [str(trace["name"]) for trace in traces if trace["type"] == "mesh3d"]
-
-        figure = go.Figure(encoded)
-        _ = figure.update_layout(meta={"title": f"{scene.run_id} {scene.field_info(scene.spec.field).display_name}"})
-
-        return figure, bodies
 
     async def draw_plotter(self, scene: FieldScene, spec: DisplaySpec) -> None:
         """Draws or recolors the scene in the plotter, keeping the camera across runs that still frame it; new field lines are integrated off the loop."""
@@ -1066,24 +1194,40 @@ class FieldViewerController(TrameComponent):
         if viewer is None:
             return
 
+        dim = scene.dim_for(spec)
         if self.drawn is not scene:
-            bounds = tuple(scene.grid.bounds)
+            await self.expand(scene, spec)
+            if scene is not self.scene:
+                return
+
+            bounds = tuple(scene.bounds)
             keep = self.framed is not None and similar_bounds(self.framed, bounds)
             scene.spec = spec.model_copy(update={"streamlines": None})
             viewer.render(scene, keep_camera=keep)
             if not keep:
-                viewer.look(View.TOP if self.model_dim == 2 else View.ISO)
+                viewer.look(View.TOP if dim == 2 else View.ISO)
 
             self.drawn = scene
             self.framed = bounds
-            if self.plot is not None:
-                self.plot.clear()
         else:
-            kept = scene.spec.streamlines if spec.streamlines is not None else None
-            scene.update(viewer.plotter, spec.model_copy(update={"streamlines": kept}))
-            viewer.push()
+            changing = scene.expansion_of(spec.fitted(scene.fields)) != scene.expanded
+            if changing:
+                await self.expand(scene, spec)
+                if scene is not self.scene:
+                    return
 
-        self.activate(FieldPanel.VIEW_3D)
+            kept = scene.spec.streamlines if spec.streamlines is not None and not changing else None
+            scene.update(viewer.plotter, spec.model_copy(update={"streamlines": kept}))
+            if changing:
+                self.framed = tuple(scene.bounds)
+                viewer.look(View.TOP if dim == 2 else View.ISO) if dim != self.drawn_dim else viewer.fit()
+                if viewer.oversized(viewer.footprint):
+                    viewer.fall_back(viewer.footprint)
+            else:
+                viewer.push()
+
+        self.drawn_dim = dim
+        self.activate()
 
         wanted = spec.streamlines
         if wanted is None or wanted == scene.spec.streamlines:
@@ -1104,16 +1248,43 @@ class FieldViewerController(TrameComponent):
         viewer.push()
         self.status(f"field lines: {actors.streamlines.n_cells} segments from {wanted.line_count} seeds per axis")
 
-    def activate(self, panel_id: FieldPanel) -> None:
-        """Brings a view's tab to the front once per opened run, unless it is already on screen."""
+    async def expand(self, scene: FieldScene, spec: DisplaySpec) -> None:
+        """Expands the scene for the spec off the loop under the busy bar, which an open still in flight keeps up."""
+        self.set_busy(True)
+        try:
+            _ = await asyncio.to_thread(scene.expand, spec)
+        finally:
+            if self.load_task is None or self.load_task.done():
+                self.set_busy(False)
+
+    def activate(self) -> None:
+        """Brings the view's tab to the front once per opened run, unless it is already on screen."""
         if not self.reveal:
             return
 
         self.reveal = False
-        if str(panel_id) in self.shown or self.app.dock is None:
+        if str(FieldPanel.VIEW_3D) in self.shown or self.app.dock is None:
             return
 
-        self.app.dock.active_panel(str(panel_id))
+        self.app.dock.active_panel(str(FieldPanel.VIEW_3D))
+
+    def display_dim(self) -> int:
+        """The dimension the controls will show the run in: the chosen expansion's for a section, else the solved one."""
+        scene = self.scene
+        if scene is None or not scene.expandable:
+            return self.model_dim
+
+        return Expansion(str(self.state[FieldVar.EXPANSION])).dim
+
+    def publish_seeds(self) -> None:
+        """Offers the seed placements the coming draw's dimension allows, moving Volume seeds to the center plane while the run is shown flat, before the draw reads them."""
+        if self.scene is None:
+            return
+
+        dim = self.display_dim()
+        with self.quiet():
+            self.state[FieldVar.SEED_PLACEMENTS] = placement_items(dim)
+            self.state[FieldVar.SEED_PLACEMENT] = self.seeds_for(dim)
 
     def publish_range(self, scene: FieldScene) -> None:
         """Puts the data range under the range slider and, while automatic, the limits the draw used on it."""
@@ -1126,7 +1297,7 @@ class FieldViewerController(TrameComponent):
                 self.state[FieldVar.CLIM] = list(scene.clim)
 
     def on_visible(self, panel_id: str, visible: bool) -> None:
-        """Tracks which views are on screen; the viewer follows the shared run selection only while one is."""
+        """Tracks whether the view is on screen; the viewer follows the shared run selection only while it is."""
         was = self.visible
         if visible:
             self.shown.add(panel_id)
@@ -1151,6 +1322,16 @@ class FieldViewerController(TrameComponent):
         """A slider thumb released: its value has been in the state since the drag began, and is drawn now."""
         if self.scene is None:
             return
+
+        self.request_redraw()
+
+    def on_clim_commit(self) -> None:
+        """A range thumb released: the range stays where it was dragged, which turns Auto Range off, and is drawn now."""
+        if self.scene is None:
+            return
+
+        with self.state:
+            self.state[FieldVar.AUTO_CLIM] = False
 
         self.request_redraw()
 
@@ -1226,7 +1407,7 @@ class FieldViewerPanel(ScenePanel):
             app: The workbench shell the panel is built in.
             id: The panel id, which names its template and namespaces its state.
             title: The panel's tab title.
-            controller: The viewer's controller, shared with the controls and the 2D plot.
+            controller: The viewer's controller, shared with the controls.
         """
         self.controller = controller
 
@@ -1256,72 +1437,6 @@ class FieldViewerPanel(ScenePanel):
         super().dispose()
 
 
-class FieldPlot2DPanel(FigurePanel):
-    """The plotly view of a 2D run: every body a Mesh3d with hover values, its legend toggling bodies in step with the controls."""
-
-    def __init__(self, app: Workbench, id: str, title: str, controller: FieldViewerController) -> None:
-        """Builds the 2D plot and attaches it to the controller.
-
-        Args:
-            app: The workbench shell the panel is built in.
-            id: The panel id, which names its template and namespaces its state.
-            title: The panel's tab title.
-            controller: The viewer's controller, shared with the controls and the 3D view.
-        """
-        self.controller = controller
-        self.bodies: list[str] = []
-
-        super().__init__(app, id, title)
-
-        self.bind(RESTYLE_EVENT, self.on_restyle)
-        controller.plot = self
-        controller.attach(self)
-
-    def show(self, figure: go.Figure, bodies: Sequence[str]) -> None:
-        """Replaces the figure, remembering which body each mesh trace is."""
-        self.bodies = list(bodies)
-        self.update(figure)
-
-    def clear(self) -> None:
-        """Empties the figure."""
-        self.bodies = []
-        self.update(go.Figure())
-
-    def on_visible(self, visible: bool) -> None:
-        """Tells the controller whether the plot is on screen."""
-        self.controller.on_visible(self.id, visible)
-
-    def dispose(self) -> None:
-        """Detaches from the controller, then releases the panel."""
-        self.controller.detach(self)
-        super().dispose()
-
-    def on_restyle(self, payload: object) -> None:
-        """Mirrors a legend toggle into the visible-bodies state, so the tree and the 3D view follow."""
-        parts = cast("list[object]", payload) if isinstance(payload, list) else []
-        if len(parts) != 2 or not isinstance(parts[0], Mapping) or not isinstance(parts[1], list):
-            return
-
-        flags = cast("Mapping[str, object]", parts[0]).get("visible")
-        indices = cast("list[object]", parts[1])
-        if not isinstance(flags, list):
-            return
-
-        shown = set(names_of(self.state[FieldVar.VISIBLE_BODIES]))
-        for index, flag in zip(indices, cast("list[object]", flags), strict=False):
-            if not isinstance(index, int) or not 0 <= index < len(self.bodies):
-                continue
-
-            name = self.bodies[index]
-            if flag is True:
-                shown.add(name)
-            else:
-                shown.discard(name)
-
-        with self.state:
-            self.state[FieldVar.VISIBLE_BODIES] = [name for name in self.bodies if name in shown]
-
-
 class FieldControlsPanel(PanelComponent):
     """The viewer's controls: the field, mode and colormap selects, the display switches, the colour range, the body tree and the field-line options."""
 
@@ -1332,34 +1447,22 @@ class FieldControlsPanel(PanelComponent):
             app: The workbench shell the panel is built in.
             id: The panel id, which names its template and namespaces its state.
             title: The panel's tab title.
-            controller: The viewer's controller, shared with the 3D view and the 2D plot.
+            controller: The viewer's controller, shared with the view.
         """
         self.controller = controller
 
         super().__init__(app, id, title)
 
         controller.attach(self)
+        app.add_tour_steps(TOUR_STEPS)
 
     def build_run_picker(self) -> None:
-        """The indexed-run select and the bundle-path field, both driving the same run variable; built into the app bar, its one place."""
-        with labelled("Run"):
-            picker(str(FieldVar.RUN), str(FieldVar.RUN_ITEMS), placeholder="No Run Selected", width=RUN_WIDTH)
+        """The indexed-run select and, beside it, the open run's bundle path to read or copy; built into the app bar, its one place."""
+        with html.Div(classes=RUN_GROUP, id=RUN_TOUR_ID):
+            with labelled("Run"):
+                picker(str(FieldVar.RUN), str(FieldVar.RUN_ITEMS), placeholder="No Run Selected", width=RUN_WIDTH)
 
-        Input(
-            model=str(FieldVar.RUN_TEXT),
-            placeholder="Bundle Path",
-            classes=PATH_WIDTH,
-            aria_label="Bundle path",
-            on_key_down=self.opening(),
-        )
-        with Button(size="icon-sm", variant="ghost", title="Open the bundle at that path", on_click=self.callback(self.controller.open_text)):
-            Icon("folder")
-
-    def opening(self) -> react.Callback:
-        """The bundle-path field's Enter: the text is committed and opened in one client-side step."""
-        text = f"{EVENT}.target.value"
-
-        return react.Callback(f'{EVENT}.key === "{ENTER}" && (trame.state.set("{FieldVar.RUN_TEXT}", {text}), trame.state.set("{FieldVar.RUN}", {text}))')
+            Input(value=react.Bind(str(FieldVar.RUN_TEXT)), read_only=True, placeholder="Bundle Path", classes=PATH_WIDTH, aria_label="Bundle path")
 
     def build_colormap(self) -> None:
         """The field colormap picker: searchable, filtered by type and favorites, the arrow keys stepping through it while it is closed."""
@@ -1404,20 +1507,25 @@ class FieldControlsPanel(PanelComponent):
         )
 
     def build_range(self) -> None:
-        """The Auto range switch over the two-thumb colour range across the data range, its ends read out above it."""
+        """The Auto Range switch over the two-thumb color range across the data range, its ends read out above it and the colormap between its thumbs; a moved thumb pins the range."""
         setting(FieldVar.AUTO_CLIM, "Auto range")
         with html.Div(classes=STACK):
             readouts(react.Bind(f"{FieldVar.CLIM}[0].toPrecision({PRECISION})"), react.Bind(f"{FieldVar.CLIM}[1].toPrecision({PRECISION})"))
             Slider(
                 value=react.Bind(str(FieldVar.CLIM)),
                 on_value_change=setter(str(FieldVar.CLIM)),
-                on_value_commit=self.callback(self.controller.on_commit),
+                on_value_commit=self.callback(self.controller.on_clim_commit),
                 min_=react.Bind(str(FieldVar.CLIM_MIN)),
                 max_=react.Bind(str(FieldVar.CLIM_MAX)),
                 step=react.Bind(str(FieldVar.CLIM_STEP)),
-                disabled=react.Bind(str(FieldVar.AUTO_CLIM)),
+                classes=RANGE_TRACK,
+                style={RANGE_VAR: react.Bind(str(FieldVar.FIELD_GRADIENT))},
                 aria_label="Color range",
             )
+
+    def build_legend(self) -> None:
+        """The legend's three states as one segmented choice."""
+        segmented(FieldVar.LEGEND, "Legend", [str(legend) for legend in Legend])
 
     def build_opacity(self) -> None:
         """The Opacity mapping switch and, while it is on, the opacity at each end of the color range; the body table holds the overall opacity."""
@@ -1425,6 +1533,18 @@ class FieldControlsPanel(PanelComponent):
         with react.If(str(FieldVar.OPACITY_MAPPING)), html.Div(classes=STACK):
             readouts(react.Bind(f"{FieldVar.OPACITY_RANGE}[0].toFixed(2)"), react.Bind(f"{FieldVar.OPACITY_RANGE}[1].toFixed(2)"))
             self.slider(FieldVar.OPACITY_RANGE, "Opacity", OPACITY_RANGE, OPACITY_STEP)
+
+    def build_symmetry(self) -> None:
+        """The symmetry section: what the run was solved as and, for a section, how it is expanded and how far a revolution sweeps."""
+        readouts("Solved as", react.Bind(str(FieldVar.SOLVED_AS)))
+        with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.OPEN))}"), html.Div(classes=str(Cls.SECTION_BODY_STACK)):
+            segmented(FieldVar.EXPANSION, "Show as", [str(expansion) for expansion in Expansion], read=expansion_label)
+            with react.If(f"{FieldVar.EXPANSION} === {json.dumps(str(Expansion.REVOLVE))}"), html.Div(classes=STACK):
+                readouts("Sweep", react.Bind(f"{FieldVar.SWEEP}[0] + {json.dumps(DEGREES)}"))
+                self.slider(FieldVar.SWEEP, "Sweep angle", SWEEP_RANGE, SWEEP_STEP)
+
+        with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.FIXED))}"):
+            html.Span(NOTHING_TO_EXPAND, classes=str(Cls.CAPTION))
 
     def build_field(self) -> None:
         """The field section: what is shown and how it is colored, from the field select to the opacity mapping."""
@@ -1443,6 +1563,7 @@ class FieldControlsPanel(PanelComponent):
             setting(FieldVar.OUTLINE, "Outline")
 
         self.build_range()
+        self.build_legend()
         self.build_opacity()
 
     def build_bodies(self) -> None:
@@ -1545,7 +1666,7 @@ class FieldControlsPanel(PanelComponent):
         """Builds the busy bar over the field, field-line and body sections."""
 
         def section(value: str, heading: str, body: Callable[[], None]) -> None:
-            with AccordionItem(value=value, classes=str(Cls.SECTION_ITEM)):
+            with AccordionItem(value=value, id=f"{TOUR_PREFIX}{value}", classes=str(Cls.SECTION_ITEM)):
                 AccordionTrigger(heading, classes=str(Cls.SECTION_TRIGGER))
                 with AccordionContent(classes=str(Cls.SECTION_BODY)):
                     body()
@@ -1555,6 +1676,7 @@ class FieldControlsPanel(PanelComponent):
                 Progress(value=BUSY_FULL, classes=str(Cls.BUSY))
 
             with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
+                section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry)
                 section(FIELD_SECTION, "Field", self.build_field)
                 section(LINES_SECTION, "Field Lines", self.build_lines)
                 section(BODIES_SECTION, "Bodies", self.build_bodies)
@@ -1566,7 +1688,7 @@ class FieldControlsPanel(PanelComponent):
 
 
 def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DEFAULTS, telemetry: str | Path | None = None) -> dock.Split:
-    """The field viewer dock: the controls beside the 3D view and the 2D plot as tabs.
+    """The field viewer dock: the controls beside the view.
 
     Args:
         run: The run to open once the server runs: a Result, a Run, a run id or a bundle directory; None opens none.
@@ -1597,9 +1719,4 @@ def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DE
     def view_3d(app: Workbench, id: str, title: str) -> FieldViewerPanel:
         return FieldViewerPanel(app, id, title, controller_for(app))
 
-    def plot_2d(app: Workbench, id: str, title: str) -> FieldPlot2DPanel:
-        return FieldPlot2DPanel(app, id, title, controller_for(app))
-
-    views = dock.Tabs([dock.Panel("3D view", view_3d, id=FieldPanel.VIEW_3D), dock.Panel("2D plot", plot_2d, id=FieldPanel.PLOT_2D)], weight=3)
-
-    return dock.Split([dock.Panel(FIELD_VIEWER.title, controls, id=FieldPanel.CONTROLS, weight=1), views])
+    return dock.Split([dock.Panel(FIELD_VIEWER.title, controls, id=FieldPanel.CONTROLS, weight=1), dock.Panel("View", view_3d, id=FieldPanel.VIEW_3D, weight=3)])

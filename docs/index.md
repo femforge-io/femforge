@@ -21,7 +21,7 @@ femforge is pre-alpha. The API will change between 0.x releases, and the [change
 
 1. [Geometry and tags](user-guide/geometry.md): name each body with its material and name tags, in your CAD's STEP export or in a build123d script.
 2. [Materials](user-guide/materials.md) and [conditions and physics](user-guide/conditions.md): say what each region is made of, what drives it and which physics to solve.
-3. [Mesh](user-guide/mesh.md) and [frames](user-guide/frames.md): set the element sizes and solve the model in 3D or as an axisymmetric 2D section.
+3. [Mesh](user-guide/mesh.md) and [frames](user-guide/frames/index.md): set the element sizes and choose how the model maps onto the solve.
 4. [Driver and runs](user-guide/driver.md): mesh, write the solver input, solve and record the run bundle.
 5. [Results](user-guide/results.md): read forces, torques, peak fields and the solved field mesh.
 6. [Artifacts and retention](user-guide/artifacts.md) and [telemetry](user-guide/telemetry.md): reuse meshes and runs across processes, trim old bundles and query logs and sweeps.

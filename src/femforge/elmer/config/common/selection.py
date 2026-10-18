@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import WithJsonSchema, field_validator
 
 from femforge.common.config import ConfigArea
-from femforge.common.frame import Frame
 from femforge.elmer.config.common.physics_config import PhysicsConfig
 from femforge.elmer.physics import Physics
+
+
+if TYPE_CHECKING:
+    from femforge.frames import Frame
 
 
 SELECTABLE_PHYSICS: list[str] = [physics.value for physics in Physics if physics is not Physics.MAGNETOSTATICS_2D]
@@ -37,7 +40,7 @@ class PhysicsSelection(ConfigArea):
 
     def check_frame(self, frame: Frame) -> None:
         """Raise when ``selected`` has no form under ``frame`` or authored ``overrides`` disagree with it."""
-        _ = self.selected.in_frame(frame)
+        _ = frame.solves(self.selected)
 
         if self.overrides is not None:
             self.overrides.check_frame(frame)

@@ -1,6 +1,7 @@
 from . import (
     artifacts as artifacts,
     elmer as elmer,
+    frames as frames,
     geometry as geometry,
     materials as materials,
     meshing as meshing,
@@ -12,13 +13,13 @@ from . import (
     viz as viz,
     workbench as workbench,
 )
-from .common.frame import Axis as Axis, Axisymmetric as Axisymmetric, Solid as Solid
 from .common.log import log as log
 from .common.tags import TagKey as TagKey
 from .common.vector import Direction as Direction, Vec3 as Vec3
 from .config import RunMeta as RunMeta, SimulationConfig as SimulationConfig
 from .elmer.config.common.selection import PhysicsSelection as PhysicsSelection
 from .elmer.physics import Physics as Physics
+from .frames import Axis as Axis, Axisymmetric as Axisymmetric, Frame as Frame, Solid as Solid
 from .geometry.build123d_geometry import Build123dGeometry as Build123dGeometry
 from .geometry.tags import TaggedCompound as TaggedCompound, TaggedPart as TaggedPart
 from .geometry.utils import boundary_box as boundary_box

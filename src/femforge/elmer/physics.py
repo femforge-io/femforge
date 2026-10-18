@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from femforge.common.frame import Axisymmetric, Frame, Solid
-
 
 class Physics(StrEnum):
     """Which physics preset the sif writer wires; the string values double as the serialized spelling."""
@@ -33,20 +31,6 @@ class Physics(StrEnum):
 
     LINEAR_ELASTICITY = "linear_elasticity"
     """Linear elastic stress and strain."""
-
-    def in_frame(self, frame: Frame) -> Physics:
-        """The physics this selection solves as under ``frame``; raises when it has no form there."""
-        match frame, self:
-            case Solid(), Physics.MAGNETOSTATICS_2D:
-                raise ValueError(f"Physics '{self.value}' is the axisymmetric stack: select '{Physics.MAGNETOSTATICS.value}' with frame=Axisymmetric().")
-            case Solid(), _:
-                return self
-            case Axisymmetric(), Physics.MAGNETOSTATICS | Physics.MAGNETOSTATICS_2D:
-                return Physics.MAGNETOSTATICS_2D
-            case Axisymmetric(), Physics.THERMAL:
-                return Physics.THERMAL
-            case Axisymmetric(), _:
-                raise ValueError(f"Physics '{self.value}' has no axisymmetric form; solve it with frame=Solid().")
 
 
 def condition_physics(physics: Physics) -> frozenset[Physics]:

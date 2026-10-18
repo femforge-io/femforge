@@ -45,14 +45,7 @@ The status comes from `elmersolver.log`: `error` when a line contains `ERROR` or
 
 Add a [ForceComponent][femforge.physical.ForceComponent] to the tag of the bodies whose force you want. Elmer lumps the magnetic force over those bodies into one Component, named by the condition's `label` or else by the tag's name. `Result.component_forces` holds one vector per Component name.
 
-[Result.axial_force][femforge.run.Result.axial_force] projects a Component's force onto an axis in the authored frame and returns a pint quantity in newtons:
-
-| Frame | `axis=None` | `axis` given |
-|---|---|---|
-| `Solid()` | raises: a solid run has no symmetry axis | the force projected onto `axis.direction` |
-| `Axisymmetric()` | the force along the symmetry axis | the axial force times the cosine to `axis`; raises when `axis` is not parallel to the symmetry axis |
-
-Under `Axisymmetric()` the typed force and torque fields are full-revolution totals; see [Frames](frames.md#results-in-the-solve-frame). `Run.components` lists each Component with its sif block number, force and torque.
+[Result.axial_force][femforge.run.Result.axial_force] returns a Component's force along an axis in the authored frame, as a pint quantity in newtons; `axis=None` uses the frame's own axis. The typed force and torque fields are the frame's totals over the whole model. Each frame's page says how it answers both; see [Frames](frames/index.md). `Run.components` lists each Component with its sif block number, force and torque.
 
 ## Scalars
 
@@ -99,7 +92,7 @@ print(gap.integrate(), gap.total_measure())
 | `sum()`, `min()`, `max()` | Plain reductions, per component for a vector. |
 | `mean()` | The measure-weighted mean. |
 | `integrate()` | ∫ value dV, or the plane-slice ∫ value dA in 2D. |
-| `integrate_revolved()` | ∫ value 2πr dA, the full-revolution integral of an axisymmetric run. |
+| `integrate_revolved()` | ∫ value 2πr dA, the full-revolution integral of a section solved about an axis; see [Axisymmetric](frames/axisymmetric.md#results). |
 | `total_measure()` | The selection's volume, or area in 2D. |
 | `cells()` | The selected cells as a pyvista grid, for plotting. |
 
@@ -139,4 +132,4 @@ The [validation][femforge.validation] package cross-checks a magnetostatic solve
 
 ## Display state
 
-[DisplaySpec][femforge.viz.DisplaySpec] is the complete, serializable state of one field display: the array, how it reduces (value, a component, the magnitude), the colormap and its limits, hidden bodies, per-body styles and opacity. [FieldLineOptions][femforge.viz.FieldLineOptions] is the same for field lines: seeding, line count, step lengths, colors. Both are plain pydantic models, so they round-trip through JSON, and `DisplaySpec` has a published schema on the [JSON schemas](../reference/schemas.md) page. The workbench field viewer starts from a `DisplaySpec` you pass it.
+[DisplaySpec][femforge.viz.DisplaySpec] is the complete, serializable state of one field display: the array, how it reduces (value, a component, the magnitude), the colormap and its limits, the legend, how a run solved on a section is expanded, hidden bodies, per-body styles and opacity. [FieldLineOptions][femforge.viz.FieldLineOptions] is the same for field lines: seeding, line count, step lengths, colors. Both are plain pydantic models, so they round-trip through JSON, and `DisplaySpec` has a published schema on the [JSON schemas](../reference/schemas.md) page. The workbench field viewer starts from a `DisplaySpec` you pass it.
