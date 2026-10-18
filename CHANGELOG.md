@@ -16,6 +16,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - The `Cartesian2D` frame solves the planar section of a prismatic model per metre of depth and scales the typed forces by its `thickness`: magnetostatics, heat conduction, and linear elasticity in plane stress or plane strain (`PlaneState`). `FieldQuery.integrate_extruded(depth)` integrates a planar section over a prism, and `Vec3.cross` is the vector product.
 - A 2D frame sections each named face into a named edge, a `TaggedEdge` that now takes `name=` and is exported from `femforge`, so the conditions on a named face land on its edge of the section.
 - The field viewer shows elasticity runs: it opens on the displacement, offers Von Mises, Tresca, Strain Energy Density and the principal stresses and strains with the Max, Mid and Min Principal modes, and leaves the stress and strain tensors and their `stress_xx` columns out. `FieldKind` and `line_vectors` join `femforge.viz`.
+- The field viewer's Deformation section draws the bodies displaced by the solved displacement, at a scale that starts where the largest displacement moves a tenth of the model's size. `DisplaySpec.warp` and `DisplaySpec.warp_scale` hold the choice.
 
 ### Changed
 

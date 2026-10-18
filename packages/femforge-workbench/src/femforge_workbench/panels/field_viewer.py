@@ -102,10 +102,11 @@ BUSY_FULL = 100.0
 """The bar is pulsed, not filled: the load reports no fraction."""
 
 SYMMETRY_SECTION = "symmetry"
+DEFORMATION_SECTION = "deformation"
 FIELD_SECTION = "field"
 LINES_SECTION = "lines"
 BODIES_SECTION = "bodies"
-OPEN_SECTIONS = [SYMMETRY_SECTION, FIELD_SECTION, LINES_SECTION, BODIES_SECTION]
+OPEN_SECTIONS = [SYMMETRY_SECTION, DEFORMATION_SECTION, FIELD_SECTION, LINES_SECTION, BODIES_SECTION]
 OPACITY_RANGE = (0.0, 1.0)
 OPACITY_STEP = 0.01
 ALL_BODIES = "All Bodies"
@@ -142,6 +143,14 @@ SWEEP_RANGE = (15.0, 360.0)
 SWEEP_STEP = 15.0
 DEGREES = "°"
 NOTHING_TO_EXPAND = title("nothing to expand")
+WARP_RANGE = 5.0
+"""How far past the automatic scale the deformation slider reaches, as a multiple of it."""
+
+WARP_STEPS = 100
+"""Deformation slider resolution over its range."""
+
+TIMES = "×"
+NO_DISPLACEMENT = title("no displacement")
 
 
 class SymmetryState(StrEnum):
@@ -197,6 +206,12 @@ class FieldVar(StrEnum):
     SWEEP = "field_sweep"
     SOLVED_AS = "field_solved_as"
     SYMMETRY = "field_symmetry"
+    WARP = "field_warp"
+    """Whether the bodies are drawn displaced by the solved displacement."""
+
+    WARP_SCALE = "field_warp_scale"
+    WARP_SCALE_MAX = "field_warp_scale_max"
+    HAS_DISPLACEMENT = "field_has_displacement"
     AUTO_CLIM = "field_auto_clim"
     CLIM = "field_clim"
     CLIM_MIN = "field_clim_min"
@@ -245,6 +260,12 @@ TOUR_STEPS: list[TourStep] = [
         "side": "right",
     },
     {
+        "target": f"#{TOUR_PREFIX}{DEFORMATION_SECTION}",
+        "title": "Exaggerate the Deformation",
+        "body": "Draw the bodies displaced by the solved displacement. The scale starts where the largest displacement moves a tenth of the model's size.",
+        "side": "right",
+    },
+    {
         "target": f"#{TOUR_PREFIX}{FIELD_SECTION}",
         "title": "Choose What to Color",
         "body": "Pick the quantity and its colormap. The range slider shows the value each color stands for.",
@@ -280,6 +301,7 @@ DISPLAY_KEYS: tuple[FieldVar, ...] = (
     FieldVar.OUTLINE,
     FieldVar.LEGEND,
     FieldVar.EXPANSION,
+    FieldVar.WARP,
     FieldVar.AUTO_CLIM,
     FieldVar.VISIBLE_BODIES,
     FieldVar.STREAMLINES,
@@ -760,6 +782,10 @@ class FieldViewerController(TrameComponent):
         self.hidden_bodies = display.hidden_bodies
         """The bodies every run opens with hidden."""
         self.robust = display.robust
+        self.warp_name = display.warp or DEFAULTS.warp
+        """The vector array the Deformed Shape switch displaces the bodies by."""
+        self.warp_pinned = display.warp_scale
+        """The deformation scale every run opens with, None for its automatic one."""
         self.looks: dict[str, BodyStyle] = {style.body: style.model_copy(update={"color": hex_of(style.color) if style.color is not None else None}) for style in display.body_styles}
         """Every body's own color and opacity by name, kept across runs; a body without one takes the field colormap at full opacity."""
         lines = display.streamlines or LINE_DEFAULTS
@@ -820,6 +846,10 @@ class FieldViewerController(TrameComponent):
                 FieldVar.SWEEP: [display.sweep],
                 FieldVar.SOLVED_AS: NO_RUN,
                 FieldVar.SYMMETRY: str(SymmetryState.NONE),
+                FieldVar.WARP: display.warp is not None,
+                FieldVar.WARP_SCALE: [display.warp_scale or 1.0],
+                FieldVar.WARP_SCALE_MAX: 1.0,
+                FieldVar.HAS_DISPLACEMENT: False,
                 FieldVar.AUTO_CLIM: display.clim is None,
                 FieldVar.CLIM: list(display.clim or (0.0, 1.0)),
                 FieldVar.CLIM_MIN: 0.0,
@@ -1102,6 +1132,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.LINES_BODIES] = body_items([])
             self.state[FieldVar.SOLVED_AS] = NO_RUN
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.NONE)
+            self.state[FieldVar.HAS_DISPLACEMENT] = False
 
         self.notice(reason)
         self.status(status if status is not None else reason)
@@ -1153,6 +1184,9 @@ class FieldViewerController(TrameComponent):
         self.bodies = [str(key) for key in scene.blocks.keys()]
         spec = self.fit(self.spec_from_state(), scene)
         dim = scene.dim_for(spec)
+        warp = spec.model_copy(update={"warp": self.warp_name}).fitted(scene.fields).warp
+        auto = scene.auto_warp_scale(warp) if warp is not None else 0.0
+        reach = max(WARP_RANGE * auto, self.warp_pinned or 0.0)
 
         location = str(self.state[FieldVar.RUN])
         with self.quiet():
@@ -1160,6 +1194,9 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.MODEL_DIM] = self.model_dim
             self.state[FieldVar.SOLVED_AS] = title(scene.frame.label)
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.OPEN if scene.expandable else SymmetryState.FIXED)
+            self.state[FieldVar.HAS_DISPLACEMENT] = warp is not None
+            self.state[FieldVar.WARP_SCALE] = [self.warp_pinned or auto]
+            self.state[FieldVar.WARP_SCALE_MAX] = reach if reach > 0.0 else 1.0
             self.state[FieldVar.SEED_PLACEMENTS] = placement_items(dim)
             self.state[FieldVar.SEED_PLACEMENT] = self.seeds_for(dim)
             self.state[FieldVar.FIELDS] = [{ItemField.TITLE: info.display_name, ItemField.VALUE: info.name} for info in scene.fields]
@@ -1341,6 +1378,8 @@ class FieldViewerController(TrameComponent):
             legend=Legend(str(state[FieldVar.LEGEND])),
             expansion=expansion,
             sweep=only(state[FieldVar.SWEEP], DEFAULTS.sweep),
+            warp=self.warp_name if bool(state[FieldVar.WARP]) else None,
+            warp_scale=only(state[FieldVar.WARP_SCALE], 1.0),
             hidden_bodies=hidden,
             outline=bool(state[FieldVar.OUTLINE]),
             opacity=only(state[FieldVar.OPACITY], DEFAULTS.opacity),
@@ -1442,7 +1481,9 @@ class FieldViewerController(TrameComponent):
             self.drawn = scene
             self.framed = bounds
         else:
-            changing = scene.expansion_of(spec.fitted(scene.fields)) != scene.expanded
+            fitted = spec.fitted(scene.fields)
+            reframe = scene.expansion_of(fitted) != scene.expanded
+            changing = scene.reshaped(fitted)
             if changing:
                 await self.expand(scene, spec)
                 if scene is not self.scene:
@@ -1450,7 +1491,7 @@ class FieldViewerController(TrameComponent):
 
             kept = scene.spec.streamlines if spec.streamlines is not None and not changing else None
             scene.update(viewer.plotter, spec.model_copy(update={"streamlines": kept}))
-            if changing:
+            if reframe:
                 self.framed = tuple(scene.bounds)
                 viewer.look(View.TOP if dim == 2 else View.ISO) if dim != self.drawn_dim else viewer.fit()
                 if viewer.oversized(viewer.footprint):
@@ -1738,14 +1779,14 @@ class FieldControlsPanel(PanelComponent):
             aria_label="Body colormap",
         )
 
-    def slider(self, model: FieldVar, label: str, bounds: tuple[float, float | react.Bind], step: float) -> None:
+    def slider(self, model: FieldVar, label: str, bounds: tuple[float, float | react.Bind], step: float | react.Bind) -> None:
         """A slider over `model` whose thumbs move with the drag and whose scene follows the release.
 
         Args:
             model: The state variable holding the thumb values.
             label: The slider's accessible name.
             bounds: The low and high ends; the high end may be a client expression.
-            step: The step between values.
+            step: The step between values; it may be a client expression.
         """
         Slider(
             value=react.Bind(str(model)),
@@ -1796,6 +1837,22 @@ class FieldControlsPanel(PanelComponent):
 
         with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.FIXED))}"):
             html.Span(NOTHING_TO_EXPAND, classes=str(Cls.CAPTION))
+
+    def build_deformation(self) -> None:
+        """The deformation section: for a run with a displacement, the Deformed Shape switch and, while it is on, the scale the displacement is exaggerated by."""
+        with react.If(str(FieldVar.HAS_DISPLACEMENT)), html.Div(classes=str(Cls.SECTION_BODY_STACK)):
+            setting(FieldVar.WARP, "Deformed shape")
+            with react.If(str(FieldVar.WARP)), html.Div(classes=STACK):
+                readouts("Scale", react.Bind(f"{json.dumps(TIMES)} + {FieldVar.WARP_SCALE}[0].toPrecision({PRECISION})"))
+                self.slider(
+                    FieldVar.WARP_SCALE,
+                    "Deformation scale",
+                    (0.0, react.Bind(str(FieldVar.WARP_SCALE_MAX))),
+                    react.Bind(f"{FieldVar.WARP_SCALE_MAX} / {WARP_STEPS}"),
+                )
+
+        with react.If(f"!{FieldVar.HAS_DISPLACEMENT}"):
+            html.Span(NO_DISPLACEMENT, classes=str(Cls.CAPTION))
 
     def build_field(self) -> None:
         """The field section: what is shown and how it is colored, from the field select to the opacity mapping."""
@@ -1914,7 +1971,7 @@ class FieldControlsPanel(PanelComponent):
             self.slider(FieldVar.MAX_LENGTH, "Line length", MAX_LENGTH_RANGE, MAX_LENGTH_STEP)
 
     def build(self) -> None:
-        """Builds the busy bar over the field, field-line and body sections."""
+        """Builds the busy bar over the symmetry, deformation, field, field-line and body sections."""
 
         def section(value: str, heading: str, body: Callable[[], None]) -> None:
             with AccordionItem(value=value, id=f"{TOUR_PREFIX}{value}", classes=str(Cls.SECTION_ITEM)):
@@ -1928,6 +1985,7 @@ class FieldControlsPanel(PanelComponent):
 
             with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
                 section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry)
+                section(DEFORMATION_SECTION, "Deformation", self.build_deformation)
                 section(FIELD_SECTION, "Field", self.build_field)
                 section(LINES_SECTION, "Field Lines", self.build_lines)
                 section(BODIES_SECTION, "Bodies", self.build_bodies)
