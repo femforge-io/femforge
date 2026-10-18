@@ -116,6 +116,7 @@ The solver tolerances decide when Elmer stops iterating on a mesh, so they matte
 |---|---|---|
 | 3D magnetostatics (`MagnetoDynamicsSolver`) | `1e-6` | `1e-6`, BiCGStabl |
 | Axisymmetric magnetostatics (`MagnetoDynamics2DSolver`) | `1e-7` | none, direct solver |
+| Linear elasticity (`StressSolver`) | `1e-7` | `1e-7`, CG with ILU1 |
 
 On the 3D bearing-seat example, tightening the 3D nonlinear and linear tolerances to `1e-10` and `1e-8` moved the force by at most 0.0007% and the energy by at most 0.0004%, against a 2% force change from one mesh refinement, and took nearly twice the linear iterations. Both tolerances are relative, so they need no scaling with mesh size: a 2.2 times larger mesh doubled the tolerance error, which stayed thousands of times below the mesh error.
 

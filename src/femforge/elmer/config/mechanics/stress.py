@@ -8,12 +8,17 @@ from femforge.common.pydantic import Map
 from femforge.elmer.config.common.keywords import EquationScope
 from femforge.elmer.config.common.solver_base import (
     EquationField,
+    IterativeMethod,
+    LinearConvToleranceField,
+    LinearIterativeMethodField,
     LinearMaxIterationsField,
+    LinearPreconditioningField,
     LinearSystem,
     NonlinearConvToleranceField,
     NonlinearMaxIterationsField,
     NonlinearSystem,
     OptimizeBandwidthField,
+    Preconditioning,
     ProcedureField,
     SolverBase,
     SteadyState,
@@ -46,7 +51,11 @@ class StressSolver(SolverBase, LinearSystem, NonlinearSystem, SteadyState):
     steady_state_convergence_tolerance: SteadyStateConvToleranceField = 1.0e-6
     nonlinear_system_convergence_tolerance: NonlinearConvToleranceField = 1.0e-7
     nonlinear_system_max_iterations: NonlinearMaxIterationsField = 1
+    linear_system_iterative_method: LinearIterativeMethodField = IterativeMethod.CG
+    linear_system_preconditioning: LinearPreconditioningField = Preconditioning.ILU1
     linear_system_max_iterations: LinearMaxIterationsField = 5000
+    # ILU-preconditioned Krylov solves of these systems stagnate just above 1e-8.
+    linear_system_convergence_tolerance: LinearConvToleranceField = 1.0e-7
 
     calculate_stresses: Annotated[bool, Map("Calculate Stresses")] = True
     """Recover the stress tensor from the displacement."""

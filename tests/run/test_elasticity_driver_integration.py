@@ -17,7 +17,7 @@ import build123d as b3d  # imported after the gate so the file still collects wh
 from femforge.common.tags import TagKey
 from femforge.common.vector import Vec3
 from femforge.config import SimulationConfig
-from femforge.elmer.config import IterativeMethod, PhysicsSelection, Preconditioning, StressSolver
+from femforge.elmer.config import PhysicsSelection
 from femforge.elmer.physics import Physics
 from femforge.elmer.variables import ElmerVariable
 from femforge.geometry import Build123dGeometry
@@ -92,10 +92,6 @@ def test_a_tagged_cantilever_solves_through_the_driver_to_timoshenko(tmp_path: P
             ],
         ),
     )
-    # The preset BiCGStab + ILU0 stalls on some meshes of this symmetric positive definite system.
-    stress = config.customize_physics().solver(StressSolver)
-    stress.linear_system_iterative_method = IterativeMethod.CG
-    stress.linear_system_preconditioning = Preconditioning.ILU1
 
     driver = Driver(
         runs_dir=tmp_path / "runs",
