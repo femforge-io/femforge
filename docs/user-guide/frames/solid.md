@@ -15,7 +15,7 @@ config = ff.SimulationConfig(
                 selector={ff.TagKey.MAGNETIZATION: "N"},
                 conditions=[ff.Magnetization(direction=ff.Direction(1, 0, 0))],
             ),
-            ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.ForceComponent(label="mover")]),
+            ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.CalculateMagneticForce(label="mover")]),
         ],
     ),
 )
@@ -45,7 +45,7 @@ Every [Physics][femforge.elmer.Physics] member solves as itself, except `MAGNETO
 |---|---|
 | [Magnetization][femforge.physical.Magnetization] | Any direction; its three components are emitted as authored. |
 | [CurrentDensity][femforge.physical.CurrentDensity] | Rejected: it drives `MAGNETOSTATICS_2D`, which a solid frame has no form for. |
-| [ForceComponent][femforge.physical.ForceComponent] | Force and torque about any authored axis. |
+| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | Force and torque about any authored axis. |
 
 ## Results
 

@@ -58,12 +58,12 @@ def config_for(
             ),
             ff.EntityTag(
                 selector={ff.TagKey.NAME: EntityNames.BEARING},
-                conditions=[ff.ForceComponent(calculate_magnetic_force=True)],
+                conditions=[ff.CalculateMagneticForce(calculate_magnetic_force=True)],
                 mesh_size=body_size,
             ),
             ff.EntityTag(
                 selector={ff.TagKey.NAME: EntityNames.SHELL},
-                conditions=[ff.ForceComponent(calculate_magnetic_force=True)],
+                conditions=[ff.CalculateMagneticForce(calculate_magnetic_force=True)],
                 mesh_size=body_size,
             ),
         ],

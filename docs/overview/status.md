@@ -187,7 +187,7 @@ Every condition and material below is implemented. [Conditions and physics](../u
 | Condition | Feeds | Target |
 | --- | --- | --- |
 | [Magnetization][femforge.physical.Magnetization] | `MAGNETOSTATICS`, `MAGNETOSTATICS_2D`, `COIL_MAGNETOSTATICS` | body |
-| [ForceComponent][femforge.physical.ForceComponent] | `MAGNETOSTATICS`, `MAGNETOSTATICS_2D`, `COIL_MAGNETOSTATICS` | body |
+| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | `MAGNETOSTATICS`, `MAGNETOSTATICS_2D`, `COIL_MAGNETOSTATICS` | body |
 | [CurrentDensity][femforge.physical.CurrentDensity] | `MAGNETOSTATICS_2D` | body |
 | [CoilDrive][femforge.physical.CoilDrive] | `COIL_MAGNETOSTATICS` | body |
 | [CoilTerminal][femforge.physical.CoilTerminal] | `COIL_MAGNETOSTATICS` | outer shell |

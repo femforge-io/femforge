@@ -5,13 +5,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
 from femforge.common.vector import DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
+from femforge.elmer.sections import SifSection
 from femforge.elmer.variables import ElmerVariable
 from femforge.physical.units import (
     Current,
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ConditionTarget",
+    "BoundarySite",
     "Condition",
     "Magnetization",
     "CurrentDensity",
@@ -44,8 +46,9 @@ __all__ = [
     "JouleHeat",
     "CoilDrive",
     "CoilTerminal",
-    "ForceComponent",
+    "CalculateMagneticForce",
     "ConditionUnion",
+    "shipped_conditions",
 ]
 
 
@@ -80,6 +83,20 @@ def _elmer_keyword(field: FieldInfo) -> ElmerKeyword | None:
     return None
 
 
+@dataclass(frozen=True)
+class BoundarySite:
+    """The boundary group a boundary condition lands on, as the condition sees it when it emits."""
+
+    name: str
+    """The boundary group's name."""
+
+    measure: float | None
+    """`A` `[m²]`: The group's measured size, area in 3D and length times one metre of depth in 2D; None for an adjacency group."""
+
+    frame: Frame
+    """The solve frame the group's model maps onto."""
+
+
 class Condition(BaseModel):
     """Base condition: subclasses pin ``physics``/``target`` defaults and implement ``to_elmer``. Never instantiated directly (no ``kind`` discriminator)."""
 
@@ -89,6 +106,9 @@ class Condition(BaseModel):
     """Boundary-target conditions with this set land only on a body's *external* (domain-boundary) surface groups,
     not its interfaces — e.g. a coil terminal is the electrode's exposed end face, not its interior contacts."""
 
+    section: ClassVar[SifSection]
+    """The sif section this condition's keywords land in; ``BOUNDARY_CONDITION`` exactly when ``target`` is ``BOUNDARY``."""
+
     physics: Physics
     """The physics whose solve this condition feeds."""
 
@@ -96,14 +116,25 @@ class Condition(BaseModel):
     """Whether the condition attaches to a body or a boundary."""
 
     def to_elmer(self, *args: Any, **kwargs: Any) -> dict[str, float | str]:  # pyright: ignore[reportExplicitAny, reportAny]  # variadic: subclass to_elmer signatures diverge (Magnetization takes a magnitude)
-        """This condition's Elmer sif keyword dict, reflected from each field's ``ElmerKeyword`` metadata."""
+        """This condition's Elmer sif keyword dict, reflected from each field's ``ElmerKeyword`` metadata; an unset field emits nothing."""
         out: dict[str, float | str] = {}
         for name, field in type(self).model_fields.items():
             spec: ElmerKeyword | None = _elmer_keyword(field)
+
             if spec is None:
                 continue
-            out[spec.key] = _si(getattr(self, name), spec.unit)  # pyright: ignore[reportAny]  # getattr is Any
+
+            value: Quantity | None = getattr(self, name)  # pyright: ignore[reportAny]  # getattr is Any
+
+            if value is None:
+                continue
+
+            out[spec.key] = _si(value, spec.unit)
         return out
+
+    def on_boundary(self, site: BoundarySite) -> dict[str, float | str]:
+        """This condition's keywords on the boundary group ``site``; the default ignores the site."""
+        return self.to_elmer()
 
     def check_frame(self, frame: Frame) -> None:
         """Raise when this condition cannot drive a ``frame`` solve."""
@@ -124,6 +155,8 @@ class Magnetization(Condition):
 
     target: ConditionTarget = ConditionTarget.BODY
     """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.MATERIAL
 
     direction: DirectionField | None
     """Magnetization direction in the authored model's frame, None for an unmagnetized body; magnitude comes from the material."""
@@ -163,6 +196,8 @@ class CurrentDensity(Condition):
     target: ConditionTarget = ConditionTarget.BODY
     """Whether the condition attaches to a body or a boundary."""
 
+    section: ClassVar[SifSection] = SifSection.BODY_FORCE
+
     value: Annotated[CurrentDensityQuantity, ElmerKeyword("Current Density", U.A / U.m**2)]
     """`J` `[A/m²]`: Azimuthal current density (signed) imposed uniformly over the body."""
 
@@ -184,6 +219,8 @@ class FixedTemperature(Condition):
     target: ConditionTarget = ConditionTarget.BOUNDARY
     """Whether the condition attaches to a body or a boundary."""
 
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
     value: Annotated[Temperature, ElmerKeyword(ElmerVariable.TEMPERATURE, U.K)]
     """`T` `[K]`: Fixed temperature imposed on the boundary."""
 
@@ -200,6 +237,8 @@ class HeatFlux(Condition):
     target: ConditionTarget = ConditionTarget.BOUNDARY
     """Whether the condition attaches to a body or a boundary."""
 
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
     value: Annotated[HeatFluxQuantity, ElmerKeyword("Heat Flux", U.W / U.m**2)]
     """`q_s` `[W/m²]`: Heat flux through the boundary."""
 
@@ -215,6 +254,8 @@ class Convection(Condition):
 
     target: ConditionTarget = ConditionTarget.BOUNDARY
     """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
     external_only: ClassVar[bool] = True
 
@@ -239,6 +280,8 @@ class HeatSource(Condition):
 
     target: ConditionTarget = ConditionTarget.BODY
     """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.BODY_FORCE
 
     power_density: Annotated[PowerDensity, ElmerKeyword("Volumetric Heat Source", U.W / U.m**3)]
     """`q` `[W/m³]`: Heat generation density at ``reference_temperature`` when a coefficient is set, else the constant source."""
@@ -273,6 +316,8 @@ class FixedPotential(Condition):
     target: ConditionTarget = ConditionTarget.BOUNDARY
     """Whether the condition attaches to a body or a boundary."""
 
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
     value: Annotated[Voltage, ElmerKeyword(ElmerVariable.POTENTIAL, U.V)]
     """`V` `[V]`: Electric potential imposed on the electrode boundary; the keyword is the solver variable's name (Elmer Dirichlet semantics), single-sourced via the enum."""
 
@@ -300,6 +345,8 @@ class JouleHeat(Condition):
     target: ConditionTarget = ConditionTarget.BODY
     """Whether the condition attaches to a body or a boundary."""
 
+    section: ClassVar[SifSection] = SifSection.BODY_FORCE
+
     def to_elmer(self) -> dict[str, float | str]:
         """The ``Joule Heat`` flag."""
         return {"Joule Heat": "Logical True"}
@@ -319,6 +366,8 @@ class CoilDrive(Condition):
 
     target: ConditionTarget = ConditionTarget.BODY
     """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.COMPONENT
 
     current: Annotated[Current, ElmerKeyword("Desired Coil Current", U.A)]
     """`I_coil` `[A]`: The total coil current CoilSolver normalizes this coil's solved distribution to."""
@@ -347,6 +396,8 @@ class CoilTerminal(Condition):
     target: ConditionTarget = ConditionTarget.BOUNDARY
     """Whether the condition attaches to a body or a boundary."""
 
+    section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
     external_only: ClassVar[bool] = True
 
     role: Literal["start", "end"]
@@ -357,10 +408,10 @@ class CoilTerminal(Condition):
         return {"Coil Start" if self.role == "start" else "Coil End": "Logical True"}
 
 
-class ForceComponent(Condition):
+class CalculateMagneticForce(Condition):
     """An Elmer ``Component`` lumping CalcFields' magnetic force and torque over the bodies this condition's tag matches (magnetic physics, body target)."""
 
-    kind: Literal["force_component"] = "force_component"
+    kind: Literal["calculate_magnetic_force"] = "calculate_magnetic_force"
     """Discriminator that names this condition type in a serialized config."""
 
     physics: Physics = Physics.MAGNETOSTATICS
@@ -368,6 +419,8 @@ class ForceComponent(Condition):
 
     target: ConditionTarget = ConditionTarget.BODY
     """Whether the condition attaches to a body or a boundary."""
+
+    section: ClassVar[SifSection] = SifSection.COMPONENT
 
     label: str | None = None
     """The Component's ``Name``; None uses the authoring tag's name."""
@@ -402,12 +455,19 @@ class ForceComponent(Condition):
         torque: bool = self.calculate_magnetic_torque or self.torque_origin is not None or self.torque_axis is not None
 
         if torque and not frame.lumps_torque:
-            raise ValueError(f"ForceComponent torque has no form in the {frame.label} frame; drop calculate_magnetic_torque, torque_origin and torque_axis.")
+            raise ValueError(f"CalculateMagneticForce torque has no form in the {frame.label} frame; drop calculate_magnetic_torque, torque_origin and torque_axis.")
 
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.
 ConditionUnion = Annotated[
-    Union[Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, JouleHeat, CoilDrive, CoilTerminal, ForceComponent],
+    Union[Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, JouleHeat, CoilDrive, CoilTerminal, CalculateMagneticForce],
     Field(discriminator="kind"),
 ]
 """Any concrete condition, discriminated by its ``kind``."""
+
+
+def shipped_conditions() -> tuple[type[Condition], ...]:
+    """The condition classes ``ConditionUnion`` admits, in its order."""
+    parts: tuple[object, ...] = get_args(ConditionUnion)
+
+    return cast("tuple[type[Condition], ...]", get_args(parts[0]))

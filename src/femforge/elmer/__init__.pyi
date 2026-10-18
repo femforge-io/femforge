@@ -36,4 +36,5 @@ from .runtime.backend import ExecutionBackend as ExecutionBackend
 from .runtime.docker import DockerElmer as DockerElmer
 from .runtime.native import NativeElmer as NativeElmer
 from .runtime.solve import solve_case as solve_case
+from .sections import SifSection as SifSection
 from .variables import ElmerVariable as ElmerVariable, elemental as elemental

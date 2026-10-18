@@ -18,4 +18,4 @@ The two solves take seconds. The terminal logs the force on the plunger for each
 - `CURRENT_DENSITY` sets the drive, in A/m².
 - `GAPS` lists the gaps to solve.
 
-[Conditions](https://docs.femforge.io/user-guide/conditions/) explains `CurrentDensity`, `ForceComponent` and the other magnetic conditions, and where each one lands.
+[Conditions](https://docs.femforge.io/user-guide/conditions/) explains `CurrentDensity`, `CalculateMagneticForce` and the other magnetic conditions, and where each one lands.

@@ -10,15 +10,17 @@ from typing import TYPE_CHECKING, Mapping, Protocol, cast
 from femforge.elmer import sif
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, PhysicsConfig, SaveScalarsSolver, SifValue, solved_stack
 from femforge.elmer.physics import Physics, condition_physics, runtime_variables
+from femforge.elmer.sections import SifSection
 from femforge.elmer.variables import ElmerVariable
 from femforge.frames import Frame, Solid
 from femforge.materials.properties import MATERIAL_KEY_EQUIVALENTS, ElmerMaterialKeyword, MaterialProperties
-from femforge.physical.conditions import CoilDrive, Condition, ConditionTarget, ForceComponent, Magnetization
+from femforge.physical.conditions import BoundarySite, CalculateMagneticForce, Condition, ConditionTarget
 from femforge.physical.domain import EntityTag, conditions_for
 from femforge.physical.units import Quantity
 
 
 if TYPE_CHECKING:
+    from femforge.common.vector import Vec3
     from femforge.meshing.boundary import BoundaryGroup
     from femforge.meshing.groups import PhysicalGroup
 
@@ -54,6 +56,18 @@ class _DiscriminatedCondition(Protocol):
     """
 
     kind: str
+
+
+class _Oriented(Protocol):
+    """The direction a ``Material``-section condition orients its material vector along, None when unset."""
+
+    direction: Vec3 | None
+
+
+class _Labelled(Protocol):
+    """The Component name a force-lumping ``Component``-section condition asks for, None for its tag's name."""
+
+    label: str | None
 
 
 class Sim:
@@ -96,10 +110,13 @@ class Sim:
         self.config.check_frame(frame)
 
         # The backstop for conditions edited in place after the config validated them.
-        for group in self.physical_groups:
-            for tag in group.tags:
-                for condition in tag.conditions:
-                    condition.check_frame(frame)
+        body_tags: list[EntityTag] = [tag for group in self.physical_groups for tag in group.tags]
+        face_tags: list[EntityTag] = [tag for group in self.boundary_groups for tag in group.tags]
+
+        for tag in body_tags + face_tags:
+            for condition in tag.conditions:
+                condition.check_frame(frame)
+
         # The sif Simulation, built by generate(); None until then so write()/validate() fail loudly if skipped.
         self.sim: sif.Simulation | None = None
 
@@ -168,9 +185,8 @@ class Sim:
 
             # Check 3: magnets must resolve a usable magnetization direction.
             if self.physics in _MAGNET_DRIVEN_PHYSICS and mat.is_magnet:
-                body_conditions = conditions_for(group.tags, Physics.MAGNETOSTATICS, ConditionTarget.BODY)
-                magnetizations: list[Magnetization] = [c for c in body_conditions if isinstance(c, Magnetization)]
-                usable: Magnetization | None = next((m for m in magnetizations if m.direction is not None), None)
+                magnetizations: list[Condition] = self._material_conditions(group.tags)
+                usable: Condition | None = next((m for m in magnetizations if cast("_Oriented", m).direction is not None), None)
                 if usable is None:
                     problems.append(f"Body {group.name}: magnet material {mat.name} has no usable Magnetization condition (a direction is required for physics '{self.physics.value}')")
 
@@ -192,10 +208,9 @@ class Sim:
                 stacklevel=2,
             )
 
-        # Check 5: a force Component (authored ForceComponent or the auto per-magnet one) needs its measurement chain —
+        # Check 5: a force Component (authored CalculateMagneticForce or the auto per-magnet one) needs its measurement chain —
         # CalcFields computes the Component lumping, SaveScalars exports it to scalars.dat.
-        active_physics: frozenset[Physics] = condition_physics(self.physics)
-        has_authored_force: bool = any(isinstance(c, ForceComponent) for group in self.physical_groups for c in conditions_for(group.tags, active_physics, ConditionTarget.BODY))
+        has_authored_force: bool = any(self._force_conditions(group.tags) for group in self.physical_groups)
         has_auto_force: bool = self.physics in _MAGNETIC_FIELD_PHYSICS and any(group.material.is_magnet for group in self.physical_groups)
 
         if has_authored_force or has_auto_force:
@@ -256,9 +271,25 @@ class Sim:
         return equation, sif.Equation(sim, "Dielectric Equation", everywhere, {"Name": '"Dielectric Equation"'})
 
     @staticmethod
-    def _coil_drives(tags: list[EntityTag]) -> list[CoilDrive]:
-        """The CoilDrive conditions a region carries — what marks a body as part of a driven coil Component."""
-        return [c for c in conditions_for(tags, Physics.COIL_MAGNETOSTATICS, ConditionTarget.BODY) if isinstance(c, CoilDrive)]
+    def _coil_drives(tags: list[EntityTag]) -> list[Condition]:
+        """The coil physics' Component conditions a region carries — what marks a body as part of a driven coil Component."""
+        coil_conditions: list[Condition] = conditions_for(tags, Physics.COIL_MAGNETOSTATICS, ConditionTarget.BODY)
+
+        return [c for c in coil_conditions if c.section is SifSection.COMPONENT]
+
+    def _force_conditions(self, tags: list[EntityTag]) -> list[Condition]:
+        """The active Component conditions a region carries besides its coil drives: the force lumps."""
+        body_conditions: list[Condition] = conditions_for(tags, condition_physics(self.physics), ConditionTarget.BODY)
+        drives: list[Condition] = self._coil_drives(tags)
+
+        return [c for c in body_conditions if c.section is SifSection.COMPONENT and not any(c is drive for drive in drives)]
+
+    @staticmethod
+    def _material_conditions(tags: list[EntityTag]) -> list[Condition]:
+        """The magnetostatic conditions a region writes into its own Material block."""
+        magnetic_conditions: list[Condition] = conditions_for(tags, Physics.MAGNETOSTATICS, ConditionTarget.BODY)
+
+        return [c for c in magnetic_conditions if c.section is SifSection.MATERIAL]
 
     def _build_materials(self, sim: sif.Simulation) -> dict[str, sif.Material]:
         """
@@ -294,17 +325,17 @@ class Sim:
         at: Mapping[str, Quantity] = self.config.operating_point.as_mapping()
 
         # One Component per distinct CoilDrive instance (keyed by identity: the SAME drive authored on a phase's tag reaches every body of that phase).
-        coil_components: dict[int, tuple[str, CoilDrive, list[sif.Body]]] = {}
+        coil_components: dict[int, tuple[str, Condition, list[sif.Body]]] = {}
 
-        # Same identity-keyed grouping for ForceComponent: one authored instance gathers every matched body into one Component.
-        force_components: dict[int, tuple[str, ForceComponent, list[sif.Body]]] = {}
+        # Same identity-keyed grouping for CalculateMagneticForce: one authored instance gathers every matched body into one Component.
+        force_components: dict[int, tuple[str, Condition, list[sif.Body]]] = {}
 
-        # Magnet groups that get an auto force Component (no authoring needed); an authored ForceComponent on the group suppresses it.
+        # Magnet groups that get an auto force Component (no authoring needed); an authored CalculateMagneticForce on the group suppresses it.
         auto_force_bodies: list[tuple[str, sif.Body]] = []
 
         for group in self.physical_groups:
             body: sif.Body = sif.Body(sim, group.name, [group.id], {"Name": f'"{group.name}"'})
-            drives: list[CoilDrive] = self._coil_drives(group.tags) if self.physics is Physics.COIL_MAGNETOSTATICS else []
+            drives: list[Condition] = self._coil_drives(group.tags) if self.physics is Physics.COIL_MAGNETOSTATICS else []
 
             # The main equation is for the DRIVEN bodies (COIL_MAGNETOSTATICS) or the conductors (conductor_only physics); everything else takes the second equation when one exists.
             if self.physics is Physics.COIL_MAGNETOSTATICS:
@@ -314,7 +345,7 @@ class Sim:
             body.equation = equation if on_main or dielectric_equation is None else dielectric_equation
 
             for drive in drives:
-                fresh_entry: tuple[str, CoilDrive, list[sif.Body]] = (self._condition_tag_name(group.tags, drive), drive, [])
+                fresh_entry: tuple[str, Condition, list[sif.Body]] = (self._condition_tag_name(group.tags, drive), drive, [])
                 _, _, bodies = coil_components.setdefault(id(drive), fresh_entry)
                 bodies.append(body)
 
@@ -326,27 +357,25 @@ class Sim:
                 if self.physics is Physics.LINEAR_ELASTICITY:
                     self._wire_elasticity_body(body, group)
 
-            # Body-target conditions become one Body Force block per body. Magnetization is excluded (material-wired above:
-            # the WhitneyAVSolver reads M from the Material, not a Body Force), as are CoilDrive and ForceComponent (Component blocks below).
+            forces: list[Condition] = self._force_conditions(group.tags)
+
+            for cond in forces:
+                fresh_force_entry: tuple[str, Condition, list[sif.Body]] = (self._condition_tag_name(group.tags, cond), cond, [])
+                _, _, force_bodies = force_components.setdefault(id(cond), fresh_force_entry)
+                force_bodies.append(body)
+
+            if self.physics in _MAGNETIC_FIELD_PHYSICS and group.material.is_magnet and not forces:
+                auto_force_bodies.append((group.name, body))
+
             body_conditions: list[Condition] = conditions_for(
                 tags=group.tags,
                 physics=condition_physics(self.physics),
                 target=ConditionTarget.BODY,
             )
-
-            for cond in body_conditions:
-                if isinstance(cond, ForceComponent):
-                    fresh_force_entry: tuple[str, ForceComponent, list[sif.Body]] = (self._condition_tag_name(group.tags, cond), cond, [])
-                    _, _, force_bodies = force_components.setdefault(id(cond), fresh_force_entry)
-                    force_bodies.append(body)
-
-            group_has_authored_force: bool = any(isinstance(cond, ForceComponent) for cond in body_conditions)
-            if self.physics in _MAGNETIC_FIELD_PHYSICS and group.material.is_magnet and not group_has_authored_force:
-                auto_force_bodies.append((group.name, body))
-
             data: dict[str, SifValue] = {}
+
             for cond in body_conditions:
-                if not isinstance(cond, (Magnetization, CoilDrive, ForceComponent)):
+                if cond.section is SifSection.BODY_FORCE:
                     data.update(cond.to_elmer())
 
             if data:
@@ -358,11 +387,12 @@ class Sim:
 
         # The force/torque-lumping Components CalcFields fills and SaveScalars exports.
         for tag_name, cond, bodies in force_components.values():
-            _ = sif.Component(sim, cond.label or tag_name, master_bodies=bodies, data=cond.to_elmer())
+            label: str | None = cast("_Labelled", cond).label
+            _ = sif.Component(sim, label or tag_name, master_bodies=bodies, data=cond.to_elmer())
 
         # Every magnet body gets force scalars without authoring; named by group so run.magnetic's name join works.
         for group_name, magnet_body in auto_force_bodies:
-            _ = sif.Component(sim, group_name, master_bodies=[magnet_body], data=ForceComponent().to_elmer())
+            _ = sif.Component(sim, group_name, master_bodies=[magnet_body], data=CalculateMagneticForce().to_elmer())
 
     @staticmethod
     def _condition_tag_name(tags: list[EntityTag], condition: Condition) -> str:
@@ -396,33 +426,38 @@ class Sim:
             name = f"{bg.name}_{'_'.join(kind for kind, _ in specs)}"
             _ = sif.Boundary(sim, name, [bg.id], data=merged)
 
+    def _boundary_conditions(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[Condition]:
+        """The boundary conditions one group resolves under the active physics: its bordering bodies' tags first, then its own face tags, each tag once.
+
+        An ``external_only`` condition lands only on an external group.
+        """
+        body_tags: list[EntityTag] = [tag for body in bg.bodies for tag in tags_by_body.get(body, [])]
+        unique_tags: dict[int, EntityTag] = {id(tag): tag for tag in body_tags + bg.tags}
+
+        resolved_conditions: list[Condition] = conditions_for(
+            tags=unique_tags.values(),
+            physics=condition_physics(self.physics),
+            target=ConditionTarget.BOUNDARY,
+        )
+
+        return [cond for cond in resolved_conditions if bg.is_external or not cond.external_only]
+
     def _boundary_specs(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[tuple[str, dict[str, SifValue]]]:
         """
-        The ``(kind, sif-data)`` condition specs one surface group resolves under the active physics; ``external_only``
-        conditions land only on a body's external (domain-boundary) shell. Kept free of sif objects so the projection rule is
-        unit-testable.
+        The ``(kind, sif-data)`` specs one surface group resolves: its conditions in ``_boundary_conditions`` order, so a face
+        tag's keyword wins a clash with a body's, then the auto-emitted magnetic blocks. Kept free of sif objects so the
+        projection rule is unit-testable.
+
         Returns:
             A list of ``(kind, sif-data)`` tuples, one per resolved condition. The ``kind`` is the condition's
             discriminator (the same string the config's solver stack uses to select the solver for that condition).
         """
         specs: list[tuple[str, dict[str, SifValue]]] = []
+        site: BoundarySite = BoundarySite(name=bg.name, measure=bg.measure, frame=self.frame)
 
-        # A body's boundary conditions reach every surface group it borders; a coupled preset activates its constituents' conditions (see condition_physics).
-        region_tags: list[EntityTag] = [tag for body in bg.bodies for tag in tags_by_body.get(body, [])]
-
-        resolved_conditions = conditions_for(
-            tags=region_tags,
-            physics=condition_physics(self.physics),
-            target=ConditionTarget.BOUNDARY,
-        )
-
-        for cond in resolved_conditions:
-            # Skip any condition that is marked as external-only but the surface is not an external shell (the mesh generator marks the latter).
-            if cond.external_only and not bg.is_external:
-                continue
-
+        for cond in self._boundary_conditions(bg, tags_by_body):
             kind: str = cast("_DiscriminatedCondition", cond).kind
-            specs.append((kind, dict(cond.to_elmer())))
+            specs.append((kind, dict(cond.on_boundary(site))))
 
         if self.physics in _MAGNETIC_FIELD_PHYSICS and bg.is_external:
             # Far field: Dirichlet A=0 on the outer shell. The WhitneyAV stacks pin the edge DOFs (`AV {e}`, the
@@ -454,14 +489,13 @@ class Sim:
 
         magnitude = group.material.magnetic.magnetization_magnitude(at=at)  # A/m
 
-        body_conditions = conditions_for(group.tags, Physics.MAGNETOSTATICS, ConditionTarget.BODY)
-        conditions: list[Magnetization] = [c for c in body_conditions if isinstance(c, Magnetization)]
-        magnetization: Magnetization | None = conditions[0] if conditions else None
+        conditions: list[Condition] = self._material_conditions(group.tags)
+        magnetization: Condition | None = conditions[0] if conditions else None
 
         if magnitude is None:
             # Flagged as a magnet but no resolvable remanence; mark rather than emit a zero field.
             data["! Magnetization"] = "MISSING REMANENCE"
-        elif magnetization is None or magnetization.direction is None:
+        elif magnetization is None or cast("_Oriented", magnetization).direction is None:
             # Material is a magnet but no (usable) orientation was found; mark rather than emit a zero field.
             data["! Magnetization"] = "MISSING DIRECTION TAG"
         else:

@@ -16,7 +16,7 @@ base = ff.SimulationConfig(
                 selector={ff.TagKey.MAGNETIZATION: "N"},
                 conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))],
             ),
-            ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.ForceComponent(label="mover")]),
+            ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.CalculateMagneticForce(label="mover")]),
             ff.EntityTag(selector={ff.TagKey.NAME: "gap"}, mesh_size=1 * ff.U.mm),
         ],
     ),

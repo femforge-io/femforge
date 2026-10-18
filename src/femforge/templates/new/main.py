@@ -79,7 +79,7 @@ def config(gap: float = 1.0) -> ff.SimulationConfig:
             materials=[N52, STEEL, AIR],
             tags=[
                 ff.EntityTag(selector={ff.TagKey.NAME: MAGNET}, conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))], mesh_size=fine),
-                ff.EntityTag(selector={ff.TagKey.NAME: PLATE}, conditions=[ff.ForceComponent()], mesh_size=fine),
+                ff.EntityTag(selector={ff.TagKey.NAME: PLATE}, conditions=[ff.CalculateMagneticForce()], mesh_size=fine),
             ],
         ),
     )

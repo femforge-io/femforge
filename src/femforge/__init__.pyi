@@ -27,13 +27,13 @@ from .meshing.backend import GmshMesher as GmshMesher, WorkerMesher as WorkerMes
 from .meshing.config import MeshConfig as MeshConfig
 from .meshing.gmsh_options import GmshOptions as GmshOptions
 from .physical.conditions import (
+    CalculateMagneticForce as CalculateMagneticForce,
     CoilDrive as CoilDrive,
     CoilTerminal as CoilTerminal,
     Convection as Convection,
     CurrentDensity as CurrentDensity,
     FixedPotential as FixedPotential,
     FixedTemperature as FixedTemperature,
-    ForceComponent as ForceComponent,
     HeatFlux as HeatFlux,
     HeatSource as HeatSource,
     JouleHeat as JouleHeat,

@@ -40,6 +40,9 @@ class FakeBoundaryGroup:
         self.name: str = name
         self.bodies: tuple[str, ...] = bodies
         self.entity_tags: list[int] = face_tags
+        self.tags: list[EntityTag] = []
+        self.measure: float | None = None
+        self.named: bool = False
 
     @property
     def is_external(self) -> bool:

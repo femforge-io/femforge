@@ -68,7 +68,7 @@ config = ff.SimulationConfig(
         materials=[ff.materials.N52(), ff.materials.Steel_1080(), ff.materials.Air()],
         tags=[
             ff.EntityTag(selector={ff.TagKey.NAME: "MAGNET"}, conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))]),
-            ff.EntityTag(selector={ff.TagKey.NAME: "PLATE"}, conditions=[ff.ForceComponent()]),
+            ff.EntityTag(selector={ff.TagKey.NAME: "PLATE"}, conditions=[ff.CalculateMagneticForce()]),
         ],
     ),
 )

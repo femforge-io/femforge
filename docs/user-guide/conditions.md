@@ -11,7 +11,7 @@ magnet = ff.EntityTag(
     selector={ff.TagKey.NAME: "Magnet"},
     conditions=[
         ff.Magnetization(direction=ff.Direction(0, 0, 1)),
-        ff.ForceComponent(
+        ff.CalculateMagneticForce(
             label="MagnetForce",
             calculate_magnetic_torque=True,
             torque_origin=ff.Vec3(0, 0, 0),
@@ -27,7 +27,7 @@ config = ff.SimulationConfig(
 )
 ```
 
-The STEP holds an air box and a body named `Magnet` tagged `Material=N52`. The `Magnetization` sets the magnet's direction, and the N52 remanence sets its strength. The `ForceComponent` lumps the magnetic force and torque on the magnet into one Elmer Component named `MagnetForce`. The result reads them back as `result.component_forces["MagnetForce"]` and `result.component_torques["MagnetForce"]`. See [Results](results.md).
+The STEP holds an air box and a body named `Magnet` tagged `Material=N52`. The `Magnetization` sets the magnet's direction, and the N52 remanence sets its strength. The `CalculateMagneticForce` lumps the magnetic force and torque on the magnet into one Elmer Component named `MagnetForce`. The result reads them back as `result.component_forces["MagnetForce"]` and `result.component_torques["MagnetForce"]`. See [Results](results.md).
 
 ## Physics
 
@@ -60,7 +60,7 @@ Select a physics with [PhysicsSelection][femforge.elmer.config.PhysicsSelection]
 | [JouleHeat][femforge.physical.JouleHeat] | `JOULE_HEATING` | body | Heats the body with its solved Joule losses. It takes no value. |
 | [CoilDrive][femforge.physical.CoilDrive] | `COIL_MAGNETOSTATICS` | body | `current` [A]: the total current of a massive coil. Bodies that share one `CoilDrive` instance form one coil. |
 | [CoilTerminal][femforge.physical.CoilTerminal] | `COIL_MAGNETOSTATICS` | outer shell | `role`: the coil's `start` or `end` electrode. Positive current flows from start to end. |
-| [ForceComponent][femforge.physical.ForceComponent] | `MAGNETOSTATICS` | body | Lumps the magnetic force, and optionally the torque about `torque_origin` and `torque_axis`, over the matched bodies. |
+| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | `MAGNETOSTATICS` | body | Lumps the magnetic force, and optionally the torque about `torque_origin` and `torque_axis`, over the matched bodies. |
 
 Every value is a pint quantity of the dimensionality in brackets. Build it with `ff.quantity(300, "kelvin")` or `300 * ff.U.K`. See [Materials](materials.md#units).
 
@@ -68,10 +68,10 @@ Reverse a coil by swapping its terminal roles, and keep `current` positive.
 
 ## Where conditions land
 
-A body condition applies to every body its tag matches:
+A body condition applies to every body its tag matches, and its `section` names the sif block it lands in:
 
 - `Magnetization` goes into the magnet's own Material block, where the magnetic solver reads it.
-- `CoilDrive` and `ForceComponent` become Elmer Components. One condition instance gathers every body it matches into one Component.
+- `CoilDrive` and `CalculateMagneticForce` become Elmer Components. One condition instance gathers every body it matches into one Component.
 - The rest become one Body Force block per body.
 
 You never tag a surface. A boundary condition on a body's tag lands on every boundary group that body borders, both its interfaces with other bodies and its outer shell. `Convection` and `CoilTerminal` land on the outer shell only (`<BODY>__EXT`): a film coefficient on an interior interface would bypass the conduction path, and a coil terminal is the electrode's exposed end face. When several conditions reach one surface, they merge into one boundary block.
@@ -87,7 +87,7 @@ Some conditions need no authoring:
 
 - The magnetic physics pin the potential to zero on every outer shell, a far-field condition.
 - A section solved about an axis pins the potential to zero on the symmetry axis (`<BODY>__AXIS`), which is exact there; see [Axisymmetric](frames/axisymmetric.md).
-- Every magnet body gets its own force Component, named after its body group. An authored `ForceComponent` that matches the magnet replaces it.
+- Every magnet body gets its own force Component, named after its body group. An authored `CalculateMagneticForce` that matches the magnet replaces it.
 
 ## Which conditions a physics reads
 

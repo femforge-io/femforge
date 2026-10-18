@@ -8,8 +8,8 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 | --- | --- | --- |
 | A multi-body STEP is OCC-fragmented into one conformal decomposition, so touching bodies share interface faces and nodes. | `src/femforge/meshing/mesher.py:162-174` | `tests/meshing/test_mesher_2d_integration.py::test_boundaries_are_curve_groups_named_by_adjacency` |
 | Fragmenting drops STEP names, so each child gets back the name of its smallest-mass input, and an air-magnet overlap belongs to the magnet. | `src/femforge/meshing/mesher.py:275-301` | `tests/meshing/test_mesher_2d_integration.py::test_step_faces_keep_their_labels_and_become_body_groups` |
-| gmsh writes only entities in a physical group, so the boundary partition covers every face exactly once. | `src/femforge/meshing/mesher.py:307`, `src/femforge/meshing/boundary.py:98-129` | `tests/meshing/test_boundary_groups.py::test_partition_is_total_every_face_covered_exactly_once` |
-| A boundary group is named `<A>__<B>` for an interface, with the body names sorted, `<BODY>__EXT` for an external shell and `<BODY>__AXIS` on the symmetry axis of a 2D model. | `src/femforge/meshing/boundary.py:13-20`, `src/femforge/meshing/boundary.py:112-118` | `tests/meshing/test_boundary_groups.py::test_two_box_partition_yields_interface_and_externals` |
+| gmsh writes only entities in a physical group, so the boundary partition covers every face exactly once. | `src/femforge/meshing/mesher.py:307`, `src/femforge/meshing/boundary.py:126-157` | `tests/meshing/test_boundary_groups.py::test_partition_is_total_every_face_covered_exactly_once` |
+| A boundary group is named `<A>__<B>` for an interface, with the body names sorted, `<BODY>__EXT` for an external shell and `<BODY>__AXIS` on the symmetry axis of a 2D model. | `src/femforge/meshing/boundary.py:18-25`, `src/femforge/meshing/boundary.py:140-146` | `tests/meshing/test_boundary_groups.py::test_two_box_partition_yields_interface_and_externals` |
 | The mesher always emits `Mesh.RecombineAll = 0`, because WhitneyAVSolver needs tetrahedra and a persisted gmsh options file can turn recombination on. | `src/femforge/meshing/gmsh_options.py:92-94` | `tests/meshing/test_gmsh_options.py::test_recombine_all_is_pinned_off` |
 | The global element size applies first, then each region takes the finest `EntityTag.mesh_size` among its tags. | `src/femforge/meshing/mesh_sizing.py:30-44`, `src/femforge/meshing/mesh_sizing.py:62-64` | `tests/meshing/test_mesh_sizing.py::test_resolve_finest_requested_size_wins` |
 | `MeshConfig.deterministic` pins gmsh to one thread, whatever `num_threads` says, so the same STEP and sizes yield the identical mesh. | `src/femforge/meshing/config.py:28-35` | `tests/meshing/test_gmsh_options.py::test_deterministic_pins_meshing_to_one_thread` |
@@ -20,21 +20,21 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 
 | Rule | Code | Test |
 | --- | --- | --- |
-| A body's boundary conditions project onto every surface group the body borders, and an `external_only` condition lands only on an external shell. | `src/femforge/elmer/sim.py:410-422` | `tests/elmer/test_sif_smoke.py::test_fixed_temperature_reaches_only_the_board_surface` |
-| A surface group gets one merged Boundary block, because Elmer honors a single BC section per boundary element. | `src/femforge/elmer/sim.py:377-397` | `tests/elmer/test_sif_smoke.py::test_one_boundary_block_per_group_with_conditions_merged` |
-| Magnetic physics pins the far field to zero on external shells: `AV {e}` in 3D, the nodal `Potential` in 2D. | `src/femforge/elmer/sim.py:427-435` | `tests/elmer/test_sif_smoke.py::test_axisymmetric_2d_far_field_pins_potential_not_av` |
-| Each body's material must emit the union of the `required_material_keys` of the solvers acting on it; a `conductor_only` solver's keys apply only to conductors. | `src/femforge/elmer/sim.py:143-160` | `tests/elmer/test_sif_validation.py::test_missing_required_material_property_raises` |
-| A magnet's `Magnetization` components go on its own Material block, which WhitneyAVSolver reads, never on a Body Force. | `src/femforge/elmer/sim.py:445-468` | `tests/elmer/test_sif_smoke.py::test_magnet_body_gets_magnetization_on_material` |
+| A body's boundary conditions project onto every surface group the body borders, and an `external_only` condition lands only on an external shell. | `src/femforge/elmer/sim.py:429-443` | `tests/elmer/test_sif_smoke.py::test_fixed_temperature_reaches_only_the_board_surface` |
+| A surface group gets one merged Boundary block, because Elmer honors a single BC section per boundary element. | `src/femforge/elmer/sim.py:407-427` | `tests/elmer/test_sif_smoke.py::test_one_boundary_block_per_group_with_conditions_merged` |
+| Magnetic physics pins the far field to zero on external shells: `AV {e}` in 3D, the nodal `Potential` in 2D. | `src/femforge/elmer/sim.py:462-470` | `tests/elmer/test_sif_smoke.py::test_axisymmetric_2d_far_field_pins_potential_not_av` |
+| Each body's material must emit the union of the `required_material_keys` of the solvers acting on it; a `conductor_only` solver's keys apply only to conductors. | `src/femforge/elmer/sim.py:160-177` | `tests/elmer/test_sif_validation.py::test_missing_required_material_property_raises` |
+| A magnet's `Magnetization` components go on its own Material block, which WhitneyAVSolver reads, never on a Body Force. | `src/femforge/elmer/sim.py:480-502` | `tests/elmer/test_sif_smoke.py::test_magnet_body_gets_magnetization_on_material` |
 | Magnetostatics solves with BiCGStabl of degree 4 and no preconditioning, since the gauge-non-unique AV system stalls under ILU. | `src/femforge/elmer/config/electromagnetism/magnetodynamics.py:55-57` | `tests/elmer/test_solvers.py::test_magnetodynamics_block_is_byte_compatible` |
-| StatCurrent runs on conductor bodies only and solves Direct with umfpack; dielectrics take a second equation without it. | `src/femforge/elmer/config/electromagnetism/stat_current.py:44-60`, `src/femforge/elmer/sim.py:236-244` | `tests/elmer/test_sif_current.py::test_stat_current_solver_defaults_to_direct_umfpack` |
-| Partitioning adds halo elements only for the coil stack, because halos skew the force lumping of partition-cut bodies. | `src/femforge/elmer/config/common/physics_config.py:91-93` | `tests/elmer/test_solvers.py::test_needs_halobc_only_for_the_coil_stack` |
-| The sif writer reproduces pyelmer's output text and always writes LF line endings. | `src/femforge/elmer/sif.py:1`, `src/femforge/elmer/sif.py:393-396` | `tests/elmer/test_sif_writer.py::test_case_sif_matches_reference` |
+| StatCurrent runs on conductor bodies only and solves Direct with umfpack; dielectrics take a second equation without it. | `src/femforge/elmer/config/electromagnetism/stat_current.py:44-60`, `src/femforge/elmer/sim.py:251-259` | `tests/elmer/test_sif_current.py::test_stat_current_solver_defaults_to_direct_umfpack` |
+| Partitioning adds halo elements only for the coil stack, because halos skew the force lumping of partition-cut bodies. | `src/femforge/elmer/config/common/physics_config.py:92-94` | `tests/elmer/test_solvers.py::test_needs_halobc_only_for_the_coil_stack` |
+| The sif writer reproduces pyelmer's output text and always writes LF line endings. | `src/femforge/elmer/sif.py:1`, `src/femforge/elmer/sif.py:394-397` | `tests/elmer/test_sif_writer.py::test_case_sif_matches_reference` |
 
 ## Units and config
 
 | Rule | Code | Test |
 | --- | --- | --- |
-| A material property stays a pint quantity until `to_elmer` converts it to its Elmer unit and strips it to a float. | `src/femforge/materials/properties.py:59-63`, `src/femforge/elmer/sim.py:162-167` | `tests/elmer/test_sif_validation.py::test_leaked_pint_quantity_raises` |
+| A material property stays a pint quantity until `to_elmer` converts it to its Elmer unit and strips it to a float. | `src/femforge/materials/properties.py:59-63`, `src/femforge/elmer/sim.py:179-184` | `tests/elmer/test_sif_validation.py::test_leaked_pint_quantity_raises` |
 | A physical field's docstring opens with `` `glyph` `[unit]`: meaning ``, and pint parses the unit. | `src/femforge/meshing/config.py:22-23` | `tests/test_field_docstrings.py::test_physical_field_docstring_format` |
 | `Vec3` compares and hashes its exact components; `Direction` normalizes and rounds to 12 digits, so scaled copies compare equal. | `src/femforge/common/vector.py:122-142`, `src/femforge/common/vector.py:207-228` | `tests/vector/test_vec3.py::test_direction_is_normalized_and_scaled_copies_compare_and_hash_equal` |
 
@@ -58,7 +58,7 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 | Rule | Code | Test |
 | --- | --- | --- |
 | An MPI solve's scalars are read from rank 0 and never summed, since every rank writes the globally reduced row. | `src/femforge/run/parse.py:98-122` | `tests/run/test_parse.py::test_parse_mpi_rank_dats_read_rank_zero` |
-| An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:121-123`, `src/femforge/run/parse.py:213-216` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
+| An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:126-128`, `src/femforge/run/parse.py:213-216` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
 | The field display's automatic range is the union of every body's own robust range, hidden or styled bodies included. | `src/femforge/viz/field_display.py:412-455`, `src/femforge/viz/field_display.py:806-810` | `tests/viz/test_field_display.py::test_the_color_range_covers_every_body_however_it_is_shown` |
 | A field line ends at its first sharp reversal, where the cosine between consecutive steps drops below -0.5. | `src/femforge/viz/field_lines.py:222-259` | `tests/viz/test_field_lines.py::test_a_line_ends_at_its_first_sharp_reversal_and_a_straight_one_stays_whole` |
 
