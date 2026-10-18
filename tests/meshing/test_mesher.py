@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from femforge.frames import Axisymmetric
+from femforge.frames import Axisymmetric, Cartesian2D
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.materials.neodymium import N52
@@ -55,6 +55,8 @@ def test_body_and_boundary_dims_follow_the_frame() -> None:
     assert (solid.body_dim, solid.boundary_dim) == (3, 2)
     planar: Mesher = Mesher(SimulationConfig(frame=Axisymmetric()))
     assert (planar.body_dim, planar.boundary_dim) == (2, 1)
+    sectioned: Mesher = Mesher(SimulationConfig(frame=Cartesian2D(thickness=10 * U.mm)))
+    assert (sectioned.body_dim, sectioned.boundary_dim) == (2, 1)
 
 
 def test_element_count_is_dim_agnostic_and_the_3d_alias_is_3d_only() -> None:

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from femforge.frames import Axis, Axisymmetric, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.physical.units import U, quantity
 from femforge.common.files import BundleFile
@@ -117,6 +117,18 @@ def test_axial_force_of_an_axisymmetric_run_reads_solve_y_along_the_symmetry_axi
 
     with pytest.raises(ValueError, match="only along its symmetry axis"):
         _ = result.axial_force("MAGNET", axis=Axis.X)
+
+
+def test_axial_force_of_a_cartesian_2d_run_projects_the_plane_components_onto_the_axis() -> None:
+    force = quantity(Vec3(3.0, 4.0, 0.0), U.N)
+    result = Result(frame=Cartesian2D(normal=Axis.X, thickness=10 * U.mm), status="ok", component_forces={"MAGNET": force})
+
+    assert result.axial_force("MAGNET", axis=Axis.Y).m_as("newton") == pytest.approx(3.0)
+    assert result.axial_force("MAGNET", axis=Axis.Z).m_as("newton") == pytest.approx(4.0)
+    assert result.axial_force("MAGNET", axis=Axis.X).m_as("newton") == pytest.approx(0.0)
+
+    with pytest.raises(ValueError, match="no axis of its own"):
+        _ = result.axial_force("MAGNET")
 
 
 def test_load_from_bundle_dir_stamps_run_dir(tmp_path: Path) -> None:

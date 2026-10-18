@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from femforge.frames import Axis, Axisymmetric, FrameUnion, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, FrameUnion, Solid
 from femforge.config import SimulationConfig
 from femforge.elmer.config import CoordinateSystem
 from femforge.meshing.config import MeshConfig
@@ -189,6 +189,17 @@ def test_parse_axisymmetric_revolves_the_typed_vectors(tmp_path: Path) -> None:
     assert magnet.magnitude.y == pytest.approx(5.0 * math.tau)
 
     assert result.raw["res: nodal force 1"] == pytest.approx(1.5)
+    assert result.raw["res: n42_magnetizationn force 2"] == pytest.approx(5.0)
+
+
+def test_parse_cartesian_2d_scales_the_per_metre_vectors_by_the_thickness(tmp_path: Path) -> None:
+    _write_axisym_outputs(tmp_path)
+    result = parse_result(tmp_path, frame=Cartesian2D(thickness=10 * U.mm))
+
+    assert isinstance(result.frame, Cartesian2D)
+    assert result.force is not None
+    assert result.force.magnitude.to_list() == pytest.approx([0.015, -0.02, 0.0])
+    assert result.component_forces["N42_MAGNETIZATIONN"].magnitude.y == pytest.approx(0.05)
     assert result.raw["res: n42_magnetizationn force 2"] == pytest.approx(5.0)
 
 

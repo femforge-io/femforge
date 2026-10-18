@@ -927,6 +927,22 @@ def test_a_solid_run_is_shown_as_is_whatever_the_spec_asks() -> None:
     assert not scene.expand(DisplaySpec())
 
 
+def test_a_planar_section_is_shown_flat_and_never_expands() -> None:
+    pytest.importorskip("pyvista")
+    from femforge.frames import Cartesian2D
+    from femforge.physical.units import U
+
+    grid = _section_grid()
+    bodies = Bodies([Body(name="INNER", mesh_id=1), Body(name="OUTER", mesh_id=2)])
+    frame = Cartesian2D(thickness=10 * U.mm)
+    scene = FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=2, run_id="planar", bodies=bodies, frame=frame)
+
+    assert not scene.expandable and scene.basis is None
+    assert scene.display_dim == 2 and scene.dim_for(DisplaySpec()) == 2
+    assert scene.expansion_of(DisplaySpec()) == (Expansion.SECTION, 360.0)
+    assert not scene.expand(DisplaySpec())
+
+
 def test_the_basis_origin_comes_from_millimetres_to_metres() -> None:
     from femforge.frames import Axis, Axisymmetric
     from femforge.common.vector import Direction, Vec3

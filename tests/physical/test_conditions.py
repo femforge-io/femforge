@@ -381,3 +381,17 @@ def test_a_zero_magnitude_magnetization_emits_zeros_in_every_frame() -> None:
 
     assert cond.to_elmer(magnitude=0.0, frame=Solid()) == {"Magnetization 1": "0", "Magnetization 2": "0", "Magnetization 3": "0"}
     assert cond.to_elmer(magnitude=0.0, frame=Axisymmetric()) == {"Magnetization 1": "0", "Magnetization 2": "0"}
+
+
+def test_a_magnetization_under_a_cartesian_2d_frame_emits_its_plane_components() -> None:
+    frame = Cartesian2D(normal=Axis.X, thickness=10 * U.mm)
+
+    assert Magnetization(direction=Direction(0, 0.6, 0.8)).to_elmer(magnitude=10.0, frame=frame) == {"Magnetization 1": "6", "Magnetization 2": "8"}
+    Magnetization(direction=Direction(0, 0, 1)).check_frame(frame)
+
+    with pytest.raises(ValueError, match="has no form in the Cartesian 2D normal to X frame"):
+        Magnetization(direction=Direction(1, 0, 0)).check_frame(frame)
+
+
+def test_a_current_density_drives_a_cartesian_2d_magnetostatic_solve() -> None:
+    CurrentDensity(value=1e6 * U.A / U.m**2).check_frame(Cartesian2D(thickness=10 * U.mm))

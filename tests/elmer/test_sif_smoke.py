@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from femforge.frames import Axis, Axisymmetric, Frame, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, Frame, PlaneState, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.config import OperatingPoint, StressSolver, physics_config
@@ -527,3 +527,44 @@ def test_a_solver_equation_keyword_lands_in_the_equation_block() -> None:
 
     assert equation is not None and "Plane Stress = True" in equation.group(1)
     assert sif.count("Plane Stress") == 1
+
+
+# --- planar sections (Cartesian 2D) -----------------------------------------
+
+
+def test_a_cartesian_2d_magnetostatic_sif_magnetizes_in_plane_and_pins_the_far_field_only() -> None:
+    sif = _write_sif(frame=Cartesian2D(thickness=10 * U.mm), boundary_groups=_boundary_groups())
+    blocks = _boundary_blocks(sif)
+
+    assert "Coordinate System = Cartesian 2D" in sif
+    assert "MagnetoDynamics2D" in sif
+    assert "Magnetization 1" in sif and "Magnetization 2" in sif and "Magnetization 3" not in sif
+    assert set(blocks) == {"AIR__EXT_far_field"}
+    assert "Potential = Real 0" in blocks["AIR__EXT_far_field"]
+    assert "symmetry_axis" not in sif
+
+
+def _planar_beam_boundaries() -> list[FakeBoundaryGroup]:
+    root = EntityTag(selector={TagKey.NAME: "Root"}, conditions=[FixedDisplacement()])
+    tip = EntityTag(selector={TagKey.NAME: "Tip"}, conditions=[SurfaceForce(force=quantity(Vec3(100, 0, 0), "N"))])
+
+    return [
+        FakeBoundaryGroup(11, "BEAM__EXT", ("BEAM",), [101]),
+        FakeBoundaryGroup(12, "ROOT", ("BEAM",), [102], tags=[root], measure=0.02, named=True),
+        FakeBoundaryGroup(13, "TIP", ("BEAM",), [103], tags=[tip], measure=0.02, named=True),
+    ]
+
+
+@pytest.mark.parametrize(("state", "plane_stress"), [(PlaneState.STRESS, "True"), (PlaneState.STRAIN, "False")])
+def test_a_cartesian_2d_elasticity_sif_solves_two_dofs_in_its_plane_state(state: PlaneState, plane_stress: str) -> None:
+    frame = Cartesian2D(thickness=10 * U.mm, state=state)
+    sif = _write_sif(physics=Physics.LINEAR_ELASTICITY, groups=_beam_groups(), boundary_groups=_planar_beam_boundaries(), frame=frame)
+    solver = re.search(r"^Solver 1\n(.*?)^End", sif, flags=re.MULTILINE | re.DOTALL)
+    equation = re.search(r"^Equation 1\n(.*?)^End", sif, flags=re.MULTILINE | re.DOTALL)
+    blocks = _boundary_blocks(sif)
+
+    assert "Coordinate System = Cartesian 2D" in sif
+    assert solver is not None and "Variable Dofs = 2" in solver.group(1)
+    assert equation is not None and f"Plane Stress = {plane_stress}" in equation.group(1)
+    assert "Displacement 1 = 0.0" in blocks["ROOT_fixed_displacement"] and "Displacement 3" not in sif
+    assert "Force 1 = 500000.0" in blocks["TIP_surface_force"] and "Force 3" not in sif

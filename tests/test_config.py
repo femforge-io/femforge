@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
-from femforge.frames import Axisymmetric, Solid
+from femforge.frames import Axisymmetric, Cartesian2D, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
 from femforge.config import SimulationConfig
@@ -216,3 +216,22 @@ def test_the_selectable_physics_schema_omits_the_internal_axisymmetric_stack() -
 
     with pytest.raises(ValidationError, match="not selectable"):
         PhysicsSelection(selected=Physics.MAGNETOSTATICS_2D)
+
+
+def test_a_cartesian_2d_frame_solves_heat_elasticity_and_magnetostatics_but_not_joule_heating() -> None:
+    frame = Cartesian2D(thickness=10 * U.mm)
+
+    for physics in (Physics.THERMAL, Physics.LINEAR_ELASTICITY):
+        assert SimulationConfig(frame=frame, physics=PhysicsSelection(selected=physics)).solved_physics() is physics
+
+    assert SimulationConfig(frame=frame).solved_physics() is Physics.MAGNETOSTATICS_2D
+
+    with pytest.raises(ValidationError, match="no Cartesian 2D form"):
+        _ = SimulationConfig(frame=frame, physics=PhysicsSelection(selected=Physics.JOULE_HEATING))
+
+
+def test_a_cartesian_2d_config_round_trips() -> None:
+    config = SimulationConfig(frame=Cartesian2D(thickness=10 * U.mm), physics=PhysicsSelection(selected=Physics.LINEAR_ELASTICITY))
+    restored = SimulationConfig.model_validate_json(config.model_dump_json())
+
+    assert restored.frame == config.frame
