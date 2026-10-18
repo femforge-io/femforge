@@ -149,7 +149,7 @@ stack.simulation.max_output_level = 3
 `customize_physics()` copies the preset into `config.physics.overrides` once and returns it, so later calls edit the same stack. Every field is a typed sif keyword, validated when you assign it.
 
 - The overrides are part of the config, so they enter the run identity and the manifest. Overrides equal to the preset leave the identity unchanged.
-- Set the frame before you customize. A stack customized for one frame raises under the other, since the coordinate system differs.
+- Set the frame before you customize. A stack customized for one frame raises under a frame with another coordinate system.
 - Every solver and the Simulation settings take `extra_keywords` for a sif keyword femforge has no field for. [GenericSolver][femforge.elmer.config.GenericSolver] adds a whole solver block femforge has no model for.
 
 The solver models and their keyword tables live in the [Elmer solvers API](../../reference/elmer-config.md).

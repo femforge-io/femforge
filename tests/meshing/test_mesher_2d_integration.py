@@ -14,7 +14,7 @@ pytest.importorskip("build123d")
 
 import build123d as b3d  # imported after the gate so the file still collects where the CAD stack is absent
 
-from femforge.frames import Axisymmetric
+from femforge.frames import Axisymmetric, Cartesian2D
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.geometry.tags import TaggedCompound, TaggedFace
@@ -56,10 +56,10 @@ def _write_planar_step(path: Path) -> None:
     scene.export_step(str(path))
 
 
-def _config(step: Path) -> SimulationConfig:
+def _config(step: Path, frame: Axisymmetric | Cartesian2D | None = None) -> SimulationConfig:
     """A 2D simulation config over the planar STEP, with a finer size requested on the copper region."""
     return SimulationConfig(
-        frame=Axisymmetric(),
+        frame=frame if frame is not None else Axisymmetric(),
         mesh=MeshConfig(
             step=str(step),
             global_mesh_size=2 * U.mm,
@@ -116,6 +116,32 @@ def test_boundaries_are_curve_groups_named_by_adjacency(meshed_2d: Mesher) -> No
     assert len(boundaries[f"{AIR}__EXT"].entity_tags) == 3  # right, top, and bottom sides of the air rectangle
     assert len(boundaries[f"{AIR}__AXIS"].entity_tags) == 2  # the air's left side, split where the steel rod meets the axis
     assert len(boundaries[f"{STEEL}__AXIS"].entity_tags) == 1  # the rod's own edge on the axis
+
+
+@pytest.fixture(scope="module")
+def meshed_planar(tmp_path_factory: pytest.TempPathFactory) -> Mesher:
+    """The same planar scene meshed under a Cartesian 2D frame, which has no symmetry axis."""
+    tmp_path: Path = tmp_path_factory.mktemp("cartesian")
+    step: Path = tmp_path / "planar.step"
+    _write_planar_step(step)
+    mesher: Mesher = Mesher(_config(step, Cartesian2D(thickness=10 * U.mm)))
+    mesher.generate()
+    return mesher
+
+
+def test_a_cartesian_2d_frame_names_no_axis_and_keeps_the_x0_edges_external(meshed_planar: Mesher) -> None:
+    boundaries: dict[str, BoundaryGroup] = {group.name: group for group in meshed_planar.boundary_groups}
+
+    assert set(boundaries) == {
+        f"{AIR}__EXT",
+        f"{STEEL}__EXT",
+        f"{AIR}__{COPPER}",
+        f"{AIR}__{STEEL}",
+        f"{COPPER}__{STEEL}",
+    }
+    assert not any(group.on_axis for group in boundaries.values())
+    assert len(boundaries[f"{AIR}__EXT"].entity_tags) == 5
+    assert len(boundaries[f"{STEEL}__EXT"].entity_tags) == 1
 
 
 def test_mesh_is_written_with_triangles_counted(meshed_2d: Mesher) -> None:

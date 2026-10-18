@@ -6,7 +6,7 @@ from typing import Annotated, cast
 import pytest
 
 from femforge.artifacts.keys import artifact_key
-from femforge.frames import Axis, Axisymmetric, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, PlaneState, Solid
 from femforge.common.pydantic import HashExclude
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
@@ -19,8 +19,10 @@ from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import Quantity, U, quantity
 from femforge.materials.properties import MaterialProperties
-from femforge.common.vector import Direction
-from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, RunSpec, StepSpec, cache_key, mesh_key, mesh_spec, run_spec_payload, step_digest, step_key
+from femforge.common.vector import Direction, Vec3
+from femforge.geometry import Build123dGeometry
+from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
+from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, RunSpec, StepSpec, cache_key, mesh_key, mesh_spec, run_spec_payload, step_digest, step_key, step_spec
 
 
 class _StubGeometry(GeometryArea):
@@ -71,6 +73,40 @@ def test_step_kind_builds_the_geometry_into_its_workdir(tmp_path: Path) -> None:
     produced = STEP.produce(StepSpec(source=_StubGeometry(width=4.0), frame=Solid()), tmp_path)
     assert produced.files == ("geometry.step",)
     assert (tmp_path / "geometry.step").read_text(encoding="utf-8").endswith("width=4.0")
+
+
+class _NamedBar(Build123dGeometry):
+    """A steel bar with its -X end face named Left."""
+
+    def model(self) -> TaggedCompound:
+        import build123d as b3d
+
+        box = b3d.Box(20, 4, 6)
+        bar = TaggedPart([box], tags={TagKey.MATERIAL: "Steel316"}, name="Bar")
+        bar.color = b3d.Color("gray")
+        return TaggedCompound(children=[bar, TaggedFace(box.faces().sort_by(b3d.Axis.X)[0], name="Left")])
+
+
+def test_step_kind_keeps_the_edge_file_of_a_section_with_named_faces(tmp_path: Path) -> None:
+    assert STEP.produce is not None
+    frame = Cartesian2D(normal=Axis(origin=Vec3(0, 0, 0), direction=Direction(0, 0, 1)), thickness=6 * U.mm)
+
+    produced = STEP.produce(StepSpec(source=_NamedBar(), frame=frame), tmp_path)
+
+    assert produced.files == ("geometry.step", "geometry.boundaries.json")
+
+
+def test_a_cartesian_2d_step_is_always_rebuilt_and_keys_on_its_thickness_and_state() -> None:
+    planar = Cartesian2D(thickness=10 * U.mm)
+    authored = _config()
+
+    assert not step_spec(authored.model_copy(update={"frame": planar})).passes_through
+
+    keys = {
+        step_key(authored.model_copy(update={"frame": frame}))
+        for frame in (planar, Cartesian2D(thickness=20 * U.mm), Cartesian2D(thickness=10 * U.mm, state=PlaneState.STRAIN), Axisymmetric())
+    }
+    assert len(keys) == 4
 
 
 def test_step_key_is_the_geometry_artifact_key_when_parametric() -> None:

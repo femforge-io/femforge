@@ -105,8 +105,8 @@ class Basis:
         """The basis of a frame's solve plane, as numpy rows."""
         return cls(
             origin=_triple(np.asarray(plane.origin.to_list(), dtype=np.float64)),
-            radial=_triple(np.asarray(plane.radial.to_list(), dtype=np.float64)),
-            axis=_triple(np.asarray(plane.axis.to_list(), dtype=np.float64)),
+            radial=_triple(np.asarray(plane.x_dir.to_list(), dtype=np.float64)),
+            axis=_triple(np.asarray(plane.y_dir.to_list(), dtype=np.float64)),
         )
 
     def directions(self, theta: FloatArray | float) -> tuple[FloatArray, FloatArray]:

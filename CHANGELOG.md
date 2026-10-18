@@ -13,6 +13,8 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - `GmshOptions.element_order` sets the element order (`Mesh.ElementOrder`), such as 2 for quadratic elements.
 - `Physics.LINEAR_ELASTICITY` solves: the `FixedDisplacement` and `SurfaceForce` boundary conditions, a Poisson ratio on the shipped solid materials, and `StressSolver` writing strains and principal stresses on an undeformed output mesh.
 - `Run.strain_energy()` and `femforge.run` `strain_energy`, `clapeyron_energy` and `strain_energy_density` read the elastic strain energy back; `FieldQuery.where_boundary` and `surface_mean` select a boundary and average a field over its area.
+- The `Cartesian2D` frame solves the planar section of a prismatic model per metre of depth and scales the typed forces by its `thickness`: magnetostatics, heat conduction, and linear elasticity in plane stress or plane strain (`PlaneState`). `FieldQuery.integrate_extruded(depth)` integrates a planar section over a prism, and `Vec3.cross` is the vector product.
+- A 2D frame sections each named face into a named edge, a `TaggedEdge` that now takes `name=` and is exported from `femforge`, so the conditions on a named face land on its edge of the section.
 
 ### Changed
 
@@ -21,6 +23,10 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - A boundary group bordered twice by one tag gets that tag's conditions once.
 - Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
 - The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
+- `SolvePlane` names its directions `x_dir` and `y_dir`, for the old `radial` and `axis`, and gains `normal`.
+- `FixedDisplacement` drops a zero component along a 2D normal and rejects a constrained component its frame solves as another coordinate.
+- The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.
+- Cached sections and the runs built on them are rebuilt on first use.
 
 ## [0.1.0] - 2026-10-17
 

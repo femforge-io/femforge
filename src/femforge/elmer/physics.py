@@ -9,10 +9,10 @@ class Physics(StrEnum):
     """Which physics preset the sif writer wires; the string values double as the serialized spelling."""
 
     MAGNETOSTATICS = "magnetostatics"
-    """The static magnetic field; it solves as ``MAGNETOSTATICS_2D`` under ``frame=Axisymmetric()``."""
+    """The static magnetic field; it solves as ``MAGNETOSTATICS_2D`` under a 2D frame, ``Axisymmetric()`` or ``Cartesian2D()``."""
 
     MAGNETOSTATICS_2D = "magnetostatics_2d"
-    """Axisymmetric magnetostatics on the r–z half-plane with MagnetoDynamics2D, which also takes ``CurrentDensity`` coil drives."""
+    """2D magnetostatics with MagnetoDynamics2D on an axisymmetric or planar section, which also takes ``CurrentDensity`` coil drives."""
 
     THERMAL = "thermal"
     """Steady-state heat conduction."""
@@ -45,7 +45,7 @@ def condition_physics(physics: Physics) -> frozenset[Physics]:
         # Potential variable (the source stage is CoilSolver, not StatCurrent), so shared electrode tags stay inert here.
         return frozenset({Physics.COIL_MAGNETOSTATICS, Physics.MAGNETOSTATICS})
     if physics is Physics.MAGNETOSTATICS_2D:
-        # The same Magnetization tags drive the 3D and the axisymmetric solves without re-authoring.
+        # The same Magnetization tags drive the 3D and the 2D solves without re-authoring.
         return frozenset({Physics.MAGNETOSTATICS_2D, Physics.MAGNETOSTATICS})
     return frozenset({physics})
 

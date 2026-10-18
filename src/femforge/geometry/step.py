@@ -20,6 +20,8 @@ def import_tagged_step(path: Path) -> TaggedCompound:
 
     from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
 
+    bare: list[str] = []
+
     def tagged_leaves(node: b3d.Compound | b3d.Solid, inherited: TagDict) -> list[TaggedPart | TaggedFace]:
         tags: TagDict = {**inherited, **parse_tags(node.label)}
         children = cast("tuple[b3d.Compound | b3d.Solid, ...]", node.children)
@@ -36,7 +38,8 @@ def import_tagged_step(path: Path) -> TaggedCompound:
             return [part]
 
         if not placed.faces():
-            raise ValueError(f"{path}: the entry {node.label!r} has neither a solid nor a face to mesh.")
+            bare.append(node.label)
+            return []
 
         faces: list[TaggedPart | TaggedFace] = []
         for face in placed.faces():
@@ -51,5 +54,8 @@ def import_tagged_step(path: Path) -> TaggedCompound:
     leaves: list[TaggedPart | TaggedFace] = tagged_leaves(imported, {})
     if not any(isinstance(leaf, TaggedPart) for leaf in leaves):
         raise ValueError(f"{path}: no body has a solid (an already-2D STEP); author the 3D model and let the frame section it.")
+
+    if bare:
+        raise ValueError(f"{path}: the entry {bare[0]!r} has neither a solid nor a face to mesh.")
 
     return TaggedCompound(children=leaves)

@@ -28,12 +28,12 @@ def test_a_solid_frame_meshes_the_authored_step(tmp_path: Path) -> None:
     assert not (tmp_path / "out.step").exists()
 
 
-def test_every_physics_but_the_axisymmetric_stack_solves_as_itself() -> None:
+def test_every_physics_but_the_2d_magnetostatic_stack_solves_as_itself() -> None:
     for physics in set(Physics) - {Physics.MAGNETOSTATICS_2D}:
         assert Solid().solves(physics) is physics
         assert Solid().supports(physics)
 
-    with pytest.raises(ValueError, match="frame=Axisymmetric"):
+    with pytest.raises(ValueError, match="with a 2D frame"):
         _ = Solid().solves(Physics.MAGNETOSTATICS_2D)
 
     assert not Solid().supports(Physics.MAGNETOSTATICS_2D)

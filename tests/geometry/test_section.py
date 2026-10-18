@@ -1,17 +1,20 @@
-"""Tagged sections: axisymmetric_cross_section about any axis and cross_section_3D's quarter-wedge cutaway."""
+"""Tagged sections: axisymmetric_cross_section about any axis, planar_cross_section, export_section and cross_section_3D's quarter-wedge cutaway."""
 
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import cast
 
 import build123d as b3d
 import pytest
 
 from femforge.common.vector import Direction, Vec3
-from femforge.frames import Axis, Axisymmetric, SolvePlane
-from femforge.geometry.section import axisymmetric_cross_section, cross_section_3D
-from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, SolvePlane
+from femforge.geometry.section import axisymmetric_cross_section, cross_section_3D, export_section, planar_cross_section
+from femforge.geometry.tags import TaggedCompound, TaggedEdge, TaggedFace, TaggedPart
+from femforge.meshing.section_edges import SectionEdges
+from femforge.physical.units import U
 
 
 def _plane(axis: Axis = Axis.Z, radial: Direction | None = None) -> SolvePlane:
@@ -258,3 +261,81 @@ def test_a_radial_direction_picks_the_half_plane_the_default_misses() -> None:
     box = section.bounding_box()
     assert section.area == pytest.approx(8.0)
     assert (box.min.X, box.max.X) == pytest.approx((1.0, 3.0))
+
+
+def _planar(normal: Axis = Axis.Z) -> SolvePlane:
+    return Cartesian2D(normal=normal, thickness=10 * U.mm).plane
+
+
+def _edges(section: TaggedCompound) -> list[TaggedEdge]:
+    children = cast("tuple[object, ...]", section.children)
+    return [child for child in children if isinstance(child, TaggedEdge)]
+
+
+def _bar() -> TaggedCompound:
+    """A 20 x 4 x 6 steel bar centred on the origin, its -X end face named Left."""
+    box = b3d.Box(20, 4, 6)
+    bar = TaggedPart([box], tags={"Material": "Steel316"}, name="Bar")
+    bar.color = b3d.Color(0.3, 0.3, 0.3)
+    left = TaggedFace(box.faces().sort_by(b3d.Axis.X)[0], name="Left")
+    left.color = b3d.Color("red")
+    return TaggedCompound(children=[bar, left])
+
+
+def test_a_planar_section_keeps_the_whole_plane_with_tags_and_colors() -> None:
+    section = planar_cross_section(_bar(), _planar())
+    faces = _faces(section)
+
+    assert section.label == "Planar Section of "
+    assert len(faces) == 1
+    assert faces[0].area == pytest.approx(80.0)
+    assert faces[0].current_tags == {"Material": "Steel316", "Name": "Bar"}
+    assert faces[0].color is not None
+
+    box = faces[0].bounding_box()
+    assert (box.min.X, box.max.X, box.min.Y, box.max.Y) == pytest.approx((-10.0, 10.0, -2.0, 2.0))
+
+
+def test_a_planar_section_turns_named_faces_into_named_edges() -> None:
+    edges = _edges(planar_cross_section(_bar(), _planar()))
+
+    assert len(edges) == 1
+    assert edges[0].current_tags == {"Name": "Left"}
+    assert edges[0].length == pytest.approx(4.0)
+    assert edges[0].color is not None
+
+    box = edges[0].bounding_box()
+    assert (box.min.X, box.max.X) == pytest.approx((-10.0, -10.0))
+
+
+def test_a_planar_section_normal_to_y_puts_the_authored_z_on_the_solve_minus_y() -> None:
+    faces = _faces(planar_cross_section(_bar(), _planar(Axis.Y)))
+    box = faces[0].bounding_box()
+
+    assert faces[0].area == pytest.approx(120.0)
+    assert (box.min.X, box.max.X, box.min.Y, box.max.Y) == pytest.approx((-10.0, 10.0, -3.0, 3.0))
+
+
+def test_an_axisymmetric_section_clips_a_named_face_to_its_x_at_least_zero_edge() -> None:
+    rod = TaggedPart([b3d.Cylinder(radius=2.0, height=10.0)], tags={"Material": "Steel316"})
+    top = TaggedFace(rod.faces().sort_by(b3d.Axis.Z)[-1], name="Top")
+    edges = _edges(axisymmetric_cross_section(TaggedCompound(children=[rod, top]), _plane()))
+
+    assert len(edges) == 1
+    assert edges[0].current_tags == {"Name": "Top"}
+
+    box = edges[0].bounding_box()
+    assert (box.min.X, box.max.X, box.min.Y, box.max.Y) == pytest.approx((0.0, 2.0, 5.0, 5.0), abs=1e-9)
+
+
+def test_export_section_writes_the_step_and_its_named_edges(tmp_path: Path) -> None:
+    step = tmp_path / "geometry.step"
+
+    export_section(planar_cross_section(_bar(), _planar()), step)
+    edges = SectionEdges.load(step)
+
+    assert step.is_file()
+    assert edges is not None
+    assert [edge.name for edge in edges.edges] == ["Name=Left"]
+    assert edges.edges[0].span.length == pytest.approx(4.0)
+    assert sorted([edges.edges[0].span.start.y, edges.edges[0].span.end.y]) == pytest.approx([-2.0, 2.0])

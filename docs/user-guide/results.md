@@ -93,6 +93,7 @@ print(gap.integrate(), gap.total_measure())
 | `mean()` | The measure-weighted mean. |
 | `integrate()` | ∫ value dV, or the plane-slice ∫ value dA in 2D. |
 | `integrate_revolved()` | ∫ value 2πr dA, the full-revolution integral of a section solved about an axis; see [Axisymmetric](frames/axisymmetric.md#results). |
+| `integrate_extruded(depth)` | ∫ value dA times `depth`, the prism integral of a planar section; see [Cartesian 2D](frames/cartesian-2d.md#results). |
 | `total_measure()` | The selection's volume, or area in 2D. |
 | `cells()` | The selected cells as a pyvista grid, for plotting. |
 

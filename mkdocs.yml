@@ -160,6 +160,7 @@ nav:
           - user-guide/frames/index.md
           - Solid: user-guide/frames/solid.md
           - Axisymmetric: user-guide/frames/axisymmetric.md
+          - Cartesian 2D: user-guide/frames/cartesian-2d.md
       - Driver and runs: user-guide/driver.md
       - Results: user-guide/results.md
       - Artifacts and retention: user-guide/artifacts.md

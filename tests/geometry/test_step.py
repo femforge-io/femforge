@@ -58,3 +58,12 @@ def test_an_entry_with_neither_solid_nor_face_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="neither a solid nor a face"):
         _ = import_tagged_step(tmp_path / "edge.step")
+
+
+def test_a_section_with_named_edges_reads_as_already_2d(tmp_path: Path) -> None:
+    face = TaggedFace(b3d.Rectangle(10, 2).face(), tags={"Material": "Steel316"})
+    edge = TaggedEdge(b3d.Line((-5, -1), (-5, 1)).edge(), name="Left")
+    TaggedCompound(children=[face, edge]).export_step(str(tmp_path / "section.step"))
+
+    with pytest.raises(ValueError, match="already-2D STEP"):
+        _ = import_tagged_step(tmp_path / "section.step")

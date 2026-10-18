@@ -17,6 +17,8 @@ from femforge.run.parse import result_vtu
 if TYPE_CHECKING:
     import pyvista as pv
 
+    from femforge.physical.units import Length
+
 
 type FloatArray = np.typing.NDArray[np.float64]
 type IntArray = np.typing.NDArray[np.int64]
@@ -372,7 +374,7 @@ class FieldQuery:
         return float((values * weights).sum() / total_weight)
 
     def integrate(self) -> float | FloatArray:
-        """∫ value · dV over the selection (in a 2D model: the plane-slice ∫ value · dA — see [`integrate_revolved`][] for the axisymmetric volume integral)."""
+        """∫ value · dV over the selection; in a 2D model the plane-slice ∫ value · dA, per metre of depth for a planar section (see [`integrate_revolved`][] and [`integrate_extruded`][])."""
         values: FloatArray = self.values
         weights: FloatArray = self.measures
         if values.ndim == 2:
@@ -390,6 +392,12 @@ class FieldQuery:
         if values.ndim == 2:
             return cast("FloatArray", (values * weights[:, None]).sum(axis=0))
         return float((values * weights).sum())
+
+    def integrate_extruded(self, depth: Length) -> float | FloatArray:
+        """∫ value · dA · ``depth`` over a 2D planar selection, the volume integral over a prism ``depth`` deep."""
+        sliced: float | FloatArray = self.integrate()
+
+        return sliced * depth.m_as("m")
 
     def total_measure(self) -> float:
         """The selection's total volume (3D) or area (2D)."""

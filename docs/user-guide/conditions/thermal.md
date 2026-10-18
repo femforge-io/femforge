@@ -1,6 +1,6 @@
 # Thermal
 
-`THERMAL` solves steady-state heat conduction, in 3D under a solid frame and on the r-z half-plane under an axisymmetric frame. See [Conditions and physics](index.md) for how conditions attach and where they land.
+`THERMAL` solves steady-state heat conduction, in 3D under a solid frame, on the r-z half-plane under an axisymmetric frame and on a planar section under a Cartesian 2D frame. See [Conditions and physics](index.md) for how conditions attach and where they land.
 
 ```python exec="true" session="thermal"
 from femforge.elmer import Physics, SifSection

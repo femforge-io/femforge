@@ -46,9 +46,9 @@ def physics_config(physics: Physics) -> PhysicsConfig:
                 operating_point=OperatingPoint(),
             )
         case Physics.MAGNETOSTATICS_2D:
-            # What MAGNETOSTATICS solves as under frame=Axisymmetric(), on the 2D cross-section the frame maps the model
-            # onto (X = radial >= 0, Y = along the axis). CalcFields pairs with the 2D solver (Potential Variable pins
-            # the scalar A_phi); nodal fields stay ON — turning them off also suppresses the nodal force variable the
+            # What MAGNETOSTATICS solves as under a 2D frame, on the section the frame maps the model onto; solved_stack
+            # sets the frame's coordinate system. CalcFields pairs with the 2D solver (Potential Variable pins the scalar
+            # out-of-plane potential); nodal fields stay ON — turning them off also suppresses the nodal force variable the
             # force reduction reads.
             return PhysicsConfig(
                 solvers=[

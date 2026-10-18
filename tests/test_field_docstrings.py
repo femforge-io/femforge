@@ -35,6 +35,8 @@ DOCUMENTED_MODULES: tuple[str, ...] = (
     "femforge.frames.base",
     "femforge.frames.solid",
     "femforge.frames.axisymmetric",
+    "femforge.frames.cartesian_2d",
+    "femforge.meshing.section_edges",
     "femforge.materials.properties",
     "femforge.run.driver",
     "femforge.viz.field_display",

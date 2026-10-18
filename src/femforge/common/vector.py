@@ -169,6 +169,14 @@ class Vec3:
         """The scalar product with ``other``."""
         return self.x * other.x + self.y * other.y + self.z * other.z
 
+    def cross(self, other: "Vec3") -> "Vec3":
+        """The vector product ``self × other``."""
+        return Vec3(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+
     def normalized(self) -> "Vec3":
         """A unit vector in the same direction; raises ``ValueError`` for a zero-length vector."""
         mag: float = self.magnitude()

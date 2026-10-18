@@ -61,7 +61,7 @@ Guide: [Conditions and physics](../user-guide/conditions/index.md)
 
 ## Frames
 
-The frame decides what femforge solves. A [Frame][femforge.frames.Frame] maps the authored 3D model onto the coordinates the solve runs in: it solves the model whole or sections it into a smaller problem, decides the mesh dimension and the form each physics solves as, and turns what Elmer integrates over the solve domain into whole-model totals. Results stay in the solve frame. [Solid][femforge.frames.Solid] and [Axisymmetric][femforge.frames.Axisymmetric] ship today.
+The frame decides what femforge solves. A [Frame][femforge.frames.Frame] maps the authored 3D model onto the coordinates the solve runs in: it solves the model whole or sections it into a smaller problem, decides the mesh dimension and the form each physics solves as, and turns what Elmer integrates over the solve domain into whole-model totals. Results stay in the solve frame. [Solid][femforge.frames.Solid], [Axisymmetric][femforge.frames.Axisymmetric] and [Cartesian2D][femforge.frames.Cartesian2D] ship today.
 
 Guide: [Frames](../user-guide/frames/index.md)
 

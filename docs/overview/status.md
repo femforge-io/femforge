@@ -17,14 +17,14 @@ Each stage runs behind an interface, and one backend fills each interface today.
 
 ## Frames
 
-Elmer names eight coordinate systems. femforge maps two of them to a frame; see [Frames](../user-guide/frames/index.md).
+Elmer names eight coordinate systems. femforge maps three of them to a frame; see [Frames](../user-guide/frames/index.md).
 
 | Elmer coordinate system | femforge | Status |
 | --- | --- | --- |
 | Cartesian 3D | [Solid][femforge.frames.Solid] | :material-check-circle:{ .ff-done title="Implemented" } |
 | Axi Symmetric | [Axisymmetric][femforge.frames.Axisymmetric] | :material-check-circle:{ .ff-done title="Implemented" } |
+| Cartesian 2D | [Cartesian2D][femforge.frames.Cartesian2D] | :material-check-circle:{ .ff-done title="Implemented" } |
 | Cartesian 1D | | :material-circle-outline:{ .ff-todo title="Not started" } |
-| Cartesian 2D | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Polar 2D | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Polar 3D | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Cylindric | | :material-circle-outline:{ .ff-todo title="Not started" } |
@@ -50,7 +50,7 @@ The rows follow the chapters of the Elmer Models Manual. The femforge column nam
 | --- | --- | --- | --- |
 | `StatCurrentSolve` | The potential and current density in a conductor, and the Joule losses they produce. | `Physics.CURRENT_CONDUCTION`, `Physics.JOULE_HEATING` | :material-check-circle:{ .ff-done title="Implemented" } |
 | `MagnetoDynamics` | The 3D magnetic field in A-V form on edge elements, static, time-harmonic or transient. | `Physics.MAGNETOSTATICS`, `Physics.COIL_MAGNETOSTATICS`; static only | :material-check-circle:{ .ff-done title="Implemented" } |
-| `MagnetoDynamics2D` | The magnetic field of planar or axisymmetric problems from one component of the vector potential. | `Physics.MAGNETOSTATICS_2D`; axisymmetric static only | :material-check-circle:{ .ff-done title="Implemented" } |
+| `MagnetoDynamics2D` | The magnetic field of planar or axisymmetric problems from one component of the vector potential. | `Physics.MAGNETOSTATICS_2D`; static, axisymmetric or planar | :material-check-circle:{ .ff-done title="Implemented" } |
 | `CoilSolver` | A consistent current distribution through a coil, as a source for the magnetic solvers. | `Physics.COIL_MAGNETOSTATICS` | :material-check-circle:{ .ff-done title="Implemented" } |
 | `StatElecSolve` | The electrostatic potential and field in dielectrics and conductors. | `Physics.ELECTROSTATICS` | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | `CircuitsAndDynamics` | Circuit equations coupled to a magnetoquasistatic model. | | :material-circle-outline:{ .ff-todo title="Not started" } |
@@ -77,7 +77,7 @@ The rows follow the chapters of the Elmer Models Manual. The femforge column nam
 | `SpringAssembly` | Point springs and masses added to a structural model. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | `RigidBodyReduction` | A displacement problem reduced by treating some blocks as rigid. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 
-`Physics.LINEAR_ELASTICITY` solves in the `Solid` frame with `FixedDisplacement` and `SurfaceForce` boundary conditions, and `Run.strain_energy()` reads back the stored strain energy. Volume forces such as gravity, thermal strain and 2D frames are not wired yet.
+`Physics.LINEAR_ELASTICITY` solves in the `Solid` and `Cartesian2D` frames with `FixedDisplacement` and `SurfaceForce` boundary conditions, and `Run.strain_energy()` reads back the stored strain energy. Volume forces such as gravity, thermal strain and axisymmetric elasticity are not wired yet.
 
 ### Fluids
 

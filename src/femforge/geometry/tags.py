@@ -1,7 +1,7 @@
 """Tagged build123d shapes whose tags ride their STEP names into the mesh."""
 
 from collections.abc import Iterable, Sequence
-from typing import cast
+from typing import ClassVar, cast
 
 import build123d as b3d
 
@@ -29,13 +29,18 @@ class TaggedCompound(b3d.Compound, HasTags):
             if isinstance(child, TaggedPart):
                 child.label = child.tags_str()
 
-    def placed_leaves(self, location: b3d.Location | None = None) -> list["TaggedPart | TaggedFace"]:
-        """Fresh copies of the tagged solids and faces, world-placed, moved by ``location``, and carrying their ancestors' tags (deeper wins)."""
-        moved_by: b3d.Location = location if location is not None else b3d.Location()
+    def placed_leaves(self, location: b3d.Location | None = None) -> list["TaggedPart | TaggedFace | TaggedEdge"]:
+        """Fresh copies of the tagged leaves at most one dimension below the highest, world-placed, moved by ``location``, and carrying their ancestors' tags (deeper wins).
 
-        leaves: list[TaggedPart | TaggedFace] = []
-        for leaf in cast("tuple[object, ...]", self.descendants):
-            if not isinstance(leaf, (TaggedPart, TaggedFace)):
+        Solids keep their marker faces and faces their marker edges; edges under solids are construction geometry and dropped.
+        """
+        moved_by: b3d.Location = location if location is not None else b3d.Location()
+        found: list[TaggedPart | TaggedFace | TaggedEdge] = [leaf for leaf in cast("tuple[object, ...]", self.descendants) if isinstance(leaf, (TaggedPart, TaggedFace, TaggedEdge))]
+        kept_from: int = max((leaf.dim for leaf in found), default=0) - 1
+
+        leaves: list[TaggedPart | TaggedFace | TaggedEdge] = []
+        for leaf in found:
+            if leaf.dim < kept_from:
                 continue
 
             # A compound's own location never reaches its children's shapes, and leaf.moved() deep-copies the whole
@@ -46,9 +51,11 @@ class TaggedCompound(b3d.Compound, HasTags):
             tags: TagDict = {key: value for node in leaf.path if isinstance(node, HasTags) for key, value in node.tags.items()}
 
             if isinstance(leaf, TaggedPart):
-                placed: list[TaggedPart | TaggedFace] = [TaggedPart([solid.moved(placement) for solid in leaf.solids()], tags=tags)]
-            else:
+                placed: list[TaggedPart | TaggedFace | TaggedEdge] = [TaggedPart([solid.moved(placement) for solid in leaf.solids()], tags=tags)]
+            elif isinstance(leaf, TaggedFace):
                 placed = [TaggedFace(face.moved(placement), tags=tags) for face in leaf.faces()]
+            else:
+                placed = [TaggedEdge(edge.moved(placement), tags=tags) for edge in leaf.edges()]
 
             for copy in placed:
                 copy.color = leaf.color
@@ -74,6 +81,9 @@ class TaggedCompound(b3d.Compound, HasTags):
 
 class TaggedFace(b3d.Face, HasTags):
     """A build123d face whose tags ride its STEP name into the mesh: a body of a 2D model, or a named boundary group of a 3D one."""
+
+    dim: ClassVar[int] = 2
+    """The topological dimension of the leaf."""
 
     def __init__(self, face: b3d.Face, *, tags: TagDict | None = None, name: str | None = None) -> None:
         """Wrap ``face`` and tag it.
@@ -101,6 +111,9 @@ class TaggedSketch(b3d.Sketch, HasTags):
 class TaggedPart(b3d.Part, HasTags):
     """A build123d part whose tags ride its STEP name into the mesh."""
 
+    dim: ClassVar[int] = 3
+    """The topological dimension of the leaf."""
+
     def __init__(self, shapes: Iterable[AnyShape], *, tags: TagDict | None = None, name: str | None = None) -> None:
         """Build the part from ``shapes`` and tag it.
 
@@ -115,10 +128,19 @@ class TaggedPart(b3d.Part, HasTags):
 
 
 class TaggedEdge(b3d.Edge, HasTags):
-    """A build123d edge that carries tags."""
+    """A build123d edge whose tags name a boundary group of a 2D model, such as the section of a named face."""
 
-    def __init__(self, edge: b3d.Edge, *, tags: TagDict | None = None) -> None:
-        """Wrap ``edge``, placed where it is, and tag it with ``tags``."""
+    dim: ClassVar[int] = 1
+    """The topological dimension of the leaf."""
+
+    def __init__(self, edge: b3d.Edge, *, tags: TagDict | None = None, name: str | None = None) -> None:
+        """Wrap ``edge`` and tag it.
+
+        Args:
+            edge: The edge to wrap, placed where it is.
+            tags: The ``key=value`` pairs ``EntityTag`` selectors match.
+            name: The boundary-group name, kept as written in the ``Name`` tag and uppercased in the mesh, Elmer and ``entities.json``; None composes it from the tags.
+        """
         b3d.Edge.__init__(self, cast("object", edge.wrapped))  # pyright: ignore[reportUnknownMemberType]  # OCP ships no stubs
-        HasTags.__init__(self, tags)
+        HasTags.__init__(self, named(tags, name))
         self.label = self.tags_str()

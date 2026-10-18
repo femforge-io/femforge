@@ -14,6 +14,7 @@ from femforge.common.vector import DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
 from femforge.elmer.sections import SifSection
 from femforge.elmer.variables import ElmerVariable
+from femforge.frames.base import ALIGNMENT_TOLERANCE
 from femforge.physical.units import (
     Current,
     CurrentDensity as CurrentDensityQuantity,
@@ -70,6 +71,14 @@ class ConditionTarget(StrEnum):
 def _si(quantity: Quantity, unit: Any) -> float:  # pyright: ignore[reportExplicitAny, reportAny]  # unit is any pint unit expression (registry under-typed)
     """Strip ``quantity`` to a bare SI float in ``unit`` (Elmer sif keywords are plain numbers)."""
     return float(quantity.to(unit).magnitude)  # pyright: ignore[reportAny]  # unit arg is Any (registry under-typed)
+
+
+def _solved(frame: Frame, direction: Vec3) -> tuple[float, ...] | None:
+    """The solve components of the authored ``direction`` in ``frame``, None when it has no form there."""
+    try:
+        return frame.solve_vector(direction)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -189,7 +198,7 @@ class Magnetization(Condition):
 
 
 class CurrentDensity(Condition):
-    """A uniform signed azimuthal current density J = N·I/A over a winding window, the homogenized drive of a stranded coil in an axisymmetric solve."""
+    """A uniform signed out-of-plane current density J = N·I/A over a winding window, the homogenized drive of a stranded coil in a 2D solve."""
 
     kind: Literal["current_density"] = "current_density"
     """Discriminator that names this condition type in a serialized config."""
@@ -203,12 +212,12 @@ class CurrentDensity(Condition):
     section: ClassVar[SifSection] = SifSection.BODY_FORCE
 
     value: Annotated[CurrentDensityQuantity, ElmerKeyword("Current Density", U.A / U.m**2)]
-    """`J` `[A/m²]`: Azimuthal current density (signed) imposed uniformly over the body."""
+    """`J` `[A/m²]`: Signed out-of-plane current density imposed uniformly over the body: azimuthal under Axisymmetric, along +normal under Cartesian2D."""
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise when ``frame`` has no azimuthal magnetostatic solve for this drive to feed."""
+        """Raise when ``frame`` has no 2D magnetostatic solve for this drive to feed."""
         if not frame.supports(Physics.MAGNETOSTATICS_2D):
-            raise ValueError(f"CurrentDensity is the azimuthal coil drive of '{Physics.MAGNETOSTATICS_2D.value}', which the {frame.label} frame has no form for.")
+            raise ValueError(f"CurrentDensity is the out-of-plane coil drive of '{Physics.MAGNETOSTATICS_2D.value}', which the {frame.label} frame has no form for.")
 
 
 class FixedTemperature(Condition):
@@ -490,22 +499,43 @@ class FixedDisplacement(Condition):
     z: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 3", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
     """`u_z` `[m]`: Prescribed z displacement; None leaves z free."""
 
-    def check_frame(self, frame: Frame) -> None:
-        """Raise when a nonzero prescribed component lies along a direction ``frame`` has no solve coordinate for."""
-        components: tuple[tuple[str, Length | None, Vec3], ...] = (
-            ("x", self.x, Vec3(1.0, 0.0, 0.0)),
-            ("y", self.y, Vec3(0.0, 1.0, 0.0)),
-            ("z", self.z, Vec3(0.0, 0.0, 1.0)),
+    def _components(self) -> tuple[tuple[int, str, Length | None, Vec3], ...]:
+        return (
+            (0, "x", self.x, Vec3(1.0, 0.0, 0.0)),
+            (1, "y", self.y, Vec3(0.0, 1.0, 0.0)),
+            (2, "z", self.z, Vec3(0.0, 0.0, 1.0)),
         )
 
-        for name, value, direction in components:
-            if value is None or _si(value, U.m) == 0.0:
+    def on_boundary(self, site: BoundarySite) -> dict[str, float | str]:
+        """The ``Displacement i`` keywords of the components the frame of ``site`` solves; a zero component along a 2D normal is dropped."""
+        emitted: dict[str, float | str] = self.to_elmer()
+
+        for index, _, _, direction in self._components():
+            if _solved(site.frame, direction) is None:
+                _ = emitted.pop(f"{ElmerVariable.DISPLACEMENT} {index + 1}", None)
+
+        return emitted
+
+    def check_frame(self, frame: Frame) -> None:
+        """Raise when a constrained component is a different solve coordinate in ``frame``, or a nonzero one has no solve coordinate there."""
+        for index, name, value, direction in self._components():
+            if value is None:
                 continue
 
-            try:
-                _ = frame.solve_vector(direction)
-            except ValueError:
-                raise ValueError(f"FixedDisplacement prescribes a nonzero {name}, which has no form in the {frame.label} frame; set {name}=None.") from None
+            nonzero: bool = _si(value, U.m) != 0.0
+            solved: tuple[float, ...] | None = _solved(frame, direction)
+
+            if solved is None:
+                if nonzero:
+                    raise ValueError(f"FixedDisplacement prescribes a nonzero {name}, which has no form in the {frame.label} frame; set {name}=None.")
+
+                continue
+
+            own: float = solved[index] if index < len(solved) else 0.0
+            lands_on_own_slot: bool = abs(abs(own) - 1.0) <= ALIGNMENT_TOLERANCE and (own > 0.0 or not nonzero)
+
+            if not lands_on_own_slot:
+                raise ValueError(f"FixedDisplacement constrains {name}, which the {frame.label} frame solves as another coordinate; set {name}=None or orient the frame so they agree.")
 
 
 class SurfaceForce(Condition):

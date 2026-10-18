@@ -8,6 +8,7 @@ import pytest
 from femforge.common.tags import TagKey
 from femforge.elmer.variables import ElmerVariable
 from femforge.run.entities import Bodies, Body, Boundaries, Boundary, BoundaryKind
+from femforge.physical.units import U
 from femforge.run.fields import FieldMesh, select_array
 
 
@@ -160,6 +161,16 @@ def test_integrate_revolved_weights_by_tau_times_radius() -> None:
 
     with pytest.raises(RuntimeError, match="no cell centers"):
         _mesh(centers=None).get("joule heating").integrate_revolved()
+
+
+def test_integrate_extruded_scales_the_plane_integral_by_the_depth_in_metres() -> None:
+    mesh = _mesh()
+
+    assert mesh.get("joule heating").where_material("N42").integrate_extruded(10 * U.mm) == pytest.approx(0.25)
+
+    vector_integral = mesh.get(ElmerVariable.MAGNETIC_FLUX_DENSITY).where_body("AIR").integrate_extruded(2 * U.m)
+    assert isinstance(vector_integral, np.ndarray)
+    assert vector_integral.tolist() == pytest.approx([2.0, 8.0, 0.0])
 
 
 def test_missing_capabilities_raise_pointed_errors() -> None:

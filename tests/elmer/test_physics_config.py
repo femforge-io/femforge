@@ -235,3 +235,27 @@ def test_the_plane_state_goes_to_the_equation_block_not_the_solver_block() -> No
     assert solver.equation_keywords() == {"Plane Stress": True}
     assert "Plane Stress" not in solver.to_elmer()
     assert StressSolver().equation_keywords() == {}
+
+
+def test_solved_stacks_under_a_cartesian_2d_frame() -> None:
+    from femforge.elmer.config import CoordinateSystem, MagnetoDynamics2DSolver, solved_stack
+    from femforge.frames import Cartesian2D, PlaneState
+
+    frame = Cartesian2D(thickness=10 * U.mm)
+    thermal = solved_stack(Physics.THERMAL, frame)
+    magnetic = solved_stack(Physics.MAGNETOSTATICS, frame)
+    elastic = solved_stack(Physics.LINEAR_ELASTICITY, frame)
+    strained = solved_stack(Physics.LINEAR_ELASTICITY, Cartesian2D(thickness=10 * U.mm, state=PlaneState.STRAIN))
+
+    assert {stack.simulation.coordinate_system for stack in (thermal, magnetic, elastic)} == {CoordinateSystem.CARTESIAN_2D}
+    assert isinstance(magnetic.solvers[0], MagnetoDynamics2DSolver)
+    assert elastic.solver(StressSolver).variable_dofs == 2
+    assert elastic.solver(StressSolver).plane_stress is True
+    assert strained.solver(StressSolver).plane_stress is False
+
+
+def test_a_cartesian_stack_cannot_solve_a_cartesian_2d_frame() -> None:
+    from femforge.frames import Cartesian2D
+
+    with pytest.raises(ValueError, match="Coordinate System 'Cartesian' cannot solve frame=Cartesian2D"):
+        physics_config(Physics.THERMAL).check_frame(Cartesian2D(thickness=10 * U.mm))
