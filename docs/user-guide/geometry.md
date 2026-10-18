@@ -64,7 +64,7 @@ The two boxes overlap. The mesher splits them into a conformal decomposition, an
 
 `build_step` exports `model()` with every leaf flattened to world placement. A part inherits the tags of the compounds above it, and a deeper tag wins over an ancestor's tag with the same key.
 
-Without `geometry`, the mesher imports the file at [`MeshConfig.step`][femforge.meshing.MeshConfig.step]. An authored STEP, such as a CAD export, works as long as its solid names carry `key=value` pairs, and the run identity then follows the file's geometry: the names, tags, colors and mass properties of its bodies. Exporting the same model again keeps the identity, so the driver reuses the run.
+Without `geometry`, the mesher imports the file at [`MeshConfig.step`][femforge.meshing.MeshConfig.step]. An authored STEP, such as a CAD export, works as long as its solid names carry `key=value` pairs, and the run identity then follows the file's geometry: the names, tags, colors, mass properties, faces and vertices of its bodies. Exporting the same model again keeps the identity, so the driver reuses the run.
 
 gmsh converts the STEP from its own unit to metres on import (`GmshOptions.target_units="M"`), and build123d writes millimetres. Author the CAD in millimetres. A mesh size carries its own unit, as in `0.5 * ff.U.mm`. The mesher warns when the meshed model spans more than 2 m, which usually means a unit slip.
 

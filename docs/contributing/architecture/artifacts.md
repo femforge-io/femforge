@@ -45,15 +45,15 @@ A kind is a module-level [ArtifactKind][femforge.artifacts.ArtifactKind] constan
 
 | Kind | Spec | Files | Produced by |
 |---|---|---|---|
-| [STEP][femforge.run.STEP] | `StepSpec`: the geometry source and the frame | `geometry.step` | the kind's own producer: build the geometry, then convert it into the frame (`src/femforge/run/kinds.py:74-94`) |
-| [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | the four ElmerGrid mesh files, `mesh.names`, `groups.json` | the driver, which owns gmsh and ElmerGrid (`src/femforge/run/kinds.py:126-132`) |
-| [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec]: the config | `manifest.json`, `result.json`, and what the bundle policy adds | the run itself, in place (`src/femforge/run/kinds.py:164-172`) |
+| [STEP][femforge.run.STEP] | `StepSpec`: the geometry source and the frame | `geometry.step` | the kind's own producer: build the geometry, then convert it into the frame (`src/femforge/run/kinds.py:90-106`) |
+| [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | the four ElmerGrid mesh files, `mesh.names`, `groups.json` | the driver, which owns gmsh and ElmerGrid (`src/femforge/run/kinds.py:161-167`) |
+| [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec]: the config | `manifest.json`, `result.json`, and what the bundle policy adds | the run itself, in place (`src/femforge/run/kinds.py:204-212`) |
 
 `json_record_kind` declares a further kind whose artifact is one `record.json` holding a typed result, such as one point of a sweep; `RecordKind.get_or_produce` serves the stored value or computes and publishes it under a claim (`src/femforge/artifacts/records.py`).
 
 ## Identity and names
 
-`artifact_key` hashes the kind name, its producer version and the spec payload with every `HashExclude()` field removed, unless the kind overrides its key (`src/femforge/artifacts/keys.py:97-105`). The bundle kind overrides it with `cache_key`, so a bundle's store key and its run id agree (`src/femforge/run/kinds.py:164-171`). [Config objects](config-objects.md#the-run-identity) covers the run and STEP payloads.
+`artifact_key` hashes the kind name, its producer version and the spec payload with every `HashExclude()` field removed, unless the kind overrides its key (`src/femforge/artifacts/keys.py:97-105`). The bundle kind overrides it with `cache_key`, so a bundle's store key and its run id agree (`src/femforge/run/kinds.py:204-211`). [Config objects](config-objects.md#the-run-identity) covers the run and STEP payloads.
 
 An [ArtifactKey][femforge.artifacts.ArtifactKey] is a `str` of 18 to 64 lowercase hex characters, typed by the spec model it was hashed from, so a mesh key cannot pass where a bundle key belongs (`src/femforge/artifacts/keys.py:27-46`). Its `name` is the `<adjective>-<noun>-<hash8>` directory name.
 
@@ -179,7 +179,7 @@ Each pass that removes something appends a `CleanupRecord` with trigger `purge` 
 | `tags` | each tag's selector and mesh size, in domain order, because an unnamed body's group name joins the matched tag names in that order |
 | `materials` | the sorted material tags, because an unnamed body's group name starts with its material tag |
 
-Conditions, material properties, physics and metadata stay out, so configs that differ only there share one mesh ([mesh_key][femforge.run.mesh_key], `src/femforge/run/kinds.py:108-137`).
+Conditions, material properties, physics and metadata stay out, so configs that differ only there share one mesh ([mesh_key][femforge.run.mesh_key], `src/femforge/run/kinds.py:130-172`).
 
 The artifact keeps ElmerGrid's files, never the `.msh`, plus `groups.json`, a `MeshGroupsFile` of body and boundary group records and the element count (`src/femforge/meshing/groups.py:156-258`). `rebind_groups` turns the records back into groups against the current domain: materials by tag, tags by selector, and each body's name composed again with `compose_group_name`. Any mismatch raises `MeshRebindError`, so a condition never lands on the wrong boundary (`src/femforge/run/artifacts.py:35-92`). The driver then sets each group's id from `mesh.names`, because ElmerGrid renumbers the groups, boundary ids after body ids (`src/femforge/run/driver.py:616-625`, `src/femforge/elmer/mesh_names.py`).
 

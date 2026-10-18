@@ -27,9 +27,9 @@ print(CoolingConfig.model_fields["ambient_temperature"].description)
 
 ## Runs
 
-**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:128`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:140-152`).
+**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:128`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:175-192`).
 
-**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:135-137`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
+**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:170-172`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
 
 ## Units and values
 
@@ -63,7 +63,7 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 
 | Rule | Why | Example |
 | --- | --- | --- |
-| A blank line after every guard, `return` or `raise` | each exit stands out | `src/femforge/run/kinds.py:39-42` |
+| A blank line after every guard, `return` or `raise` | each exit stands out | `src/femforge/run/kinds.py:42-44` |
 | A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:425-430` |
 | A named intermediate instead of a nested comprehension | the name says what the step yields | `tests/test_release.py:111-112` |
 | A single-use helper nested in its caller | its scope shows where it is used | `src/femforge/meshing/mesher.py:137-141` |
@@ -82,6 +82,6 @@ ff.log.bind(run_id="ecru-elk-9c9984fd", files=12).info("Bundle published.")
 
 ## Compatibility and history
 
-**Before 1.0, a merited breaking change ships without a compatibility shim.** femforge is alpha (`pyproject.toml:12`), and security fixes land only on the latest 0.x minor (`SECURITY.md:7`). When the pipeline changes what a config yields, bump the producer version, which invalidates reuse instead of migrating old bundles (`src/femforge/run/kinds.py:23-30`).
+**Before 1.0, a merited breaking change ships without a compatibility shim.** femforge is alpha (`pyproject.toml:12`), and security fixes land only on the latest 0.x minor (`SECURITY.md:7`). When the pipeline changes what a config yields, bump the producer version, which invalidates reuse instead of migrating old bundles (`src/femforge/run/kinds.py:26-33`).
 
 **History carries no AI attribution and no internal ticket ids.** The commit-msg hook (`.githooks/commit-msg:6-7`) and the Fingerprint workflow (`.github/workflows/fingerprint.yml:20-38`) reject both in messages, pull request titles and descriptions, and tracked files.
