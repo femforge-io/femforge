@@ -13,7 +13,7 @@ from typing import NamedTuple, Union, cast, get_args, get_origin, get_type_hints
 import pytest
 from pydantic import BaseModel
 
-from femforge.common.introspect import attribute_docstrings
+from femforge.common.introspect import FIELD_DOCSTRING, attribute_docstrings
 from femforge.physical.property_functions import PropertyFunctionField
 from femforge.physical.units import Quantity, dimensionality_matches, quantity
 
@@ -41,9 +41,6 @@ DOCUMENTED_MODULES: tuple[str, ...] = (
     "femforge.viz.field_lines",
 )
 """Modules whose float, Quantity and property-function fields and annotated constants must follow the docstring convention."""
-
-FORMAT = re.compile(r"^(?:`[^`]+` )?`\[(?P<unit>[^\]]+)\]`: \S")
-"""``\\`glyph\\` \\`[unit]\\`: Meaning…`` on the first line; the glyph is optional for dimensionless knobs."""
 
 _INHERITED_UNITS = {"-", "?"}
 """``-`` is dimensionless; ``?`` means the unit is whatever the caller's quantity carried (Richardson ladders, solver norms)."""
@@ -165,7 +162,7 @@ def test_physical_field_docstring_format(field: PhysicalField) -> None:
     reference = field.reference
     assert field.docstring, f"{reference} needs a `glyph` `[unit]`: meaning docstring"
     first_line = inspect.cleandoc(field.docstring).splitlines()[0]
-    match = FORMAT.match(first_line)
+    match = FIELD_DOCSTRING.match(first_line)
     assert match, f"{reference}: first line must read `glyph` `[unit]`: meaning, got {first_line!r}"
     unit = match.group("unit")
     if field.dimensionality is not None:
@@ -180,8 +177,8 @@ def test_physical_field_docstring_format(field: PhysicalField) -> None:
 
 
 def test_format_accepts_the_conventional_spellings() -> None:
-    assert FORMAT.match("`OD_mag` `[mm]`: Outer diameter.")
-    assert FORMAT.match("`[-]`: A dimensionless knob.")
-    assert not FORMAT.match("Outer diameter (mm).")
+    assert FIELD_DOCSTRING.match("`OD_mag` `[mm]`: Outer diameter.")
+    assert FIELD_DOCSTRING.match("`[-]`: A dimensionless knob.")
+    assert not FIELD_DOCSTRING.match("Outer diameter (mm).")
     for unit in ("mm", "°C", "Ω", "A/mm²", "W/(m²·K)", "N/√W", "A·turn", "%", "1/√Ω"):
         _ = quantity(1.0, _normalized(unit))
