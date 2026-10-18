@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
 
 permissions:
   contents: read
@@ -48,7 +50,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14"]
+        # A pull request runs the oldest Python only; main and the weekly run cover all three.
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
     env:
       PYTHONFAULTHANDLER: "1"
       FEMFORGE_IMPORT_BUDGET_SCALE: "2"
@@ -72,6 +75,7 @@ jobs:
 
   docker-e2e:
     name: docker-e2e
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     env:
       PYTHONFAULTHANDLER: "1"
