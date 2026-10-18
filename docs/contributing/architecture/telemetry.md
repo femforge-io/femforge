@@ -6,7 +6,7 @@
 
 `resolve_root` is the on and off switch: an explicit path, else `FEMFORGE_TELEMETRY`, else None, and None means telemetry is off and nothing is created (`src/femforge/telemetry/paths.py:55-64`). A reader that needs a root calls `require_root`, which raises `TelemetryRootMissing` naming both ways to give one (`src/femforge/telemetry/paths.py:67-73`).
 
-With telemetry off, a process never imports polars. The logging setup and the driver check the explicit root and the variable before they import `femforge.telemetry` (`src/femforge/common/log.py:205-210`, `src/femforge/run/driver.py:365-374`).
+With telemetry off, a process never imports polars. The logging setup and the driver check the explicit root and the variable before they import `femforge.telemetry` (`src/femforge/common/log.py:206-211`, `src/femforge/run/driver.py:365-374`).
 
 [Telemetry][femforge.telemetry.Telemetry] addresses a root and hands out one cached [HiveStore][femforge.telemetry.HiveStore] per table (`src/femforge/telemetry/paths.py:76-115`). `TelemetryDir` names the directories (`src/femforge/telemetry/paths.py:33-52`):
 
@@ -145,16 +145,16 @@ Every new [ParquetLogSink][femforge.telemetry.ParquetLogSink] recovers the log j
 
 ## The log sink and loguru
 
-`src/femforge/common/log.py` is the only logging configuration site (`src/femforge/common/log.py:1`). [setup_logging][femforge.common.setup_logging] installs the terminal sink, routes the standard library's `logging` and `warnings` into loguru, gates chatty libraries such as build123d at the source, and installs the parquet sink when a root resolves (`src/femforge/common/log.py:245-298`):
+`src/femforge/common/log.py` is the only logging configuration site (`src/femforge/common/log.py:1`). [setup_logging][femforge.common.setup_logging] installs the terminal sink, routes the standard library's `logging` and `warnings` into loguru, gates chatty libraries such as build123d at the source, and installs the parquet sink when a root resolves (`src/femforge/common/log.py:246-299`):
 
 | Setting | Resolution | Where |
 |---|---|---|
-| terminal level | `level`, else `FEMFORGE_LOG_LEVEL`, else `INFO` | `src/femforge/common/log.py:263` |
-| parquet sink level | always `DEBUG`: the store is the searchable record, the terminal only the live view | `src/femforge/common/log.py:231-239` |
-| sink order | the parquet sink goes in after `logger.remove()`, which would otherwise drop it | `src/femforge/common/log.py:297-298` |
-| a repeat call | adjusts the terminal level, the library gates and the telemetry root, swapping the sink when the root moves | `src/femforge/common/log.py:265-274`, `src/femforge/common/log.py:212-216` |
+| terminal level | `level`, else `FEMFORGE_LOG_LEVEL`, else `INFO` | `src/femforge/common/log.py:264` |
+| parquet sink level | always `DEBUG`: the store is the searchable record, the terminal only the live view | `src/femforge/common/log.py:232-240` |
+| sink order | the parquet sink goes in after `logger.remove()`, which would otherwise drop it | `src/femforge/common/log.py:298-299` |
+| a repeat call | adjusts the terminal level, the library gates and the telemetry root, swapping the sink when the root moves | `src/femforge/common/log.py:266-275`, `src/femforge/common/log.py:213-217` |
 
-`ff.log` runs `setup_logging` with the defaults before its first record, so a script that never calls it still gets the terminal sink (`src/femforge/common/log.py:358-375`).
+`ff.log` runs `setup_logging` with the defaults before its first record, so a script that never calls it still gets the terminal sink (`src/femforge/common/log.py:364-381`).
 
 [ParquetLogSink][femforge.telemetry.ParquetLogSink] is a plain loguru sink callable (`src/femforge/telemetry/sink.py:117-197`):
 
@@ -167,12 +167,12 @@ Two context managers route records:
 
 | Context | Effect | Where |
 |---|---|---|
-| `telemetry_scope(root)` | binds a route key, so the records inside land in that root's own sink; one sink per folder lives for the process | `src/femforge/common/log.py:378-413` |
-| `run_log_context(run_id, dir)` | binds `run_id` and writes every record that carries it, at `DEBUG` and above, to the bundle's `run.log` | `src/femforge/common/log.py:416-446` |
+| `telemetry_scope(root)` | binds a route key, so the records inside land in that root's own sink; one sink per folder lives for the process | `src/femforge/common/log.py:384-419` |
+| `run_log_context(run_id, dir)` | binds `run_id` and writes every record that carries it, at `DEBUG` and above, to the bundle's `run.log` | `src/femforge/common/log.py:422-452` |
 
 [Driver.evaluate][femforge.run.Driver.evaluate] wraps a whole evaluation in `telemetry_scope(self.telemetry)`, so its records land in the driver's root and not the process default (`src/femforge/run/driver.py:204-205`).
 
-A child process relays its records instead of writing its own. `log_to_stdout_json` replaces the terminal sink with one JSON line per record on stdout (`src/femforge/common/log.py:320-328`). The parent passes each output line to `relay_record`, which logs a JSON record at its own level with the child's module, function and line patched in, and any other line at `DEBUG` (`src/femforge/common/log.py:338-355`). The mesh worker works this way (`src/femforge/meshing/backend.py:245`).
+A child process relays its records instead of writing its own. `log_to_stdout_json` replaces the terminal sink with one JSON line per record on stdout (`src/femforge/common/log.py:326-334`). The parent passes each output line to `relay_record`, which logs a JSON record at its own level with the child's module, function and line patched in, and any other line at `DEBUG` (`src/femforge/common/log.py:344-361`). The mesh worker works this way (`src/femforge/meshing/backend.py:245`).
 
 ## The run and artifact indexes
 

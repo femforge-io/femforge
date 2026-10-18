@@ -186,4 +186,4 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 | Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:137`, `src/femforge/meshing/gmsh_options.py:58` |
 | The geometry interface names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
 | `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
-| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:365-374`, `src/femforge/common/log.py:205-210` |
+| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:365-374`, `src/femforge/common/log.py:206-211` |
