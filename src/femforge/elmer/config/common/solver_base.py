@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Annotated, ClassVar, Self, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.pydantic import Map
 from femforge.elmer.config.common.keywords import SifKeywordModel
 from femforge.materials.properties import ElmerMaterialKeyword
+
+
+if TYPE_CHECKING:
+    from femforge.frames import Frame
 
 
 class ExecSolver(StrEnum):
@@ -189,6 +193,13 @@ class SolverBase(SifKeywordModel):
     exec_solver: ExecSolverField = ExecSolver.ALWAYS
     stabilize: StabilizeField = None
     optimize_bandwidth: OptimizeBandwidthField = None
+
+    def fit_frame(self, frame: Frame) -> Self:
+        """This solver as it solves under ``frame``: itself when the frame changes nothing, else a fitted copy."""
+        return self
+
+    def check_frame(self, frame: Frame) -> None:
+        """Raise when this solver cannot solve under ``frame``."""
 
 
 # A concrete solver type, for the typed PhysicsConfig.solver(kind) accessor.

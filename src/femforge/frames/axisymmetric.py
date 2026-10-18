@@ -87,6 +87,11 @@ class Axisymmetric(Frame):
         """False: a torque has no axisymmetric form."""
         return False
 
+    @property
+    def revolves(self) -> bool:
+        """True: the section stands for the model revolved about ``axis``."""
+        return True
+
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
         """``step_out``, written with the section of ``step_in`` on ``plane``."""
         from femforge.common.log import log
@@ -121,6 +126,10 @@ class Axisymmetric(Frame):
     def total(self, integrated: Vec3) -> Vec3:
         """The full revolution of a per-radian integral: the axial component times 2π, the radial one zero by symmetry."""
         return Vec3(0.0, math.tau * integrated.y, 0.0)
+
+    def solve_share(self, total: Vec3) -> Vec3:
+        """The per-radian share of a full-revolution ``total``: its axial component over 2π, the radial one zero by symmetry."""
+        return Vec3(0.0, total.y / math.tau, 0.0)
 
     def along(self, vector: Vec3, axis: Axis | None) -> float:
         """The axial component of ``vector`` along ``axis``, the symmetry axis for None; an axis off the symmetry axis raises."""

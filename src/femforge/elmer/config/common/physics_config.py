@@ -72,13 +72,14 @@ class PhysicsConfig(BaseModel):
         raise KeyError(f"No {kind.__name__} in this physics' solver stack ({[type(s).__name__ for s in self.solvers]}).")
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise when this stack's coordinate system disagrees with ``frame``'s: one integrates per radian and the other does not."""
+        """Raise when this stack's coordinate system is not ``frame``'s or one of its solvers cannot solve under ``frame``."""
         coordinate_system: CoordinateSystem = self.simulation.coordinate_system
 
-        if coordinate_system.per_radian == frame.coordinate_system.per_radian:
-            return
+        if coordinate_system is not frame.coordinate_system:
+            raise ValueError(f"The solver stack's Coordinate System '{coordinate_system.value}' cannot solve frame={type(frame).__name__}(); re-customize the physics after setting the frame.")
 
-        raise ValueError(f"The solver stack's Coordinate System '{coordinate_system.value}' cannot solve frame={type(frame).__name__}(); re-customize the physics after setting the frame.")
+        for solver in self.solvers:
+            solver.check_frame(frame)
 
 
 def prepare_for_mpi(config: PhysicsConfig) -> None:
