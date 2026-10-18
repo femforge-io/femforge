@@ -46,7 +46,7 @@ class MagnetoDynamicsSolver(SolverBase, LinearSystem, NonlinearSystem, SteadySta
     procedure: ProcedureField = '"MagnetoDynamics" "WhitneyAVSolver"'
     optimize_bandwidth: OptimizeBandwidthField = True
 
-    nonlinear_system_convergence_tolerance: NonlinearConvToleranceField = 1.0e-10
+    nonlinear_system_convergence_tolerance: NonlinearConvToleranceField = 1.0e-6
     nonlinear_system_max_iterations: NonlinearMaxIterationsField = 50
     nonlinear_system_newton_after_iterations: NonlinearNewtonAfterIterationsField = 3
     nonlinear_system_newton_after_tolerance: NonlinearNewtonAfterToleranceField = 1.0e-3
@@ -56,7 +56,7 @@ class MagnetoDynamicsSolver(SolverBase, LinearSystem, NonlinearSystem, SteadySta
     bicgstabl_polynomial_degree: BiCGStablPolynomialDegreeField = 4
     linear_system_preconditioning: LinearPreconditioningField = Preconditioning.NONE
     linear_system_max_iterations: LinearMaxIterationsField = 500
-    linear_system_convergence_tolerance: LinearConvToleranceField = 1.0e-8
+    linear_system_convergence_tolerance: LinearConvToleranceField = 1.0e-6
     linear_system_abort_not_converged: LinearAbortNotConvergedField = False
     linear_system_residual_output: LinearResidualOutputField = 10
 
