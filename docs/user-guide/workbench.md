@@ -32,7 +32,7 @@ viewer = ff.workbench.field_viewer(display=display, telemetry="telemetry")
 ff.workbench.show(viewer, title="Field viewer")
 ```
 
-[field_viewer][femforge.workbench.field_viewer] builds the viewer dock. Its run picker lists the indexed runs of the telemetry root, `FEMFORGE_TELEMETRY` when you pass none. Pass `run=` a [Result][femforge.run.Result], a [Run][femforge.run.Run], a run id or a bundle directory to open that run once the server starts. The [DisplaySpec][femforge.viz.DisplaySpec] sets where the controls start; [Results](results.md#display-state) covers it.
+[field_viewer][femforge.workbench.field_viewer] builds the viewer dock. Its run picker lists the indexed runs of the telemetry root, `FEMFORGE_TELEMETRY` when you pass none. Pass `run=` a [Result][femforge.run.Result], a [Run][femforge.run.Run], a run id or a bundle directory to open that run once the server starts. Without one, the viewer opens the newest indexed run as soon as one lands. The [DisplaySpec][femforge.viz.DisplaySpec] sets where the controls start; [Results](results.md#display-state) covers it.
 
 [show][femforge.workbench.show] serves a workbench and returns when its window closes:
 
@@ -88,7 +88,7 @@ The `browsers` and `monitors` cards read the telemetry root; the [Telemetry](tel
 
 ## The field viewer
 
-The field viewer puts its controls beside one view, which draws every run, flat or solid. The app bar holds the run picker, which lists the 200 newest indexed runs that still have fields, each by its description and run id, and shows the open run's bundle path beside it. A run that is still solving opens once its solve ends. The camera stays put when the next run frames alike.
+The field viewer puts its controls beside one view, which draws every run, flat or solid. The app bar holds the run picker, which lists the 200 newest indexed runs that have fields or are still solving, newest first, and shows the open run's bundle path beside it. Each run reads as its description, with its run id muted beside it. A run that is still solving reads Solving and opens once its solve ends. The list follows the run index every second and holds still while its dropdown is open, so a run that lands never moves the row under the pointer and never replaces the open run. With no run given, the viewer opens the newest run with fields as soon as one lands, else the newest one still solving. The camera stays put when the next run frames alike.
 
 The first time a run opens, a short tour points out the run picker, each section of the controls and the view's toolbar. Skip or Esc ends it, and it stays closed on later starts. The help button at the right of the app bar replays it.
 

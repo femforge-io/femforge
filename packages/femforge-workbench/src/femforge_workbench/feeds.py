@@ -2,8 +2,9 @@
 
 import asyncio
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
+from trame_server.state import State
 from trame_server.utils.asynchronous import create_task
 
 from femforge.common.log import log
@@ -13,14 +14,28 @@ if TYPE_CHECKING:
     from femforge_workbench.panels import PanelComponent
 
 
+class Owner(Protocol):
+    """What a feed publishes into: a panel, or a controller several panels share."""
+
+    @property
+    def id(self) -> str:
+        """The name the feed logs under."""
+        ...
+
+    @property
+    def state(self) -> State:
+        """The state the publish writes in."""
+        ...
+
+
 class Feed[T]:
     """Runs ``poll`` in a worker thread every ``period`` seconds and hands what it returns to ``publish`` inside a state context."""
 
-    def __init__(self, panel: "PanelComponent", period: float, poll: Callable[[], T], publish: Callable[[T], None]) -> None:
+    def __init__(self, panel: Owner, period: float, poll: Callable[[], T], publish: Callable[[T], None]) -> None:
         """Sets the loop up stopped; `start` runs it.
 
         Args:
-            panel: The panel whose state the publish runs in.
+            panel: The panel or controller whose state the publish runs in.
             period: Seconds between polls.
             poll: Reads what changed, off the server loop.
             publish: Writes a poll's result into the panel, on the server loop.

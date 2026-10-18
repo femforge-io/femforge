@@ -97,11 +97,33 @@ function SelectLabel({
   )
 }
 
+function SelectItemDetail({ parts }: { parts: string[] }) {
+  return (
+    <div
+      data-slot="select-item-detail"
+      className="ml-auto shrink-0 font-mono text-label whitespace-nowrap text-muted-foreground"
+    >
+      {parts.map((part, index) => (
+        <React.Fragment key={index}>
+          {index > 0 && <span aria-hidden="true"> ·</span>}
+          {index > 0 && " "}
+          <span>{part}</span>
+        </React.Fragment>
+      ))}
+    </div>
+  )
+}
+
 function SelectItem({
   className,
   children,
+  detail,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item>) {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /** Muted parts after the label, outside the text Radix copies into the trigger and matches on typeahead. */
+  detail?: string[]
+}) {
+  const detailed = detail !== undefined && detail.length > 0
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -119,7 +141,11 @@ function SelectItem({
           <CheckIcon className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemText className={detailed ? "min-w-0 truncate" : undefined}>
+        {children}
+      </SelectPrimitive.ItemText>
+      {detailed && " "}
+      {detailed && <SelectItemDetail parts={detail} />}
     </SelectPrimitive.Item>
   )
 }

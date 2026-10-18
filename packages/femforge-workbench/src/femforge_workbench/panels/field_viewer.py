@@ -5,6 +5,7 @@ import json
 import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import cache, partial
 from pathlib import Path
@@ -17,7 +18,7 @@ from trame.decorators import change, controller
 from trame.widgets import html, react
 
 from femforge.common.files import RunFile
-from femforge.common.log import log
+from femforge.common.log import TELEMETRY_ENV, log
 from femforge.common.utils import title
 from femforge.run.entities import Bodies
 from femforge.run.fields import GEOMETRY_IDS_ARRAY
@@ -25,13 +26,14 @@ from femforge.run.inspect import Run
 from femforge.run.result import Result
 from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
-from femforge.telemetry.schemas import RunColumn
+from femforge.telemetry.schemas import LiveRunColumn, RunColumn
 from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, sample_colormap
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, select_flux_density_array
 from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES, ColormapType
+from femforge_workbench.feeds import Feed
 from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
 from femforge_workbench.panels.scene import ScenePanel, View, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
@@ -51,7 +53,18 @@ from femforge_workbench.widgets.tour import TourStep
 
 
 RUN_PICKER_LIMIT = 200
-"""The newest indexed runs with fields the run picker offers."""
+"""The newest indexed runs the run picker offers."""
+
+RUNS_PERIOD = 1.0
+"""How often the run picker checks the run index for runs that landed or finished solving."""
+
+RUNNING = "running"
+NO_RUN_SELECTED = title("no run selected")
+NO_RUNS_YET = title("no runs yet")
+NO_RUN_INDEX = title("no run index")
+NO_INDEX_NOTICE = f"No run index. Pass telemetry to field_viewer or set {TELEMETRY_ENV} to list runs here."
+NO_RUNS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving."
+RUN_MENU = "max-w-[36rem]"
 
 CLIM_STEPS = 1000
 """Range slider resolution over the data range."""
@@ -156,6 +169,10 @@ class FieldVar(StrEnum):
 
     RUN_TEXT = "field_run_text"
     RUN_ITEMS = "field_run_items"
+    RUN_PLACEHOLDER = "field_run_placeholder"
+    RUN_PICKING = "field_run_picking"
+    """Whether the run picker's dropdown is open, which holds new runs back until it closes."""
+
     RUN_ID = "field_run_id"
     BUSY = "field_busy"
     MODEL_DIM = "field_model_dim"
@@ -210,7 +227,7 @@ TOUR_STEPS: list[TourStep] = [
     {
         "target": f"#{RUN_TOUR_ID}",
         "title": "Switch Between Runs",
-        "body": "Every solved run of this project is listed here. Pick one to open it.",
+        "body": "Every run of this project is listed here, newest first, including ones still solving. Pick one to open it.",
         "side": "bottom",
     },
     {
@@ -437,54 +454,104 @@ def has_flux_density(fields: Sequence[FieldInfo]) -> bool:
     return True
 
 
-def run_label(run_id: str, description: str | None, physics: str | None, dim: int | None) -> str:
-    """How a run reads in the picker: its description before its id, else its id with its physics and dimension.
+class RunFlag(StrEnum):
+    """What the run picker says about a run ahead of its id."""
+
+    SOLVING = "solving"
+    """The run is being solved under a live claim; opening it waits for its fields."""
+
+    NO_FIELDS = "no fields"
+    """The open run has no fields: its solve failed or its fields were purged."""
+
+
+@dataclass(frozen=True)
+class RunEntry:
+    """One run the picker offers: what picking it opens, how it reads, and what the picker says about it."""
+
+    value: str
+    """The location picking the run opens: its run id when indexed, else its bundle directory."""
+
+    run_id: str
+    description: str | None = None
+    physics: str | None = None
+    dim: int | None = None
+    flag: RunFlag | None = None
+
+    @property
+    def by_path(self) -> bool:
+        """Whether the run is offered by its bundle directory rather than from the index."""
+        return self.value != self.run_id
+
+    def item(self) -> Item:
+        """The run as a picker item: its description, else its id, then muted its flag and its id, else its physics and dimension."""
+        extent = f"{self.dim}D" if self.dim is not None else ""
+        identity = [self.run_id] if self.description else [part for part in (title(self.physics or ""), extent) if part]
+        flag = [title(self.flag)] if self.flag is not None else []
+
+        return {ItemField.TITLE: self.description or self.run_id, ItemField.VALUE: self.value, ItemField.DETAIL: [*flag, *identity]}
+
+
+def bundle_entry(run: Run, value: str, flag: RunFlag | None) -> RunEntry:
+    """An opened bundle as a picker entry, read from its manifest, its id alone when it has none to read.
 
     Args:
-        run_id: The run's id.
-        description: The run's description, None or empty when it has none.
-        physics: The physics solved, None when unknown.
-        dim: The solved dimension, None when unknown.
+        run: The opened bundle.
+        value: The location it was opened from.
+        flag: What the picker says about it.
     """
-    if description:
-        return f"{description} · {run_id}"
-
-    extent = f"{dim}D" if dim is not None else ""
-
-    return " ".join(part for part in (run_id, physics or "", extent) if part)
-
-
-def bundle_label(run: Run, run_id: str) -> str:
-    """How an opened bundle reads in the picker, the id alone when it has no manifest to read."""
     try:
         manifest = run.manifest
     except (FileNotFoundError, ValueError):
-        return run_id
+        return RunEntry(value, run.path.name, flag=flag)
 
-    return run_label(run_id, manifest.config.meta.description, str(manifest.physics), manifest.config.frame.model_dim)
+    return RunEntry(value, run.path.name, manifest.config.meta.description, str(manifest.physics), manifest.config.frame.model_dim, flag)
 
 
-def run_items(telemetry: Telemetry | None) -> list[Item]:
-    """The run picker's items: the newest indexed runs that still have fields, empty without a telemetry root or a readable index."""
+def run_entries(telemetry: Telemetry | None) -> list[RunEntry]:
+    """The newest indexed runs that have fields or are solving under a live claim, empty without a telemetry root; a solve that died keeps saying running, so its stale claim drops it."""
     if telemetry is None:
         return []
 
-    try:
-        frame = RunQuery(telemetry.runs.scan()).where(pl.col(RunColumn.HAS_VTU)).newest(RUN_PICKER_LIMIT).frame()
-    except Exception:  # noqa: BLE001 - an unreadable index costs the picker, never the viewer
-        log.opt(exception=True).warning("Run index unavailable.")
-        return []
+    running = pl.col(RunColumn.STATUS) == RUNNING
+    frame = RunQuery(telemetry.runs.scan()).where(pl.col(RunColumn.HAS_VTU) | running).newest(RUN_PICKER_LIMIT).with_live().frame()
+    columns = (RunColumn.RUN_ID, RunColumn.DESCRIPTION, RunColumn.PHYSICS, RunColumn.MODEL_DIM, RunColumn.HAS_VTU, RunColumn.STATUS, LiveRunColumn.STALE)
+    rows = cast("list[tuple[str, str | None, str | None, int | None, bool | None, str | None, bool | None]]", frame.select(columns).rows())
 
-    run_ids = cast("list[str]", frame[RunColumn.RUN_ID].to_list())
-    physics = cast("list[str | None]", frame[RunColumn.PHYSICS].to_list())
-    dims = cast("list[int | None]", frame[RunColumn.MODEL_DIM].to_list())
-    descriptions = cast("list[str | None]", frame[RunColumn.DESCRIPTION].to_list())
+    entries: list[RunEntry] = []
+    for run_id, description, physics, dim, has_vtu, status, stale in rows:
+        claimed = status == RUNNING and stale is False
+        if not has_vtu and not claimed:
+            continue
 
-    items: list[Item] = []
-    for run_id, kind, dim, description in zip(run_ids, physics, dims, descriptions, strict=True):
-        items.append({ItemField.TITLE: run_label(run_id, description, kind, dim), ItemField.VALUE: run_id})
+        entries.append(RunEntry(run_id, run_id, description, physics, dim, RunFlag.SOLVING if claimed else None))
 
-    return items
+    return entries
+
+
+def merged(indexed: Sequence[RunEntry], shown: Sequence[RunEntry], opened: RunEntry | None, chosen: str) -> list[RunEntry]:
+    """The picker's runs: the bundles opened by path that the index lacks, then the indexed runs, with the open run kept where neither holds it.
+
+    Args:
+        indexed: The runs the index offers, newest first.
+        shown: The runs the picker offers now.
+        opened: The run open or waited on, None before the first.
+        chosen: The picker's value, kept offered while it opens.
+    """
+    ids = {entry.run_id for entry in indexed}
+    own = opened.run_id if opened is not None else None
+    kept = [entry for entry in shown if entry.by_path and entry.run_id not in ids and entry.run_id != own]
+    entries = [*kept, *indexed]
+    if opened is not None and opened.run_id not in ids:
+        entries = [opened, *entries] if opened.by_path else [*entries, opened]
+
+    values = {entry.value for entry in entries}
+    if chosen in values:
+        return entries
+
+    runs = {entry.run_id for entry in entries}
+    held = [entry for entry in shown if entry.value == chosen and entry.run_id not in runs]
+
+    return [*entries, *held]
 
 
 def similar_bounds(a: Sequence[float], b: Sequence[float]) -> bool:
@@ -525,10 +592,12 @@ def missing_fields(run: Run) -> str | None:
     if record is not None:
         return f"Fields purged on {record.applied_at:%Y-%m-%d} by {record.trigger}; re-solve to restore them"
 
-    if solving(run):
-        return "No fields yet: the run is still solving"
-
     return "The solve wrote no fields"
+
+
+def solving_notice(entry: RunEntry) -> str:
+    """What the empty view says while the open run is still solving."""
+    return f"{entry.description or entry.run_id} is still solving. Its fields appear here when it finishes."
 
 
 def captioned(label: str) -> Field:
@@ -608,17 +677,32 @@ def only(value: object, fallback: float) -> float:
 class FieldViewerController(TrameComponent):
     """Owns the loaded run and its FieldScene: opens runs off the loop, publishes what they offer, and maps every display change to the plotter or the figure."""
 
-    def __init__(self, app: Workbench, *, telemetry: Telemetry | None = None, display: DisplaySpec = DEFAULTS) -> None:
+    def __init__(self, app: Workbench, *, telemetry: Telemetry | None = None, display: DisplaySpec = DEFAULTS, open_newest: bool = True) -> None:
         """Seeds the viewer's state from `display` and registers the open hook and the state listeners.
 
         Args:
             app: The workbench shell the viewer runs in.
             telemetry: The telemetry root whose run index the run picker lists and run ids resolve in; None leaves the picker empty.
             display: The display the controls start from.
+            open_newest: Whether the newest run opens by itself while nothing was opened or selected.
         """
         super().__init__(app.server)
         self.app = app
+        self.id = FIELD_VIEWER.name
+        """The name the run picker's feed logs under."""
         self.telemetry = telemetry
+        self.open_newest = open_newest
+        self.indexed: list[RunEntry] = []
+        """The runs the index offered at its last read."""
+        self.indexed = self.scan_runs()
+        self.opened: RunEntry | None = None
+        """The run open or waited on, kept in the picker however the index changes."""
+        self.entries = merged(self.indexed, [], None, "")
+        """The runs the picker offers."""
+        listed = NO_RUN if self.entries else NO_RUNS_NOTICE
+        self.note = listed if telemetry is not None else NO_INDEX_NOTICE
+        """What the empty view says, for a view built while no run is shown."""
+        self.feed = self.runs_feed(telemetry) if telemetry is not None else None
         self.startup = display
         """The display the viewer was opened with; its body names are checked against every run shown."""
         self.hidden_bodies = display.hidden_bodies
@@ -665,7 +749,9 @@ class FieldViewerController(TrameComponent):
             {
                 FieldVar.RUN: "",
                 FieldVar.RUN_TEXT: "",
-                FieldVar.RUN_ITEMS: run_items(telemetry),
+                FieldVar.RUN_ITEMS: [entry.item() for entry in self.entries],
+                FieldVar.RUN_PLACEHOLDER: self.placeholder(),
+                FieldVar.RUN_PICKING: False,
                 FieldVar.RUN_ID: "",
                 FieldVar.BUSY: False,
                 FieldVar.MODEL_DIM: self.model_dim,
@@ -711,10 +797,13 @@ class FieldViewerController(TrameComponent):
         _ = self.state.setdefault(Shared.SELECTED_RUN_ID, None)
 
     def attach(self, panel: PanelComponent) -> None:
-        """Takes a panel of the viewer, registering the listeners and hook again when a release had dropped them, and redrawing what the last run left."""
+        """Takes a panel of the viewer, registering the listeners, the hook and the run picker's feed again when a release had dropped them, and redrawing what the last run left."""
         if not self.live:
             self._bind_annotated_methods()
             self.live = True
+
+        if self.feed is not None:
+            self.app.when_ready(self.feed.start)
 
         self.attached.add(panel.id)
         if self.scene is not None:
@@ -730,13 +819,102 @@ class FieldViewerController(TrameComponent):
             self.release()
 
     def release(self) -> None:
-        """Drops the state listeners, the open hook and the work in flight."""
+        """Drops the state listeners, the open hook, the run picker's feed and the work in flight."""
         self._unbind_annotated_methods()
         self.live = False
         self.generation += 1
+        if self.feed is not None:
+            self.feed.stop()
+
         for task in (self.load_task, self.task, self.wait_task):
             if task is not None and not task.done():
                 _ = task.cancel()
+
+    def scan_runs(self) -> list[RunEntry]:
+        """The runs the index offers, the last ones read when it cannot be read."""
+        try:
+            return run_entries(self.telemetry)
+        except Exception:  # noqa: BLE001 - an unreadable index costs the picker, never the viewer
+            log.opt(exception=True).warning("Run index unavailable.")
+            return self.indexed
+
+    def runs_feed(self, telemetry: Telemetry) -> Feed[list[RunEntry] | None]:
+        """The run picker's refresh: the index is read again only when its shards changed or a run it listed is solving, so an idle tick costs one glob."""
+        seen: list[Path] | None = None
+
+        def poll() -> list[RunEntry] | None:
+            nonlocal seen
+            shards = telemetry.runs.shards()
+            live = any(entry.flag is RunFlag.SOLVING for entry in self.indexed)
+            if shards == seen and not live:
+                return None
+
+            found = run_entries(telemetry)
+            seen = shards
+
+            return found
+
+        return Feed(self, RUNS_PERIOD, poll, self.publish_runs)
+
+    def publish_runs(self, found: list[RunEntry] | None) -> None:
+        """Offers the runs a poll found, then opens the newest one while nothing was asked for."""
+        if found is not None:
+            self.indexed = found
+
+        self.offer()
+        self.open_first()
+
+    def offer(self) -> None:
+        """Publishes the picker's runs when they changed, holding them back while its dropdown is open so no row moves under the pointer."""
+        entries = merged(self.indexed, self.entries, self.opened, str(self.state[FieldVar.RUN]))
+        if entries == self.entries or bool(self.state[FieldVar.RUN_PICKING]):
+            return
+
+        self.entries = entries
+        with self.state:
+            self.state[FieldVar.RUN_ITEMS] = [entry.item() for entry in entries]
+            self.state[FieldVar.RUN_PLACEHOLDER] = self.placeholder()
+
+    def open_first(self) -> None:
+        """Opens the newest run with fields, else the newest one solving, while nothing is open, opening or selected and the dock was given no run."""
+        loading = self.load_task is not None and not self.load_task.done()
+        asked = bool(self.state[FieldVar.RUN]) or bool(self.state[Shared.SELECTED_RUN_ID])
+        if not self.open_newest or loading or asked:
+            return
+
+        solved = [entry for entry in self.entries if entry.flag is None]
+        waiting = [entry for entry in self.entries if entry.flag is RunFlag.SOLVING]
+        candidates = [*solved, *waiting]
+        if not candidates:
+            return
+
+        log.bind(run_id=candidates[0].run_id).info("Opening the newest run.")
+        self.open(candidates[0].value)
+
+    def adopt(self, opened: RunEntry, path: Path) -> RunEntry:
+        """Points the picker at the run being opened, with its bundle path beside it, and returns the entry the picker offers it by.
+
+        Args:
+            opened: The run's entry, flagged by what it has to show.
+            path: The run's bundle directory.
+        """
+        self.opened = opened
+        entries = merged(self.indexed, self.entries, opened, "")
+        offered = next(entry for entry in entries if entry.run_id == opened.run_id)
+        with self.quiet():
+            self.state[FieldVar.RUN] = offered.value
+            self.state[FieldVar.RUN_TEXT] = str(path)
+
+        self.offer()
+
+        return offered
+
+    def placeholder(self) -> str:
+        """What the run picker reads while nothing is chosen, saying why when it has nothing to offer."""
+        if self.entries:
+            return NO_RUN_SELECTED
+
+        return NO_RUNS_YET if self.telemetry is not None else NO_RUN_INDEX
 
     @property
     def visible(self) -> bool:
@@ -766,9 +944,10 @@ class FieldViewerController(TrameComponent):
         self.load_task = asyncio.create_task(self.load(location))
 
     async def load(self, location: Location) -> None:
-        """Opens the run at ``location`` off the loop and shows it; a run without fields empties the views, and one still solving opens once it ends; a newer open in flight wins."""
+        """Opens the run at ``location`` off the loop and shows it; a run without fields empties the views, one still solving opens once it ends; a newer open in flight wins."""
         self.generation += 1
         token = self.generation
+        waiting = False
         self.set_busy(True)
         self.status(f"opening {location}")
         if self.scene is None:
@@ -777,14 +956,24 @@ class FieldViewerController(TrameComponent):
         try:
             run = await asyncio.to_thread(self.resolve, location)
             reason = await asyncio.to_thread(missing_fields, run)
+            waiting = reason is not None and await asyncio.to_thread(solving, run)
+            missing = RunFlag.NO_FIELDS if reason is not None else None
+            flag = RunFlag.SOLVING if waiting else missing
+            value = str(location.path) if isinstance(location, Run) else str(location)
+            opened = await asyncio.to_thread(bundle_entry, run, value, flag)
+            indexed = await asyncio.to_thread(self.scan_runs)
             if token != self.generation:
+                return
+
+            self.indexed = indexed
+            offered = self.adopt(opened, run.path)
+            if waiting:
+                self.clear(solving_notice(offered))
+                self.wait_task = asyncio.create_task(self.await_fields(location, run.path, token))
                 return
 
             if reason is not None:
                 self.clear(f"{run.path.name}: {reason}")
-                if await asyncio.to_thread(solving, run):
-                    self.wait_task = asyncio.create_task(self.await_fields(location, run.path, token))
-
                 return
 
             scene = await asyncio.to_thread(FieldScene.from_run, run)
@@ -794,9 +983,10 @@ class FieldViewerController(TrameComponent):
             self.show(run, scene)
         except Exception as error:  # noqa: BLE001 - every failure to open a bundle ends in the status line
             log.opt(exception=True).warning("Run failed to open.")
+            waiting = False
             self.clear(f"{type(error).__name__}: {error}")
         finally:
-            if token == self.generation:
+            if token == self.generation and not waiting:
                 self.set_busy(False)
 
     async def await_fields(self, location: Location, path: Path, token: int) -> None:
@@ -844,6 +1034,7 @@ class FieldViewerController(TrameComponent):
 
     def notice(self, text: str) -> None:
         """Writes `text` over the empty 3D view; empty text removes it."""
+        self.note = text
         if self.viewer is not None:
             self.viewer.notice(text)
 
@@ -887,12 +1078,9 @@ class FieldViewerController(TrameComponent):
         spec = self.fit(self.spec_from_state(), scene)
         dim = scene.dim_for(spec)
 
-        location, items = self.offered(str(self.state[FieldVar.RUN]), run, scene.run_id)
+        location = str(self.state[FieldVar.RUN])
         with self.quiet():
             self.state[FieldVar.RUN_ID] = scene.run_id
-            self.state[FieldVar.RUN_TEXT] = str(run.path)
-            self.state[FieldVar.RUN] = location
-            self.state[FieldVar.RUN_ITEMS] = items
             self.state[FieldVar.MODEL_DIM] = self.model_dim
             self.state[FieldVar.SOLVED_AS] = title(scene.frame.label)
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.OPEN if scene.expandable else SymmetryState.FIXED)
@@ -1041,33 +1229,6 @@ class FieldViewerController(TrameComponent):
     def on_body_colormap(self, **_: object) -> None:
         """Republishes the body table after the body colormap changed."""
         self.publish_rows()
-
-    def offered(self, location: str, run: Run, run_id: str) -> tuple[str, list[Item]]:
-        """The picker's value and items for the open run: the index read again under the bundles it still lacks, the run picked by its id, path or location, else added on top by its path.
-
-        Args:
-            location: The location the run was opened from, as the picker holds it.
-            run: The opened run, whose manifest labels it.
-            run_id: The run's id, its label without a manifest.
-        """
-        current = cast("list[Item]", self.state[FieldVar.RUN_ITEMS])
-        path = str(run.path)
-
-        def refreshed() -> list[Item]:
-            """The index read again, with the bundles opened by path that it still does not list on top."""
-            indexed = run_items(self.telemetry)
-            ids = {str(item[ItemField.VALUE]) for item in indexed}
-            kept = [item for item in current if str(item[ItemField.VALUE]) not in ids and Path(str(item[ItemField.VALUE])).name not in ids]
-
-            return [*kept, *indexed]
-
-        items = refreshed() if self.telemetry is not None else current
-        values = {str(item[ItemField.VALUE]) for item in items}
-        for candidate in (run_id, path, location):
-            if candidate in values:
-                return candidate, items
-
-        return path, [{ItemField.TITLE: bundle_label(run, run_id), ItemField.VALUE: path}, *items]
 
     def fit(self, spec: DisplaySpec, scene: FieldScene) -> DisplaySpec:
         """The spec snapped to the scene's fields, falling back to its first field when the current one is not offered."""
@@ -1390,6 +1551,14 @@ class FieldViewerController(TrameComponent):
 
         self.open(location)
 
+    @change(FieldVar.RUN_PICKING)
+    def on_picking(self, **_: object) -> None:
+        """Offers the runs held back while the run picker's dropdown was open, once it closes."""
+        if bool(self.state[FieldVar.RUN_PICKING]):
+            return
+
+        self.offer()
+
     @change(Shared.SELECTED_RUN_ID)
     def on_selected_run(self, **_: object) -> None:
         """Opens the run another panel selected while a view is on screen."""
@@ -1418,7 +1587,7 @@ class FieldViewerPanel(ScenePanel):
         controller.framed = None
         controller.attach(self)
         if controller.scene is None:
-            self.notice(NO_RUN)
+            self.notice(controller.note)
 
     def clear(self) -> None:
         """Empties the plotter and pushes the empty frame."""
@@ -1457,10 +1626,19 @@ class FieldControlsPanel(PanelComponent):
         app.add_tour_steps(TOUR_STEPS)
 
     def build_run_picker(self) -> None:
-        """The indexed-run select and, beside it, the open run's bundle path to read or copy; built into the app bar, its one place."""
+        """The run select, disabled while it has nothing to offer, and beside it the open run's bundle path to read or copy; built into the app bar, its one place."""
         with html.Div(classes=RUN_GROUP, id=RUN_TOUR_ID):
             with labelled("Run"):
-                picker(str(FieldVar.RUN), str(FieldVar.RUN_ITEMS), placeholder="No Run Selected", width=RUN_WIDTH)
+                picker(
+                    str(FieldVar.RUN),
+                    str(FieldVar.RUN_ITEMS),
+                    placeholder=react.Bind(str(FieldVar.RUN_PLACEHOLDER)),
+                    width=RUN_WIDTH,
+                    disabled=react.Bind(f"!{FieldVar.RUN_ITEMS}.length"),
+                    label="Run",
+                    menu=RUN_MENU,
+                    on_open_change=setter(str(FieldVar.RUN_PICKING)),
+                )
 
             Input(value=react.Bind(str(FieldVar.RUN_TEXT)), read_only=True, placeholder="Bundle Path", classes=PATH_WIDTH, aria_label="Bundle path")
 
@@ -1691,7 +1869,7 @@ def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DE
     """The field viewer dock: the controls beside the view.
 
     Args:
-        run: The run to open once the server runs: a Result, a Run, a run id or a bundle directory; None opens none.
+        run: The run to open once the server runs: a Result, a Run, a run id or a bundle directory; None opens the newest indexed run once one lands.
         display: The display the controls start from.
         telemetry: The telemetry root whose run index the run picker lists; None reads FEMFORGE_TELEMETRY.
     """
@@ -1703,7 +1881,7 @@ def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DE
     def controller_for(app: Workbench) -> FieldViewerController:
         nonlocal shared
         if shared is None or shared.app is not app:
-            shared = FieldViewerController(app, telemetry=index, display=display)
+            shared = FieldViewerController(app, telemetry=index, display=display, open_newest=location is None)
             if location is not None:
                 app.when_ready(partial(shared.open, location))
 

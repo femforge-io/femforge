@@ -11,6 +11,7 @@ from trame_server.state import State
 
 from femforge.common.utils import title
 from femforge_workbench.dock import template_name
+from femforge_workbench.widgets.element import Shared as SharedProps
 from femforge_workbench.widgets.field import Field, FieldLabel
 from femforge_workbench.widgets.select import Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 
@@ -92,11 +93,12 @@ class Shared(StrEnum):
 
 
 class ItemField(StrEnum):
-    """The keys of a picker item: the label shown, the value chosen and, optionally, whether it is offered but unavailable."""
+    """The keys of a picker item: the label shown, the value chosen and, optionally, whether it is offered but unavailable and the muted parts after its label."""
 
     TITLE = "title"
     VALUE = "value"
     DISABLED = "disabled"
+    DETAIL = "detail"
 
 
 class Carry(StrEnum):
@@ -136,8 +138,18 @@ def chooser(model: str, values: Sequence[str], *, width: str = TRIGGER_WIDTH, di
                 SelectItem(label(value), value=value)
 
 
-def picker(model: str, items: str, *, placeholder: str = "", width: str = TRIGGER_WIDTH, disabled: bool = False) -> None:
-    """A single-choice select over the `{title, value}` items a state variable holds, bound to another.
+def picker(
+    model: str,
+    items: str,
+    *,
+    placeholder: str | react.Bind = "",
+    width: str = TRIGGER_WIDTH,
+    disabled: bool | react.Bind = False,
+    label: str | None = None,
+    menu: str = "",
+    on_open_change: react.Callback | None = None,
+) -> None:
+    """A single-choice select over the `{title, value}` items a state variable holds, bound to another; an item's `detail` parts read muted after its title.
 
     Args:
         model: The state variable the choice is bound to.
@@ -145,16 +157,21 @@ def picker(model: str, items: str, *, placeholder: str = "", width: str = TRIGGE
         placeholder: The text shown while nothing is chosen.
         width: The trigger's Tailwind width class.
         disabled: Whether the select is disabled.
+        label: The trigger's accessible name; None leaves it to the chosen title.
+        menu: Tailwind classes added to the dropdown's own.
+        on_open_change: Receives whether the dropdown opened.
     """
-    with Select(model=model, disabled=disabled):
-        with SelectTrigger(size=TRIGGER_SIZE, classes=width):
+    content: SharedProps = {"classes": menu} if menu else {}
+    with Select(model=model, disabled=disabled, on_open_change=on_open_change):
+        with SelectTrigger(size=TRIGGER_SIZE, classes=width, aria_label=label):
             SelectValue(placeholder=placeholder)
 
-        with SelectContent(), react.For(items=items, name=ITEM):
+        with SelectContent(**content), react.For(items=items, name=ITEM):
             SelectItem(
                 [react.Bind(f"{ITEM}.{ItemField.TITLE}")],
                 value=react.Bind(f"{ITEM}.{ItemField.VALUE}"),
                 disabled=react.Bind(f"{ITEM}.{ItemField.DISABLED}"),
+                detail=react.Bind(f"{ITEM}.{ItemField.DETAIL}"),
             )
 
 

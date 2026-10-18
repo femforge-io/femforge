@@ -2,12 +2,16 @@
 
 import asyncio
 import time
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
 import numpy as np
+import polars as pl
 import pytest
 
+from femforge.artifacts.lock import LOCK_SUFFIX, DirLock
 from femforge.common.files import BundleFile
 from femforge.common.log import TELEMETRY_ENV
 from femforge.config import RunMeta, SimulationConfig
@@ -17,10 +21,12 @@ from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.telemetry.paths import Telemetry
+from femforge.telemetry.schemas import RUN_INDEX_SCHEMA, RunColumn
 from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, SceneActor
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, StreamlineActor
 from femforge.viz.symmetry import Expansion
 from femforge_workbench.dock import Split, panels, template_name
+from femforge_workbench.feeds import Feed
 from femforge_workbench.persist import LocalJsonStore
 from femforge_workbench.registry import FIELD_VIEWER, resolve
 from tests.workbench.tree import Node, find, prop, props, texts
@@ -34,7 +40,7 @@ from trame.app import get_server  # noqa: E402
 
 from femforge_workbench.app import Hook, StateVar, Template, Workbench  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
-from femforge_workbench.panels import Shared  # noqa: E402
+from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
 from femforge_workbench.panels.scene import StateVar as SceneVar  # noqa: E402
 from femforge_workbench.panels.field_viewer import (  # noqa: E402
@@ -52,8 +58,16 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     names_of,
     number_of,
     pair_of,
-    run_items,
-    bundle_label,
+    NO_INDEX_NOTICE,
+    NO_RUN_INDEX,
+    NO_RUN_SELECTED,
+    NO_RUNS_NOTICE,
+    NO_RUNS_YET,
+    RunEntry,
+    RunFlag,
+    bundle_entry,
+    merged,
+    run_entries,
     seed_count,
     similar_bounds,
     workbench,
@@ -209,6 +223,13 @@ def test_the_run_picker_and_the_bundle_path_field_sit_in_the_app_bar(tmp_path: P
     assert _bound(find(header, "ReactFor")[0], "items") == str(FieldVar.RUN_ITEMS)
     assert _bound(path, "value") == str(FieldVar.RUN_TEXT) and prop(path, "readOnly") is True, "the path follows the open run and is not typed into"
     assert find(header, "ff-tree") == []
+
+    assert _bound(picker, "disabled") == f"!{FieldVar.RUN_ITEMS}.length", "an empty picker is disabled rather than opening an empty list"
+    assert prop(picker, "onOpenChange") == {"callback": {"js": f'trame.state.set("{FieldVar.RUN_PICKING}", $event)'}}
+    assert prop(find(header, "ff-select-trigger")[0], "aria-label") == "Run"
+    assert _bound(find(header, "ff-select-value")[0], "placeholder") == str(FieldVar.RUN_PLACEHOLDER)
+    assert _bound(find(header, "ff-select-item")[0], "detail") == f"item.{ItemField.DETAIL}"
+    assert app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_INDEX
 
 
 # --- the controller's paths -----------------------------------------------------
@@ -409,10 +430,13 @@ def test_a_run_still_solving_empties_the_views_and_opens_once_it_ends(tmp_path: 
         await controller.settle()
         await controller.load(pending)
 
-        notice = "pending: No fields yet: the run is still solving"
+        notice = "pending is still solving. Its fields appear here when it finishes."
         assert controller.scene is None and app.state[FieldVar.FIELDS] == [] and app.state[FieldVar.BODY_ROWS] == []
         assert str(SceneActor.BODIES) not in viewer.plotter.renderer.actors, "nothing of the last run is left to read as this one"
         assert app.state[viewer.key(SceneVar.NOTICE)] == notice and app.state[StateVar.STATUS] == notice
+        assert app.state[FieldVar.BUSY] is True, "the busy bar pulses until the fields open"
+        assert app.state[FieldVar.RUN] == str(pending) and app.state[FieldVar.RUN_TEXT] == str(pending)
+        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0] == {"title": "pending", "value": str(pending), "detail": ["Solving"]}
 
         _ = held.rename(pending / "case_t0001.vtu")
         solved = True
@@ -422,7 +446,8 @@ def test_a_run_still_solving_empties_the_views_and_opens_once_it_ends(tmp_path: 
         await controller.settle()
 
         assert controller.scene is not None and controller.scene.run_id == "pending"
-        assert app.state[viewer.key(SceneVar.NOTICE)] == ""
+        assert app.state[viewer.key(SceneVar.NOTICE)] == "" and app.state[FieldVar.BUSY] is False
+        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0] == {"title": "pending", "value": str(pending), "detail": []}
 
     asyncio.run(run())
 
@@ -460,7 +485,7 @@ def test_a_finished_run_without_fields_says_so_and_waits_for_nothing(tmp_path: P
         app = _shell("fieldless", tmp_path, monkeypatch)
         controller = _controller(app)
         viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
-        assert app.state[viewer.key(SceneVar.NOTICE)] == "No Run Open"
+        assert app.state[viewer.key(SceneVar.NOTICE)] == NO_INDEX_NOTICE
 
         await controller.load(tmp_path / "missing")
 
@@ -472,8 +497,9 @@ def test_a_finished_run_without_fields_says_so_and_waits_for_nothing(tmp_path: P
         _ = write_manifest(fieldless, manifest)
         await controller.load(fieldless)
 
-        assert controller.wait_task is None
+        assert controller.wait_task is None and app.state[FieldVar.BUSY] is False
         assert app.state[viewer.key(SceneVar.NOTICE)] == "fieldless: The solve wrote no fields"
+        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0][ItemField.DETAIL] == ["No Fields", "Magnetostatics", "3D"]
 
     asyncio.run(run())
 
@@ -660,48 +686,61 @@ def test_the_run_picker_names_a_bundle_the_index_does_not_know(tmp_path: Path, m
         app = _shell("offered", tmp_path, monkeypatch)
         controller = _controller(app)
         bundle = _bundle(tmp_path / "hex", _hex_grid())
-        app.state[FieldVar.RUN_ITEMS] = [{"title": "indexed", "value": "indexed"}]
+        listed = [RunEntry("indexed", "indexed")]
+
+        def entries(_telemetry: Telemetry | None) -> list[RunEntry]:
+            return listed
+
+        monkeypatch.setattr(field_viewer_module, "run_entries", entries)
 
         controller.open(bundle)
         await controller.settle()
 
         items = cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])
-        assert items == [{"title": "hex", "value": str(bundle)}, {"title": "indexed", "value": "indexed"}]
+        assert items == [{"title": "hex", "value": str(bundle), "detail": []}, {"title": "indexed", "value": "indexed", "detail": []}]
+        assert app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_SELECTED
 
         controller.open(bundle)
         await controller.settle()
 
-        assert cast("list[object]", app.state[FieldVar.RUN_ITEMS]) == items, "the same run is offered once"
+        assert app.state[FieldVar.RUN_ITEMS] is items, "the same runs are not published again"
 
-        app.state[FieldVar.RUN_ITEMS] = [{"title": "4 mm gap - hex", "value": "hex"}]
+        listed = [RunEntry("hex", "hex", "4 mm gap")]
         controller.open(bundle)
         await controller.settle()
 
-        assert app.state[FieldVar.RUN] == "hex" and len(cast("list[object]", app.state[FieldVar.RUN_ITEMS])) == 1, "a bundle the index lists is picked as its indexed run"
-
-        app.state[FieldVar.RUN_ITEMS] = [{"title": "hex", "value": str(bundle)}, {"title": "old", "value": "old"}]
-        by_id = controller.offered("hex", Run(bundle), "hex")
-
-        assert by_id == (str(bundle), app.state[FieldVar.RUN_ITEMS]), "a bundle added by path is picked again when opened by id"
-
-        def indexed(_telemetry: Telemetry | None) -> list[dict[str, object]]:
-            return [{"title": "4 mm gap - hex", "value": "hex"}, {"title": "new", "value": "new"}]
-
-        monkeypatch.setattr(field_viewer_module, "run_items", indexed)
-        controller.telemetry = Telemetry(tmp_path)
-        refreshed = controller.offered(str(bundle), Run(bundle), "hex")
-
-        assert refreshed == ("hex", [{"title": "old", "value": "old"}, {"title": "4 mm gap - hex", "value": "hex"}, {"title": "new", "value": "new"}]), "the index is read again and an added bundle it now lists is dropped"
+        assert app.state[FieldVar.RUN] == "hex", "a bundle the index lists is picked as its indexed run"
+        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "4 mm gap", "value": "hex", "detail": ["hex"]}]
 
     asyncio.run(run())
 
 
-def test_a_bundle_is_labelled_from_its_manifest(tmp_path: Path) -> None:
-    bundle = _bundle(tmp_path / "hex", _hex_grid())
-    plain = bundle_label(Run(bundle), "hex")
-    _ = write_manifest(bundle, RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), meta=RunMeta(description="4 mm gap")), status="ok", run_id="hex"))
+def test_the_picker_keeps_bundles_opened_by_path_the_open_run_and_the_run_being_opened() -> None:
+    by_path = RunEntry("/runs/hex", "hex")
+    indexed = [RunEntry("new", "new"), RunEntry("old", "old")]
 
-    assert plain == "hex" and bundle_label(Run(bundle), "hex") == "4 mm gap · hex"
+    assert merged(indexed, [by_path, *indexed], None, "") == [by_path, *indexed], "a bundle opened by path stays on top"
+    assert merged([RunEntry("hex", "hex"), *indexed], [by_path], None, "") == [RunEntry("hex", "hex"), *indexed], "the index takes over a bundle it lists"
+
+    failed = RunEntry("gone", "gone", flag=RunFlag.NO_FIELDS)
+    assert merged(indexed, indexed, failed, "gone") == [*indexed, failed], "the open run the index dropped stays, flagged"
+    assert merged(indexed, indexed, by_path, str(by_path.value)) == [by_path, *indexed]
+
+    picked = RunEntry("solving", "solving", flag=RunFlag.SOLVING)
+    assert merged(indexed, [picked, *indexed], None, "solving") == [*indexed, picked], "the run just picked stays while it opens"
+    assert merged([RunEntry("hex", "hex"), *indexed], [by_path], None, str(by_path.value)) == [RunEntry("hex", "hex"), *indexed], "never twice"
+
+
+def test_a_run_reads_as_its_description_with_its_id_or_physics_muted_beside_it(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path / "hex", _hex_grid())
+    plain = bundle_entry(Run(bundle), str(bundle), None)
+    _ = write_manifest(bundle, RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), meta=RunMeta(description="4 mm gap")), status="ok", run_id="hex"))
+    described = bundle_entry(Run(bundle), "hex", RunFlag.SOLVING)
+
+    assert plain == RunEntry(str(bundle), "hex") and plain.by_path and not described.by_path
+    assert described.item() == {"title": "4 mm gap", "value": "hex", "detail": ["Solving", "hex"]}
+    assert RunEntry("a", "a", None, "magnetostatics", 2).item() == {"title": "a", "value": "a", "detail": ["Magnetostatics", "2D"]}
+    assert RunEntry("a", "a", flag=RunFlag.NO_FIELDS).item()[ItemField.DETAIL] == ["No Fields"]
 
 
 def test_a_run_cleared_while_it_expands_is_not_drawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -840,8 +879,8 @@ def test_state_coercions_tolerate_anything() -> None:
     assert pair_of([1]) is None and pair_of([True, 2]) is None and pair_of("12") is None
 
 
-def test_run_items_are_empty_without_a_telemetry_root() -> None:
-    assert run_items(None) == []
+def test_run_entries_are_empty_without_a_telemetry_root() -> None:
+    assert run_entries(None) == []
 
 
 def test_similar_bounds_needs_a_close_diagonal_and_centre() -> None:
@@ -1181,3 +1220,249 @@ def test_a_moved_range_thumb_pins_the_range(tmp_path: Path, monkeypatch: pytest.
     auto, clim = asyncio.run(run())
 
     assert auto is False and clim == (2.2, 2.8)
+
+
+# --- the live run picker ---------------------------------------------------------
+
+
+CREATED = datetime(2026, 10, 1, tzinfo=timezone.utc)
+"""When the first indexed test run was created; each later one a minute after."""
+
+
+def _index(telemetry: Telemetry, runs_dir: Path, run_id: str, minute: int, status: str, *, has_vtu: bool, description: str | None = None) -> None:
+    created = CREATED + timedelta(minutes=minute)
+    row: dict[str, object] = {name: None for name in RUN_INDEX_SCHEMA.names()}
+    row.update(
+        {
+            RunColumn.MONTH: created.date().replace(day=1),
+            RunColumn.RUN_ID: run_id,
+            RunColumn.RUNS_DIR: str(runs_dir),
+            RunColumn.STATUS: status,
+            RunColumn.HAS_VTU: has_vtu,
+            RunColumn.DESCRIPTION: description,
+            RunColumn.CREATED_AT: created,
+            RunColumn.INDEXED_AT: datetime.now(timezone.utc),
+            RunColumn.SOURCE: "scan",
+        }
+    )
+    _ = telemetry.runs.append(pl.DataFrame([row], schema=RUN_INDEX_SCHEMA))
+
+
+def _claim(runs_dir: Path, run_id: str) -> DirLock:
+    lock = DirLock(runs_dir / f"{run_id}{LOCK_SUFFIX}")
+    assert lock.try_acquire()
+
+    return lock
+
+
+def _live_shell(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: Path | None = None) -> Workbench:
+    monkeypatch.delenv(TELEMETRY_ENV, raising=False)
+    app = Workbench(name, title="Fields", server=get_server(f"field-viewer-{name}"), persist=LocalJsonStore(tmp_path / "persist"), user="tester")
+    app.add(workbench(run, telemetry=tmp_path / "telemetry"))
+
+    return app
+
+
+def _feed(controller: FieldViewerController) -> Feed[list[RunEntry] | None]:
+    feed = controller.feed
+    assert feed is not None
+
+    return feed
+
+
+def _values(app: Workbench) -> list[object]:
+    return [item[ItemField.VALUE] for item in cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])]
+
+
+async def _until(predicate: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 20.0
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out"
+        await asyncio.sleep(0.01)
+
+
+def test_the_index_offers_runs_with_fields_and_runs_solving_under_a_live_claim(tmp_path: Path) -> None:
+    telemetry = Telemetry(tmp_path / "telemetry")
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _index(telemetry, runs_dir, "solved", 0, "ok", has_vtu=True, description="1 mm gap")
+    _index(telemetry, runs_dir, "live", 1, "running", has_vtu=False)
+    _index(telemetry, runs_dir, "crashed", 2, "running", has_vtu=False)
+    _index(telemetry, runs_dir, "failed", 3, "error", has_vtu=False)
+    claim = _claim(runs_dir, "live")
+
+    entries = run_entries(telemetry)
+    claim.release()
+
+    assert entries == [RunEntry("live", "live", flag=RunFlag.SOLVING), RunEntry("solved", "solved", "1 mm gap")], "a solve that died without a claim is not listed"
+    assert run_entries(telemetry) == [RunEntry("solved", "solved", "1 mm gap")]
+
+
+def test_the_run_feed_reads_the_index_again_only_when_its_shards_changed_or_a_run_is_solving(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _live_shell("gated", tmp_path, monkeypatch)
+    controller = _controller(app)
+    feed = _feed(controller)
+    telemetry = Telemetry(tmp_path / "telemetry")
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+
+    assert feed.period == 1.0
+    assert feed.poll() == [] and feed.poll() is None, "an idle index costs one glob"
+
+    _index(telemetry, runs_dir, "live", 0, "running", has_vtu=False)
+    claim = _claim(runs_dir, "live")
+    found = feed.poll()
+    controller.indexed = found or []
+
+    assert found == [RunEntry("live", "live", flag=RunFlag.SOLVING)]
+    assert feed.poll() == found, "a solving run is read every tick, so its end shows at once"
+
+    claim.release()
+    controller.indexed = feed.poll() or []
+
+    assert controller.indexed == [] and feed.poll() is None
+
+
+def test_the_newest_run_with_fields_opens_once_and_a_run_that_lands_later_never_replaces_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _live_shell("arrivals", tmp_path, monkeypatch)
+        controller = _controller(app)
+        feed = _feed(controller)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        telemetry = Telemetry(tmp_path / "telemetry")
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        assert app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUNS_YET and app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_NOTICE
+
+        _ = _bundle(runs_dir / "solved", _hex_grid())
+        _index(telemetry, runs_dir, "solved", 0, "ok", has_vtu=True, description="0.5 mm gap")
+        (runs_dir / "solving").mkdir()
+        _index(telemetry, runs_dir, "solving", 1, "running", has_vtu=False, description="1 mm gap")
+        claim = _claim(runs_dir, "solving")
+
+        controller.publish_runs(feed.poll())
+        await controller.settle()
+
+        assert controller.scene is not None and controller.scene.run_id == "solved", "a run with fields opens before a newer one still solving"
+        assert app.state[FieldVar.RUN] == "solved" and app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_SELECTED
+        assert app.state[FieldVar.RUN_ITEMS] == [
+            {"title": "1 mm gap", "value": "solving", "detail": ["Solving", "solving"]},
+            {"title": "0.5 mm gap", "value": "solved", "detail": ["solved"]},
+        ]
+
+        _ = _bundle(runs_dir / "newer", _hex_grid())
+        _index(telemetry, runs_dir, "newer", 2, "ok", has_vtu=True)
+        opening = controller.load_task
+        controller.publish_runs(feed.poll())
+
+        assert controller.load_task is opening and app.state[FieldVar.RUN] == "solved", "a run that lands never steals the view"
+        assert _values(app) == ["newer", "solving", "solved"]
+
+        app.state[FieldVar.RUN_PICKING] = True
+        held = app.state[FieldVar.RUN_ITEMS]
+        _index(telemetry, runs_dir, "newest", 3, "ok", has_vtu=True)
+        controller.publish_runs(feed.poll())
+        controller.on_picking()
+
+        assert app.state[FieldVar.RUN_ITEMS] is held, "no row moves under the pointer while the dropdown is open"
+
+        app.state[FieldVar.RUN_PICKING] = False
+        controller.on_picking()
+
+        assert _values(app) == ["newest", "newer", "solving", "solved"]
+
+        published = app.state[FieldVar.RUN_ITEMS]
+        controller.publish_runs(feed.poll())
+        claim.release()
+
+        assert app.state[FieldVar.RUN_ITEMS] is published, "an unchanged index writes nothing"
+
+    asyncio.run(run())
+
+
+def test_the_newest_run_solving_opens_when_none_has_fields_and_keeps_the_busy_bar_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _live_shell("waiting", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        telemetry = Telemetry(tmp_path / "telemetry")
+        runs_dir = tmp_path / "runs"
+        (runs_dir / "solving").mkdir(parents=True)
+        _index(telemetry, runs_dir, "solving", 0, "running", has_vtu=False, description="0.5 mm gap")
+        claim = _claim(runs_dir, "solving")
+
+        controller.publish_runs(_feed(controller).poll())
+        await controller.settle()
+        busy = app.state[FieldVar.BUSY]
+        waiting = controller.wait_task
+        controller.release()
+        claim.release()
+
+        assert app.state[viewer.key(SceneVar.NOTICE)] == "0.5 mm gap is still solving. Its fields appear here when it finishes."
+        assert busy is True and waiting is not None and app.state[FieldVar.RUN] == "solving"
+
+    asyncio.run(run())
+
+
+def test_nothing_opens_by_itself_once_a_run_was_asked_for(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _live_shell("asked", tmp_path, monkeypatch, run=tmp_path / "missing")
+        controller = _controller(app)
+        runs_dir = tmp_path / "runs"
+        _ = _bundle(runs_dir, _hex_grid())
+        _index(Telemetry(tmp_path / "telemetry"), tmp_path, "runs", 0, "ok", has_vtu=True)
+
+        controller.publish_runs(_feed(controller).poll())
+
+        assert controller.load_task is None, "the dock was given a run"
+
+        controller.open_newest = True
+        app.state[Shared.SELECTED_RUN_ID] = "runs"
+        controller.publish_runs(None)
+
+        assert controller.load_task is None, "another panel selected a run"
+
+    asyncio.run(run())
+
+
+def test_an_unreadable_index_keeps_the_runs_last_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(_telemetry: Telemetry | None) -> list[RunEntry]:
+        raise OSError("disk gone")
+
+    app = _live_shell("broken", tmp_path, monkeypatch)
+    controller = _controller(app)
+    controller.indexed = [RunEntry("kept", "kept")]
+    monkeypatch.setattr(field_viewer_module, "run_entries", broken)
+
+    assert controller.scan_runs() == [RunEntry("kept", "kept")]
+
+
+def test_the_run_feed_runs_with_the_server_and_stops_with_the_last_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        _ = _bundle(runs_dir / "solved", _hex_grid())
+        _index(Telemetry(tmp_path / "telemetry"), runs_dir, "solved", 0, "ok", has_vtu=True)
+        app = _live_shell("lifecycle", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        feed = _feed(controller)
+
+        assert app.state[viewer.key(SceneVar.NOTICE)] == "No Run Open" and not feed.running
+
+        started = _start(app)
+        _ = await app.server.ready
+        await _until(lambda: controller.scene is not None)
+        running = feed.running
+        for panel_id in FieldPanel:
+            app.on_panel_removed({"id": str(panel_id)})
+
+        stopped = not feed.running
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+
+        assert running and stopped
+        assert controller.scene is not None and controller.scene.run_id == "solved", "the feed opened the run once the server ran"
+
+    asyncio.run(run())
