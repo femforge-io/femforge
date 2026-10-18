@@ -87,6 +87,9 @@ MM = 1e-3
 AXIS_SLACK = 1e-9
 """`[rad]`: How far past a cut face a seed may fold and still count as inside the sweep."""
 
+WARP_SHARE = 0.1
+"""`[-]`: The share of the section's bounds diagonal the automatic scale moves the largest displacement."""
+
 
 class Association(StrEnum):
     """Whether a VTU array lives on mesh points or cells (pyvista's ``preference``)."""
@@ -398,6 +401,12 @@ class DisplaySpec(BaseModel):
     sweep: float = Field(default=FULL_SWEEP, gt=0.0, le=FULL_SWEEP)
     """`[deg]`: The turn a revolved section sweeps; less than a full one leaves a cutaway."""
 
+    warp: str | None = ElmerVariable.DISPLACEMENT.lower()
+    """The vector array the bodies are displaced by, None to draw them undeformed."""
+
+    warp_scale: float | None = Field(default=None, ge=0.0)
+    """`[-]`: The displacement exaggeration; None moves the largest displacement `WARP_SHARE` of the section diagonal."""
+
     hidden_bodies: tuple[str, ...] = ()
     """Body names to hide, by their ``entities.json`` name."""
 
@@ -445,7 +454,7 @@ class DisplaySpec(BaseModel):
 
     def fitted(self, fields: Sequence[FieldInfo]) -> DisplaySpec:
         """
-        This spec snapped to what a run actually offers: an unset field takes the first available one and a mode the field disallows falls back to its first allowed mode.
+        This spec snapped to what a run offers: an unset field takes the first one, a disallowed mode the field's first allowed one, and a warp without a vector field to follow is dropped.
 
         An unknown field name raises [`KeyError`][] naming the available arrays.
         """
@@ -455,12 +464,23 @@ class DisplaySpec(BaseModel):
         by_name: dict[str, FieldInfo] = {info.name: info for info in fields}
         chosen: FieldInfo = fields[0] if not self.field else by_name[select_array(by_name, self.field)]
 
+        def resolved_warp() -> str | None:
+            vectors: list[str] = [info.name for info in fields if info.kind is FieldKind.VECTOR]
+            if self.warp is None:
+                return None
+
+            try:
+                return select_array(vectors, self.warp)
+            except KeyError:
+                return None
+
         allowed: tuple[DisplayMode, ...] = chosen.modes
         mode: DisplayMode = self.mode if self.mode in allowed else allowed[0]
-        if chosen.name == self.field and mode is self.mode:
+        warp: str | None = resolved_warp()
+        if chosen.name == self.field and mode is self.mode and warp == self.warp:
             return self
 
-        return self.model_copy(update={"field": chosen.name, "mode": mode})
+        return self.model_copy(update={"field": chosen.name, "mode": mode, "warp": warp})
 
 
 def reduce_field(values: AnyArray, mode: DisplayMode) -> FloatArray:
@@ -714,6 +734,24 @@ def flatten(grid: pv.DataSet, blocks: pv.MultiBlock) -> None:  # pragma: no cove
         dataset.points = points
 
 
+def warped[Shown: pv.DataSet](dataset: Shown, vectors: str, factor: float) -> Shown:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+    """A copy of ``dataset`` displaced by ``factor`` times its ``vectors`` array, an elemental one first averaged onto the points.
+
+    Args:
+        dataset: The bodies to displace.
+        vectors: The name of the 3-component point or cell array they move along.
+        factor: The exaggeration the array is multiplied by.
+    """
+    if vectors in dataset.point_data:
+        return cast("Shown", dataset.warp_by_vector(vectors=vectors, factor=factor, inplace=False))
+
+    projected = cast("pv.DataSet", dataset.cell_data_to_point_data())
+    moved = cast("Shown", dataset.copy())
+    moved.points = np.asarray(dataset.points, dtype=np.float64) + factor * np.asarray(projected.point_data[vectors], dtype=np.float64)
+
+    return moved
+
+
 def scaled_basis(plane: SolvePlane) -> Basis:
     """Where the section sits in the authored model, with the plane's origin brought from millimetres to the mesh's metres."""
     basis: Basis = Basis.of(plane)
@@ -789,7 +827,7 @@ class FieldScene:
         self.section_blocks: pv.MultiBlock = blocks
         """The bodies as solved, whose values set every range."""
         self.grid: pv.UnstructuredGrid = grid
-        """The grid as shown: the section, its mirror, or the section again under a revolved display."""
+        """The grid as shown, which the field lines run through: the section, its mirror, or the section again under a revolved display, displaced under a warp."""
         self.blocks: pv.MultiBlock = blocks
         """The bodies as shown."""
         self.fields: list[FieldInfo] = list(fields)
@@ -798,6 +836,8 @@ class FieldScene:
         """Where the section sits in the authored model, None for a run solved whole."""
         self.expanded: tuple[Expansion, float] = (Expansion.SECTION, FULL_SWEEP)
         """The expansion and sweep the shown blocks were built for."""
+        self.warped: tuple[str, float] | None = None
+        """The vector array and the scale the shown blocks are displaced by, None while they are drawn as solved."""
         self.run_id: str = run_id
         self.bodies: Bodies = bodies if bodies is not None else Bodies([])
         self.spec: DisplaySpec = DisplaySpec().fitted(self.fields) if self.fields else DisplaySpec()
@@ -867,42 +907,85 @@ class FieldScene:
         """The dimension the run shows in under a spec."""
         return self.expansion_of(spec)[0].dim if self.basis is not None else self.model_dim
 
+    def auto_warp_scale(self, name: str) -> float:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+        """The scale that moves the largest ``name`` displacement `WARP_SHARE` of the section's bounds diagonal, 0.0 when nothing moves."""
+        finite: list[FloatArray] = [chunk[np.isfinite(chunk)] for chunk in self.region_magnitudes(name, None)]
+        largest: float = max((float(np.max(chunk)) for chunk in finite if chunk.size), default=0.0)
+        if largest == 0.0:
+            return 0.0
+
+        bounds: Sequence[float] = self.section_blocks.bounds
+        diagonal: float = math.dist(bounds[0::2], bounds[1::2])
+
+        return WARP_SHARE * diagonal / largest
+
+    def warp_of(self, spec: DisplaySpec) -> tuple[str, float] | None:
+        """The vector array and the scale a spec displaces the bodies by: its own scale, else the automatic one; None for no warp or a zero scale."""
+        name: str | None = spec.fitted(self.fields).warp if self.fields else None
+        if name is None:
+            return None
+
+        scale: float = spec.warp_scale if spec.warp_scale is not None else self.auto_warp_scale(name)
+
+        return (name, scale) if scale > 0.0 else None
+
+    def reshaped(self, spec: DisplaySpec) -> bool:
+        """Whether a spec asks for other shown blocks than the scene holds: another expansion, sweep or warp."""
+        return self.expansion_of(spec) != self.expanded or self.warp_of(spec) != self.warped
+
     def expand(self, spec: DisplaySpec) -> bool:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """Rebuilds the shown blocks and grid for the spec's expansion when it changed, dropping the field lines integrated for the old one; True when it did."""
+        """Rebuilds the shown blocks and grid for the spec's expansion and warp when either changed, dropping the field lines integrated for the old ones; True when it did."""
         import pyvista as pv
 
         wanted: tuple[Expansion, float] = self.expansion_of(spec)
-        if wanted == self.expanded:
+        warp: tuple[str, float] | None = self.warp_of(spec)
+        if wanted == self.expanded and warp == self.warped:
             return False
 
         expansion, sweep = wanted
         basis: Basis | None = self.basis
         still: frozenset[str] = frozenset(info.name for info in self.fields if info.kind is not FieldKind.VECTOR)
 
+        def deform[Shown: pv.DataSet](dataset: Shown) -> Shown:
+            """The dataset displaced by the warp, as is without one."""
+            if warp is None:
+                return dataset
+
+            return warped(dataset, *warp)
+
         def rebuilt(build: Callable[[pv.DataSet], pv.DataSet]) -> pv.MultiBlock:
-            """Every section block through ``build``, under its name."""
+            """Every section block through ``build`` and the warp, under its name."""
             shown: pv.MultiBlock = pv.MultiBlock()
             for name in (str(key) for key in self.section_blocks.keys()):
-                shown.append(build(cast("pv.DataSet", self.section_blocks[name])), name=name)
+                shown.append(deform(build(cast("pv.DataSet", self.section_blocks[name]))), name=name)
 
             return shown
 
         match expansion:
-            case Expansion.SECTION:
+            case Expansion.SECTION if warp is None:
                 self.blocks, self.grid = self.section_blocks, self.section_grid
+            case Expansion.SECTION:
+                self.blocks, self.grid = rebuilt(lambda block: block), deform(self.section_grid)
             case Expansion.MIRROR:
-                self.blocks, self.grid = rebuilt(lambda block: mirror(block, still=still)), mirror(self.section_grid, still=still)
+                self.blocks, self.grid = rebuilt(lambda block: mirror(block, still=still)), deform(mirror(self.section_grid, still=still))
             case Expansion.REVOLVE:
                 assert basis is not None, "a run without a basis is shown as is"
-                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep, still=still)), self.section_grid
+                self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep, still=still)), deform(self.section_grid)
 
         # Recorded only once the blocks stand, so a build that raised is tried again by the next draw; the body actor holds the old blocks, so it is added anew.
         self.expanded = wanted
+        self.warped = warp
         self._actor = None
         self._surfaces = None
         self._lines = None
         self.drawn_lines = None
-        log.bind(run_id=self.run_id, expansion=str(expansion), sweep=sweep).info("Section expanded.")
+        log.bind(
+            run_id=self.run_id,
+            expansion=str(expansion),
+            sweep=sweep,
+            warp=warp[0] if warp is not None else None,
+            scale=warp[1] if warp is not None else None,
+        ).info("Shown bodies rebuilt.")
 
         return True
 
@@ -989,8 +1072,8 @@ class FieldScene:
         self._redraw(plotter, spec)
 
     def update(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated integration test
-        """Recolor an already-rendered scene in place, the cheap path a panel calls on every knob change; a changed expansion draws the scene anew."""
-        if self._actor is None or self.expansion_of(spec.fitted(self.fields)) != self.expanded:
+        """Recolor an already-rendered scene in place, the cheap path a panel calls on every knob change; a changed expansion or warp draws the scene anew."""
+        if self._actor is None or self.reshaped(spec.fitted(self.fields)):
             self.spec = spec
             self.render(plotter)
             return
@@ -1197,10 +1280,10 @@ class FieldScene:
         return self._lines[0]
 
     def integrate_streamlines(self, options: FieldLineOptions) -> StreamlineActors:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """Seed and integrate the field lines through the shown grid, or through the section and swept into a revolved display — the compute half, safe off the UI thread."""
+        """Seed and integrate the field lines through the shown grid, swept into a revolved display from its section — the compute half, safe off the UI thread."""
         basis: Basis | None = self.basis
         if self.expanded[0] is Expansion.REVOLVE and basis is not None:
-            source, b_name = prepare_streamline_source(self.section_grid, options)
+            source, b_name = prepare_streamline_source(self.grid, options)
             bounds: Bounds = self.region_bounds(options)
             actors: StreamlineActors = build_swept_streamlines(source, b_name, options, basis, bounds, seeds=self.swept_seeds(options, bounds))
         else:

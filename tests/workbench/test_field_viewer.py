@@ -214,9 +214,10 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
 
     assert selects == [str(var) for var in (FieldVar.FIELD, FieldVar.MODE, FieldVar.SEED_PLACEMENT, FieldVar.LINES_BODY)]
     assert comboboxes == [str(FieldVar.COLORMAP), str(FieldVar.BODY_COLORMAP_SHOWN)]
-    assert switches == [str(var) for var in (FieldVar.INVERT, FieldVar.LOG_SCALE, FieldVar.OUTLINE, FieldVar.AUTO_CLIM, FieldVar.OPACITY_MAPPING, FieldVar.STREAMLINES)]
+    assert switches == [str(var) for var in (FieldVar.WARP, FieldVar.INVERT, FieldVar.LOG_SCALE, FieldVar.OUTLINE, FieldVar.AUTO_CLIM, FieldVar.OPACITY_MAPPING, FieldVar.STREAMLINES)]
     assert [_bound(node, "value") for node in sliders] == [
         str(FieldVar.SWEEP),
+        str(FieldVar.WARP_SCALE),
         str(FieldVar.CLIM),
         str(FieldVar.OPACITY_RANGE),
         str(FieldVar.LINE_COUNT),
@@ -225,14 +226,15 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
         f"item.{RowKey.OPACITY}",
     ]
     assert all(prop(node, "onValueCommit") is not None for node in sliders)
-    assert _bound(sliders[1], "min") == str(FieldVar.CLIM_MIN) and prop(sliders[1], "disabled") is None, "a moved thumb pins the range instead"
-    assert str(FieldVar.FIELD_GRADIENT) in str(prop(sliders[1], "style")), "the range track wears the colormap"
+    assert _bound(sliders[1], "max") == str(FieldVar.WARP_SCALE_MAX) and _bound(sliders[1], "step") == f"{FieldVar.WARP_SCALE_MAX} / 100"
+    assert _bound(sliders[2], "min") == str(FieldVar.CLIM_MIN) and prop(sliders[2], "disabled") is None, "a moved thumb pins the range instead"
+    assert str(FieldVar.FIELD_GRADIENT) in str(prop(sliders[2], "style")), "the range track wears the colormap"
     assert [_bound(node, "value") for node in find(template, "ff-toggle-group")] == [str(FieldVar.EXPANSION), str(FieldVar.LEGEND)]
     assert [texts(node) for node in find(template, "ff-toggle-group-item")] == [["Section"], ["Mirrored"], ["Revolved"], ["Hidden"], ["Vertical"], ["Horizontal"]]
     assert [prop(node, "aria-label") for node in find(template, "ff-toggle-group")] == ["Show as", "Legend"]
     assert len(rows) == 1 and find(template, "ff-tree") == []
-    assert [texts(node)[0] for node in find(template, "ff-accordion-trigger")] == ["Symmetry", "Field", "Field Lines", "Bodies"]
-    assert [prop(node, "id") for node in find(template, "ff-accordion-item")] == ["tour-symmetry", "tour-field", "tour-lines", "tour-bodies"]
+    assert [texts(node)[0] for node in find(template, "ff-accordion-trigger")] == ["Symmetry", "Deformation", "Field", "Field Lines", "Bodies"]
+    assert [prop(node, "id") for node in find(template, "ff-accordion-item")] == ["tour-symmetry", "tour-deformation", "tour-field", "tour-lines", "tour-bodies"]
     assert [prop(node, "htmlFor") for node in find(template, "ff-field-label") if prop(node, "htmlFor")] == [prop(node, "id") for node in find(template, "ff-switch")]
     assert _bound(find(template, "ff-progress")[0], "value") == 100.0
 
@@ -354,6 +356,69 @@ def test_an_elasticity_run_opens_on_the_displacement_and_offers_von_mises_and_st
         assert controller.streamline_options(3).vectors == "displacement"
         assert controller.scene is not None and controller.scene.spec.field == "vonmises"
         assert str(StreamlineActor.LINES) in viewer.plotter.renderer.actors
+
+    asyncio.run(run())
+
+
+def test_an_elasticity_run_opens_deformed_and_rescales_on_the_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("deformed", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_bundle(tmp_path / "beam", _elastic_grid()))
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None
+        auto = scene.auto_warp_scale("displacement")
+        deformed = viewer.plotter.bounds
+        camera = list(viewer.plotter.camera.position)
+
+        assert app.state[FieldVar.HAS_DISPLACEMENT] is True and app.state[FieldVar.WARP] is True
+        assert app.state[FieldVar.WARP_SCALE] == [auto] and app.state[FieldVar.WARP_SCALE_MAX] == pytest.approx(5.0 * auto)
+        assert scene.warped == ("displacement", auto) and auto > 0.0
+        assert deformed[4] < 0.0 and deformed[1] > 2.0, "the bodies open bent by the solved displacement"
+
+        app.state[FieldVar.WARP_SCALE] = [0.0]
+        controller.on_commit()
+        await controller.settle()
+
+        assert scene.warped is None and scene.spec.warp_scale == 0.0
+        assert viewer.plotter.bounds[0:2] == pytest.approx((0.0, 2.0)) and viewer.plotter.bounds[4] == pytest.approx(0.0), "a zero scale draws the bodies as solved"
+        assert list(viewer.plotter.camera.position) == pytest.approx(camera), "a new scale keeps the view"
+
+        app.state[FieldVar.WARP_SCALE] = [2.0 * auto]
+        controller.on_commit()
+        await controller.settle()
+
+        assert scene.warped == ("displacement", 2.0 * auto)
+
+        app.state[FieldVar.WARP] = False
+        controller.on_display()
+        await controller.settle()
+
+        assert scene.warped is None and scene.spec.warp is None
+
+    asyncio.run(run())
+
+
+def test_a_run_without_displacement_has_nothing_to_deform(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("undeformed", tmp_path, monkeypatch)
+        controller = _controller(app)
+        template = _template(app, FieldPanel.CONTROLS)
+
+        await controller.load(_bundle(tmp_path / "hex", _hex_grid()))
+        await controller.settle()
+
+        assert app.state[FieldVar.HAS_DISPLACEMENT] is False and app.state[FieldVar.WARP] is True, "the switch keeps its place for the next run"
+        assert app.state[FieldVar.WARP_SCALE_MAX] == 1.0
+        assert controller.scene is not None and controller.scene.warped is None and controller.scene.spec.warp is None
+        assert any(texts(node) == ["No Displacement"] for node in find(template, "span"))
+
+        controller.clear("gone")
+
+        assert app.state[FieldVar.HAS_DISPLACEMENT] is False
 
     asyncio.run(run())
 
@@ -625,7 +690,7 @@ def test_every_section_starts_open_and_the_seed_readout_counts_the_seeds(tmp_pat
     accordion = find(template, "ff-accordion")[0]
     readouts = [node for node in find(template, "span") if any(_bound_child(child) == seed_count() for child in cast("list[object]", node.get("children", [])))]
 
-    assert prop(accordion, "defaultValue") == OPEN_SECTIONS == ["symmetry", "field", "lines", "bodies"]
+    assert prop(accordion, "defaultValue") == OPEN_SECTIONS == ["symmetry", "deformation", "field", "lines", "bodies"]
     assert len(readouts) == 1
     assert seed_count().startswith("Math.pow(") and seed_count().endswith(".toLocaleString()"), "the readout is the seed total alone"
     assert str(SeedPlacement.CENTER_PLANE) in seed_count()
@@ -1259,6 +1324,7 @@ def test_the_tour_opens_once_after_the_first_run_shows(tmp_path: Path, monkeypat
     assert seen == {"seen": True}
     assert again is False, "a tour finished or skipped once never opens on its own again"
     assert targets[:2] == ["#field3d-view", "#tour-run"] and targets[-1] == "#tour-help"
+    assert targets.index("#tour-deformation") == targets.index("#tour-symmetry") + 1
 
 
 def test_a_moved_range_thumb_pins_the_range(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

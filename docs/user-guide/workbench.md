@@ -92,16 +92,19 @@ The field viewer puts its controls beside one view, which draws every run, flat 
 
 The first time a run opens, a short tour points out the run picker, each section of the controls and the view's toolbar. Skip or Esc ends it, and it stays closed on later starts. The help button at the right of the app bar replays it.
 
-The controls come in four sections:
+The controls come in five sections:
 
 | Section | Controls |
 |---|---|
 | Symmetry | Solved As, Show As, Sweep |
+| Deformation | Deformed Shape, Scale |
 | Field | Quantity, Mode, Colormap, Invert Colormap, Log Scale, Outline, Auto Range with the color range slider, Legend, Opacity Mapping |
 | Field Lines | Show Field Lines, Seeds, Integrate Within, the seed count, Length |
 | Bodies | An All Bodies row with the body colormap and the overall opacity, then one row per body and per material that owns several bodies, each with a visibility checkbox, a color and an opacity |
 
 **Symmetry expands a run solved on a section.** Solved As names the solve frame. For an axisymmetric run, Show As shows the r–z half-plane as solved, mirrors it into the full plane, or revolves it around the axis into a solid in the frame the model was authored in. Revolve is the default, at a full Sweep of 360°; a smaller sweep cuts the solid open so the cut faces show the field inside the bodies. Only the surfaces are revolved, so a section costs about as much to draw revolved as flat. The field lines of a revolved run are seeded as in a solid run, on the center plane, the gap line or through the volume of the swept solid, integrated in the section and swept back to their seeds. A run solved in 3D or on a planar Cartesian 2D section has nothing to expand. [DisplaySpec][femforge.viz.DisplaySpec] holds the choice as `expansion` and `sweep`.
+
+**Deformation draws the bodies displaced by the solved displacement.** For a run with a displacement, such as a linear elasticity run, Deformed Shape starts on and moves every point by the displacement times the scale. The scale starts where the largest displacement moves a tenth of the diagonal of the solved bodies' bounding box, and its slider reaches five times that. A new scale is drawn when the thumb is released and keeps the view. A scale of zero, or the switch off, draws the bodies as solved. The colors and the color range keep the solved values, and the field lines run through the displaced bodies. A section is displaced after it is mirrored or revolved, and an elemental displacement is first averaged onto each body's points. A run without a displacement reads No Displacement. [DisplaySpec][femforge.viz.DisplaySpec] holds the choice as `warp`, the vector array or None, and `warp_scale`, None for the automatic scale.
 
 **The legend starts hidden.** The range slider wears the colormap between its thumbs, so the controls read as the legend. Set Legend to Vertical or Horizontal to draw a color bar in the view, titled with the field's unit, before a screenshot. Field lines share that bar while they map like the field, and get a bar of their own only when their colormap or range differs. Moving a thumb of the range slider pins the range and turns Auto Range off.
 
