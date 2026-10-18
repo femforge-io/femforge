@@ -32,12 +32,12 @@ Each stage asks the frame one question rather than naming a frame. The frame's p
 | Stage | What the frame decides | Hook |
 |---|---|---|
 | Geometry | Whether the solve meshes the authored STEP or a converted one, and the conversion. | [prepare_geometry][femforge.frames.Frame.prepare_geometry], [rewrites_geometry][femforge.frames.Frame.rewrites_geometry] |
-| Mesh | The body dimension the mesher meshes. | [model_dim][femforge.frames.Frame.model_dim] |
-| Physics | The form each selected physics solves as, and the Elmer coordinate system of the stack. | [solves][femforge.frames.Frame.solves], [coordinate_system][femforge.frames.Frame.coordinate_system] |
+| Mesh | The body dimension the mesher meshes, and whether the section has a symmetry axis to name. | [model_dim][femforge.frames.Frame.model_dim], [revolves][femforge.frames.Frame.revolves] |
+| Physics | The form each selected physics solves as, the Elmer coordinate system of the stack, and the plane state of a 2D elasticity solve. | [solves][femforge.frames.Frame.solves], [coordinate_system][femforge.frames.Frame.coordinate_system], [plane_stress][femforge.frames.Frame.plane_stress] |
 | Conditions | Which conditions the frame can drive: a vector condition must have a form in solve coordinates, and torque needs a frame that lumps one. | [solve_vector][femforge.frames.Frame.solve_vector], [supports][femforge.frames.Frame.supports], [lumps_torque][femforge.frames.Frame.lumps_torque] |
-| Results | The whole model's total of what Elmer integrated over the solve domain, and a force's component along an authored axis. | [total][femforge.frames.Frame.total], [along][femforge.frames.Frame.along] |
-| Viewer | Where a sectioned solve's plane sits in the authored model, so the workbench can expand the section back into the authored frame. | [plane][femforge.frames.Frame.plane] |
+| Results | The whole model's total of what Elmer integrated over the solve domain, the solve domain's share of a whole-model total, and a force's component along an authored axis. | [total][femforge.frames.Frame.total], [solve_share][femforge.frames.Frame.solve_share], [along][femforge.frames.Frame.along] |
+| Viewer | Where a sectioned solve's plane sits in the authored model, and whether the section revolves, so the workbench can expand the section back into the authored frame. | [plane][femforge.frames.Frame.plane], [revolves][femforge.frames.Frame.revolves] |
 
-The config checks the frame against the physics and the conditions when you build it and when you assign a field, and [SimulationConfig.solved_physics][femforge.config.SimulationConfig.solved_physics] gives the physics a selection solves as under the frame. Set the frame before you customize the physics: a stack customized under one frame raises under a frame whose coordinate system integrates differently.
+The config checks the frame against the physics and the conditions when you build it and when you assign a field, and [SimulationConfig.solved_physics][femforge.config.SimulationConfig.solved_physics] gives the physics a selection solves as under the frame. Set the frame before you customize the physics: a stack customized under one frame raises under a frame with another coordinate system.
 
 With an artifact store, the converted STEP of a frame that rewrites the geometry is cached as a STEP artifact keyed by the geometry source and the frame (see [Artifacts and retention](../artifacts.md)).

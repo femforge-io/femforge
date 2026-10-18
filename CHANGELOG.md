@@ -4,6 +4,19 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 
 ## [Unreleased]
 
+### Added
+
+- Each condition names the sif section it lands in, `Condition.section`, from the new `SifSection` enum, and `shipped_conditions()` lists the condition classes `ConditionUnion` admits.
+- `Condition.on_boundary(site)` emits a boundary condition for one boundary group, described by a `BoundarySite`; a boundary group carries its own `tags`, `measure` and `named` flag, and the tags' boundary conditions land after the bordering bodies' ones.
+- Frame hooks `Frame.solve_share`, the inverse of `Frame.total`, `Frame.revolves` and `Frame.plane_stress`, and solver hooks `SolverBase.fit_frame` and `SolverBase.check_frame`.
+
+### Changed
+
+- `ForceComponent` is now `CalculateMagneticForce`, with the kind `calculate_magnetic_force`, after the Elmer keyword it sets. Rename it in your scripts and saved configs.
+- A customized solver stack must use the frame's coordinate system exactly, not only one that integrates the same way.
+- A boundary group bordered twice by one tag gets that tag's conditions once.
+- Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
+
 ## [0.1.0] - 2026-10-17
 
 The first public release.

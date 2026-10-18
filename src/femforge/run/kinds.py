@@ -21,10 +21,10 @@ from femforge.meshing.spec import MeshSpec, TagSelectorSpec
 from femforge.physical.units import CANONICAL_UNITS, Quantity, quantity
 
 
-RUN_PRODUCER_VERSION = 1
+RUN_PRODUCER_VERSION = 2
 """Bump when the pipeline (emitter, mesher, parser) changes what a solve of the same config yields; invalidates bundle reuse."""
 
-MESH_PRODUCER_VERSION = 1
+MESH_PRODUCER_VERSION = 2
 """Bump when meshing or ElmerGrid conversion changes what the same mesh spec yields."""
 
 STEP_PRODUCER_VERSION = 2

@@ -30,6 +30,7 @@ def solved_stack(physics: Physics, frame: Frame) -> PhysicsConfig:
     """The preset stack ``physics`` solves as under ``frame``, in the frame's coordinate system."""
     config: PhysicsConfig = physics_config(frame.solves(physics))
     config.simulation.coordinate_system = frame.coordinate_system
+    config.solvers = [solver.fit_frame(frame) for solver in config.solvers]
 
     return config
 

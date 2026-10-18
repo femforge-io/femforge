@@ -159,3 +159,52 @@ def test_magnetostatics_2d_stack_is_axisymmetric() -> None:
     assert solver.to_elmer()["Nonlinear System Max Iterations"] == 50
     assert solver.to_elmer()["Linear System Direct Method"] == "umfpack"
     assert solver.to_elmer()["Variable"] == "Potential"
+
+
+def test_the_base_solver_fits_and_passes_any_frame_unchanged() -> None:
+    from femforge.frames import Axisymmetric, Solid
+
+    solver = HeatSolver()
+
+    assert solver.fit_frame(Solid()) is solver and solver.fit_frame(Axisymmetric()) is solver
+    solver.check_frame(Axisymmetric())
+
+
+def test_solved_stack_fits_every_solver_to_the_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    from femforge.elmer.config import SolverBase, solved_stack
+    from femforge.frames import Axisymmetric, Frame
+
+    fitted: list[tuple[str, Frame]] = []
+
+    def recording(self: SolverBase, frame: Frame) -> SolverBase:
+        fitted.append((self.kind, frame))
+
+        return self.model_copy()
+
+    monkeypatch.setattr(SolverBase, "fit_frame", recording)
+    stack = solved_stack(Physics.THERMAL, Axisymmetric())
+
+    assert fitted == [(solver.kind, Axisymmetric()) for solver in stack.solvers]
+
+
+def test_a_stack_in_another_coordinate_system_of_the_same_measure_still_raises() -> None:
+    from femforge.elmer.config import CoordinateSystem
+    from femforge.frames import Axisymmetric
+
+    config = physics_config(Physics.THERMAL)
+    config.simulation.coordinate_system = CoordinateSystem.CYLINDRIC_SYMMETRIC
+
+    with pytest.raises(ValueError, match="Coordinate System 'Cylindric Symmetric'"):
+        config.check_frame(Axisymmetric())
+
+
+def test_the_stack_check_asks_every_solver(monkeypatch: pytest.MonkeyPatch) -> None:
+    from femforge.frames import Frame, Solid
+
+    def refusing(self: HeatSolver, frame: Frame) -> None:
+        raise ValueError(f"{self.kind} cannot solve {frame.label}")
+
+    monkeypatch.setattr(HeatSolver, "check_frame", refusing)
+
+    with pytest.raises(ValueError, match="cannot solve solid"):
+        physics_config(Physics.THERMAL).check_frame(Solid())

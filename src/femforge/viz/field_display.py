@@ -693,7 +693,7 @@ class FieldScene:
         """The bodies as shown."""
         self.fields: list[FieldInfo] = list(fields)
         plane: SolvePlane | None = self.frame.plane
-        self.basis: Basis | None = scaled_basis(plane) if plane is not None else None
+        self.basis: Basis | None = scaled_basis(plane) if plane is not None and self.frame.revolves else None
         """Where the section sits in the authored model, None for a run solved whole."""
         self.expanded: tuple[Expansion, float] = (Expansion.SECTION, FULL_SWEEP)
         """The expansion and sweep the shown blocks were built for."""

@@ -1,4 +1,6 @@
 from .conditions import (
+    BoundarySite as BoundarySite,
+    CalculateMagneticForce as CalculateMagneticForce,
     CoilDrive as CoilDrive,
     CoilTerminal as CoilTerminal,
     Condition as Condition,
@@ -8,11 +10,11 @@ from .conditions import (
     CurrentDensity as CurrentDensity,
     FixedPotential as FixedPotential,
     FixedTemperature as FixedTemperature,
-    ForceComponent as ForceComponent,
     HeatFlux as HeatFlux,
     HeatSource as HeatSource,
     JouleHeat as JouleHeat,
     Magnetization as Magnetization,
+    shipped_conditions as shipped_conditions,
 )
 from .domain import DomainConfig as DomainConfig, EntityTag as EntityTag, conditions_for as conditions_for
 from .expressions import (

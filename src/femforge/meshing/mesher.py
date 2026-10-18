@@ -310,8 +310,8 @@ class Mesher:
 
         body_groups = ((group.name, group.entity_tags) for group in self.physical_groups)
         adjacency: dict[int, set[str]] = read_face_adjacency(body_groups, body_dim=self.body_dim)
-        # The symmetry axis exists only in the 2D axisymmetric frame (X = radial >= 0); 3D output must stay byte-identical.
-        axis_faces: frozenset[int] = axis_entity_tags(adjacency.keys(), dim=boundary_dim) if self.body_dim == 2 else frozenset()
+        # The symmetry axis exists only in a revolving frame (X = radial >= 0); 3D output must stay byte-identical.
+        axis_faces: frozenset[int] = axis_entity_tags(adjacency.keys(), dim=boundary_dim) if self.config.frame.revolves else frozenset()
 
         boundary_groups: list[BoundaryGroup] = []
         # lines = ["", f"{len(adjacency)} boundary faces → {len(adjacency)} physical groups:"]

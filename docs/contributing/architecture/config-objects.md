@@ -27,7 +27,7 @@ A backend reads a Protocol slice or plain data, never `SimulationConfig`, so the
 | `Mesher` | [SupportsMeshing][femforge.meshing.SupportsMeshing]: `frame`, `mesh`, `domain` | `src/femforge/meshing/config.py:38-50`, `src/femforge/meshing/mesher.py:77-79` |
 | `MeshEntity` | the bare `DomainConfig` | `src/femforge/meshing/mesh_entity.py:16-27` |
 | [MeshBackend][femforge.meshing.MeshBackend] | a [MeshJob][femforge.meshing.MeshJob]: the mesh spec, the frame and the STEP path | `src/femforge/meshing/backend.py:66-107` |
-| `Sim` | the mesh groups, a physics, a solver stack and a frame | `src/femforge/elmer/sim.py:65-72` |
+| `Sim` | the mesh groups, a physics, a solver stack and a frame | `src/femforge/elmer/sim.py:79-86` |
 | [ExecutionBackend][femforge.elmer.ExecutionBackend] | directories | `src/femforge/elmer/runtime/backend.py:14-35` |
 
 `SupportsMeshing` is structural, so `SimulationConfig` satisfies it without inheriting anything, and the mesh backend never imports the composition root. The mesh worker goes one step further: [mesh_inputs][femforge.meshing.mesh_inputs] rebuilds a `SupportsMeshing` from the job alone, with bare materials named by their tags and tag selectors without conditions (`src/femforge/meshing/backend.py:121-138`). The mesher therefore cannot read a condition or a material property, which is what lets a cached mesh serve every config that groups the bodies the same way.
@@ -72,7 +72,7 @@ The interface has three rules:
 
 ## The frame area
 
-The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-150`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`) and [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
+The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-163`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`) and [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
 
 `FrameUnion`, the discriminated union on `kind`, types every serialized frame field: `SimulationConfig.frame`, `Result.frame`, `StepSpec.frame` and `MeshJob.frame` (`src/femforge/frames/__init__.py:12`). Every function and attribute that only calls the hooks takes the base `Frame`.
 
@@ -80,18 +80,23 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 |---|---|---|
 | `label` | a short name for messages and the UI | condition errors, the workbench |
 | `model_dim` | the body dimension the mesher meshes | `Mesher.body_dim` (`src/femforge/meshing/mesher.py:93-95`), `mesh_spec`, the run index |
-| `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-34`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-81`) |
+| `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-35`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-82`) |
 | `plane` | the solve plane in the authored model, None for a whole-model solve | `axisymmetric_cross_section`, the workbench's symmetry expansion |
 | `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:70-91`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:69-72`) |
 | `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:75-85`) |
 | `solves` | the form a physics solves as, raising when it has none | `SimulationConfig.solved_physics`, `PhysicsSelection.check_frame`, `solved_stack`, `Sim` |
 | `supports` | whether `solves` has a form; concrete on the base | `CurrentDensity.check_frame` |
-| `lumps_torque` | whether Elmer's force lumping yields a torque | `ForceComponent.check_frame` |
-| `solve_vector` | an authored vector in solve coordinates | `Magnetization.to_elmer` and `check_frame` (`src/femforge/physical/conditions.py:131-151`) |
+| `lumps_torque` | whether Elmer's force lumping yields a torque | `CalculateMagneticForce.check_frame` |
+| `solve_vector` | an authored vector in solve coordinates | `Magnetization.to_elmer` and `check_frame` (`src/femforge/physical/conditions.py:164-184`) |
 | `total` | the whole-model total of a vector Elmer integrated over the solve domain | `parse_result` (`src/femforge/run/parse.py:213-216`) |
+| `solve_share` | the share of a whole-model total the solve domain carries, the inverse of `total` | `Condition.on_boundary` overrides that take a whole-model load |
+| `revolves` | whether the section stands for a model revolved about an axis; defaults to False | the mesher's `<BODY>__AXIS` groups, the field viewer's symmetry basis |
+| `plane_stress` | whether a 2D elasticity solve is plane stress or plane strain; defaults to None, no plane state | a solver's `fit_frame` |
 | `along` | a solve-frame vector's component along an authored axis | `Result.axial_force` (`src/femforge/run/result.py:105-109`) |
 
-The config checks the frame on construction and on assignment through `SimulationConfig`'s three validators, each condition's `check_frame` and `PhysicsSelection.check_frame`, and `Sim` repeats the condition check for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:96-102`). `PhysicsSelection.selected` rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum, because it is the form `MAGNETOSTATICS` solves as under `Axisymmetric` (`src/femforge/elmer/config/common/selection.py:18-38`).
+The config checks the frame on construction and on assignment through `SimulationConfig`'s three validators, each condition's `check_frame` and `PhysicsSelection.check_frame`, and `Sim` repeats the condition check, over the tags of the body groups and the boundary groups, for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:110-118`). `PhysicsSelection.selected` rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum, because it is the form `MAGNETOSTATICS` solves as under `Axisymmetric` (`src/femforge/elmer/config/common/selection.py:18-38`).
+
+Solvers fit the frame too: `solved_stack` replaces every solver with its `fit_frame(frame)`, and `PhysicsConfig.check_frame` requires the frame's coordinate system exactly and calls every solver's `check_frame`. Both solver hooks are no-ops on `SolverBase`.
 
 A frame imports `femforge.elmer.physics` and nothing else from the solver side: `coordinate_system` imports `CoordinateSystem` in its body, and `Axisymmetric.prepare_geometry` imports the geometry stack in its body, so `femforge.elmer.config` and `femforge.physical` can import the frame without a cycle.
 
@@ -111,7 +116,7 @@ A condition reaches the solver input through tags, never through a body id. The 
 3. **The group carries the tag objects.** A `PhysicalGroup` keeps the `EntityTag` instances it matched, conditions included (`src/femforge/meshing/groups.py:48-49`). A cached mesh rebinds its groups to the current domain by selector, so today's conditions ride along on yesterday's mesh (`src/femforge/run/artifacts.py:48-56`).
 4. **The sif writer collects them per physics.** [conditions_for][femforge.physical.conditions_for] returns the conditions on a group's tags that belong to the active physics and attach to the requested target (`src/femforge/physical/domain.py:18-32`). `condition_physics` widens the active set for a coupled preset, so one set of tags drives the standalone and the coupled solves (`src/femforge/elmer/physics.py:52-66`).
 
-Each condition is self-describing. It pins its `physics` and its body or boundary `target`, carries a `kind` discriminator for the `ConditionUnion` (`src/femforge/physical/conditions.py:422-425`), and emits its own sif keywords. The base `to_elmer` reflects each field's `ElmerKeyword` metadata, which pairs the sif keyword with the SI unit the quantity is stripped to (`src/femforge/physical/conditions.py:64-103`). A condition with `external_only` set lands only on a body's external shell, never on an interface (`src/femforge/physical/conditions.py:85-87`). [Solver objects](solver-objects.md#bodies-boundaries-and-components) covers where each kind of condition lands in the sif.
+Each condition is self-describing. It pins its `physics` and its body or boundary `target`, carries a `kind` discriminator for the `ConditionUnion` (`src/femforge/physical/conditions.py:462-465`), and emits its own sif keywords. The base `to_elmer` reflects each field's `ElmerKeyword` metadata, which pairs the sif keyword with the SI unit the quantity is stripped to (`src/femforge/physical/conditions.py:67-124`). A condition with `external_only` set lands only on a body's external shell, never on an interface (`src/femforge/physical/conditions.py:102-104`). [Solver objects](solver-objects.md#bodies-boundaries-and-components) covers where each kind of condition lands in the sif.
 
 ## The run identity
 
@@ -183,7 +188,7 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 | Rule | Where |
 |---|---|
 | `Mesher` and `MeshEntity` stay submodule imports, because both import gmsh at module level; `femforge.meshing` re-exports neither | `src/femforge/meshing/mesher.py:8`, `src/femforge/meshing/mesh_entity.py:3`, `src/femforge/meshing/__init__.py:5-13` |
-| Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:137`, `src/femforge/meshing/gmsh_options.py:58` |
+| Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:165`, `src/femforge/meshing/gmsh_options.py:58` |
 | The geometry interface names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
 | `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
 | Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:365-374`, `src/femforge/common/log.py:206-211` |

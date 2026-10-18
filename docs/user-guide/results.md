@@ -43,7 +43,7 @@ The status comes from `elmersolver.log`: `error` when a line contains `ERROR` or
 
 ## Forces
 
-Add a [ForceComponent][femforge.physical.ForceComponent] to the tag of the bodies whose force you want. Elmer lumps the magnetic force over those bodies into one Component, named by the condition's `label` or else by the tag's name. `Result.component_forces` holds one vector per Component name.
+Add a [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] to the tag of the bodies whose force you want. Elmer lumps the magnetic force over those bodies into one Component, named by the condition's `label` or else by the tag's name. `Result.component_forces` holds one vector per Component name.
 
 [Result.axial_force][femforge.run.Result.axial_force] returns a Component's force along an axis in the authored frame, as a pint quantity in newtons; `axis=None` uses the frame's own axis. The typed force and torque fields are the frame's totals over the whole model. Each frame's page says how it answers both; see [Frames](frames/index.md). `Run.components` lists each Component with its sif block number, force and torque.
 

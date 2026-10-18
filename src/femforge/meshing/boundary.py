@@ -5,8 +5,13 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from femforge.meshing.geometry_utils import extract_entity_geometry
+
+
+if TYPE_CHECKING:
+    from femforge.physical.domain import EntityTag
 
 
 # A double underscore never collides with the single underscores inside a body group's own MATERIAL_TAG name.
@@ -31,7 +36,18 @@ class BoundaryGroup:
     Names encode the bordering bodies: ``<BODYA>__<BODYB>`` (interface), ``<BODY>__EXT`` (external shell), or ``<BODY>__AXIS`` (symmetry axis).
     """
 
-    def __init__(self, gmsh_id: int, name: str, bodies: tuple[str, ...], face_tags: list[int], dim: int = 2, on_axis: bool = False):
+    def __init__(
+        self,
+        gmsh_id: int,
+        name: str,
+        bodies: tuple[str, ...],
+        face_tags: list[int],
+        dim: int = 2,
+        on_axis: bool = False,
+        tags: list[EntityTag] | None = None,
+        measure: float | None = None,
+        named: bool = False,
+    ):
         """Record one boundary group.
 
         Args:
@@ -41,6 +57,9 @@ class BoundaryGroup:
             face_tags: The gmsh entity tags in the group.
             dim: Topological dimension of the group.
             on_axis: Whether every entity lies on the symmetry axis of a 2D axisymmetric model.
+            tags: The region overrides the group's own entities match; None for an adjacency group.
+            measure: The group's measured size; None for an adjacency group.
+            named: Whether the group is a tagged face's own group.
         """
         self.dim = dim
         """Topological dimension of the group -- one below the bodies it separates (2 = surface in a 3D model, 1 = curve in a 2D one), mirroring ``PhysicalGroup.dim``."""
@@ -59,6 +78,15 @@ class BoundaryGroup:
 
         self.on_axis = on_axis
         """True when every entity of this single-body group lies on the x=0 symmetry axis of a 2D axisymmetric model."""
+
+        self.tags: list[EntityTag] = tags or []
+        """The region overrides the group's own entities match, whose boundary conditions land here after the bordering bodies' ones."""
+
+        self.measure = measure
+        """`A` `[m²]`: Measured size of a named boundary group, area in 3D and length times one metre of depth in 2D; None for adjacency groups."""
+
+        self.named = named
+        """True for a tagged face's own group."""
 
     @property
     def is_external(self) -> bool:

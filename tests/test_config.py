@@ -16,7 +16,7 @@ from femforge.elmer.physics import Physics
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.config import MeshConfig
 from femforge.meshing.gmsh_options import GmshOptions, MeshAlgorithm3D
-from femforge.physical.conditions import ConditionUnion, CurrentDensity, ForceComponent, Magnetization
+from femforge.physical.conditions import ConditionUnion, CurrentDensity, CalculateMagneticForce, Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import U
 
@@ -148,7 +148,7 @@ def test_frames_reject_what_they_cannot_solve() -> None:
     with pytest.raises(ValidationError, match="CurrentDensity"):
         SimulationConfig(domain=coil)
 
-    torque = DomainConfig(tags=[EntityTag(selector={"Region": "mover"}, conditions=[ForceComponent(calculate_magnetic_torque=True)])])
+    torque = DomainConfig(tags=[EntityTag(selector={"Region": "mover"}, conditions=[CalculateMagneticForce(calculate_magnetic_torque=True)])])
     with pytest.raises(ValidationError, match="torque"):
         SimulationConfig(frame=Axisymmetric(), domain=torque)
 

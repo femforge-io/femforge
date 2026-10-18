@@ -1,7 +1,7 @@
 """Composable conditions: each condition's ``to_elmer()``, the discriminated-union serialization round-trip, and ``Magnetization`` normalization."""
 
 import math
-from typing import cast
+from typing import Annotated, Literal, cast
 
 import pytest
 from pydantic import TypeAdapter
@@ -9,21 +9,27 @@ from pydantic import TypeAdapter
 from femforge.frames import Axis, Axisymmetric, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.physics import Physics
+from femforge.elmer.sections import SifSection
 from femforge.physical.conditions import (
+    BoundarySite,
+    CalculateMagneticForce,
+    CoilDrive,
     CoilTerminal,
     Condition,
     ConditionTarget,
     ConditionUnion,
     Convection,
     CurrentDensity,
+    ElmerKeyword,
     FixedPotential,
     FixedTemperature,
-    ForceComponent,
     HeatFlux,
     HeatSource,
+    JouleHeat,
     Magnetization,
+    shipped_conditions,
 )
-from femforge.physical.units import U
+from femforge.physical.units import Temperature, U
 
 MU0 = 1.25663706212e-6
 
@@ -36,6 +42,56 @@ def test_conditions_carry_physics_and_target_enums() -> None:
     assert Magnetization(direction=Direction(0, 1, 0)).target is ConditionTarget.BODY
     assert FixedTemperature(value=350 * U.K).physics is Physics.THERMAL
     assert FixedTemperature(value=350 * U.K).target is ConditionTarget.BOUNDARY
+
+
+def test_the_shipped_conditions_are_the_union_members_in_order() -> None:
+    assert shipped_conditions() == (
+        Magnetization,
+        CurrentDensity,
+        FixedTemperature,
+        HeatFlux,
+        Convection,
+        HeatSource,
+        FixedPotential,
+        JouleHeat,
+        CoilDrive,
+        CoilTerminal,
+        CalculateMagneticForce,
+    )
+
+
+@pytest.mark.parametrize("kind", shipped_conditions())
+def test_a_condition_lands_in_a_boundary_section_exactly_when_it_targets_a_boundary(kind: type[Condition]) -> None:
+    target: ConditionTarget = kind.model_construct().target
+
+    assert (kind.section is SifSection.BOUNDARY_CONDITION) is (target is ConditionTarget.BOUNDARY)
+
+
+def test_the_sections_route_material_component_and_body_force_conditions() -> None:
+    assert Magnetization.section is SifSection.MATERIAL
+    assert CoilDrive.section is CalculateMagneticForce.section is SifSection.COMPONENT
+    assert CurrentDensity.section is HeatSource.section is JouleHeat.section is SifSection.BODY_FORCE
+
+
+def test_a_condition_emits_the_same_keywords_on_any_boundary_by_default() -> None:
+    cond = FixedTemperature(value=350 * U.K)
+    site = BoundarySite(name="TIP", measure=1e-4, frame=Solid())
+
+    assert cond.on_boundary(site) == cond.to_elmer()
+
+
+class _OptionalTemperature(Condition):
+    """A condition whose keyword field may be unset."""
+
+    kind: Literal["optional_temperature"] = "optional_temperature"
+    physics: Physics = Physics.THERMAL
+    target: ConditionTarget = ConditionTarget.BOUNDARY
+    value: Annotated[Temperature | None, ElmerKeyword("Temperature", U.K)] = None
+
+
+def test_an_unset_keyword_field_emits_nothing() -> None:
+    assert _OptionalTemperature().to_elmer() == {}
+    assert _OptionalTemperature(value=300 * U.K).to_elmer() == {"Temperature": pytest.approx(300.0)}
 
 
 # --- Magnetization.to_elmer ------------------------------------------------
@@ -148,25 +204,25 @@ def test_external_only_flags() -> None:
     assert FixedPotential.external_only is False
 
 
-# --- ForceComponent.to_elmer ------------------------------------------------
+# --- CalculateMagneticForce.to_elmer ----------------------------------------
 
 
-def test_force_component_defaults_emit_only_the_force_flag() -> None:
-    cond = ForceComponent()
+def test_calculate_magnetic_force_defaults_emit_only_the_force_flag() -> None:
+    cond = CalculateMagneticForce()
     assert cond.physics is Physics.MAGNETOSTATICS
     assert cond.target is ConditionTarget.BODY
     assert cond.label is None
     assert cond.to_elmer() == {"Calculate Magnetic Force": "Logical True"}
 
 
-def test_force_component_emits_only_what_is_set() -> None:
-    assert ForceComponent(calculate_magnetic_force=False).to_elmer() == {}
-    torque_only = ForceComponent(calculate_magnetic_force=False, calculate_magnetic_torque=True)
+def test_calculate_magnetic_force_emits_only_what_is_set() -> None:
+    assert CalculateMagneticForce(calculate_magnetic_force=False).to_elmer() == {}
+    torque_only = CalculateMagneticForce(calculate_magnetic_force=False, calculate_magnetic_torque=True)
     assert torque_only.to_elmer() == {"Calculate Magnetic Torque": "Logical True"}
 
 
-def test_force_component_renders_sized_vec3_keywords() -> None:
-    cond = ForceComponent(calculate_magnetic_torque=True, torque_origin=Vec3(0, 0.005, 0), torque_axis=Direction(0, 1, 0))
+def test_calculate_magnetic_force_renders_sized_vec3_keywords() -> None:
+    cond = CalculateMagneticForce(calculate_magnetic_torque=True, torque_origin=Vec3(0, 0.005, 0), torque_axis=Direction(0, 1, 0))
     data = cond.to_elmer()
     assert data["Calculate Magnetic Force"] == "Logical True"
     assert data["Calculate Magnetic Torque"] == "Logical True"
@@ -174,13 +230,13 @@ def test_force_component_renders_sized_vec3_keywords() -> None:
     assert data["Torque Axis(3)"] == "Real 0 1 0"
 
 
-def test_force_component_round_trips_via_discriminator() -> None:
+def test_calculate_magnetic_force_round_trips_via_discriminator() -> None:
     adapter: TypeAdapter[ConditionUnion] = TypeAdapter(ConditionUnion)
-    cond = ForceComponent(label="mover", calculate_magnetic_torque=True, torque_origin=Vec3(1, 2, 3))
+    cond = CalculateMagneticForce(label="mover", calculate_magnetic_torque=True, torque_origin=Vec3(1, 2, 3))
     dumped = cast("dict[str, object]", adapter.dump_python(cond))
-    assert dumped["kind"] == "force_component"
+    assert dumped["kind"] == "calculate_magnetic_force"
     restored = adapter.validate_python(dumped)
-    assert isinstance(restored, ForceComponent)
+    assert isinstance(restored, CalculateMagneticForce)
     assert restored.label == "mover"
     assert restored.torque_origin is not None
     assert (restored.torque_origin.x, restored.torque_origin.y, restored.torque_origin.z) == (1.0, 2.0, 3.0)

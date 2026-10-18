@@ -10,6 +10,7 @@ import yaml
 
 from femforge.common.files import BundleFile
 from femforge.elmer.config import SifValue
+from femforge.elmer.sections import SifSection
 
 
 __all__ = ["Body", "BodyForce", "Boundary", "Component", "Equation", "Material", "Simulation", "Solver"]
@@ -238,11 +239,11 @@ class Body(_Section):
         """The target bodies and the equation, material and body-force references, followed by the keyword data."""
         d: dict[str, SifValue] = {f"Target Bodies({len(self.body_ids)})": " ".join(str(x) for x in self.body_ids)}
         if self.equation is not None:
-            d["Equation"] = f"{self.equation.id}  ! {self.equation.name}"
+            d[SifSection.EQUATION] = f"{self.equation.id}  ! {self.equation.name}"
         if self.material is not None:
-            d["Material"] = f"{self.material.id}  ! {self.material.name}"
+            d[SifSection.MATERIAL] = f"{self.material.id}  ! {self.material.name}"
         if self.body_force is not None:
-            d["Body Force"] = f"{self.body_force.id}  ! {self.body_force.name}"
+            d[SifSection.BODY_FORCE] = f"{self.body_force.id}  ! {self.body_force.name}"
         d.update(self.data)
         return d
 
@@ -362,7 +363,7 @@ class Component(_Section):
         return [self.master_bodies, self.master_boundaries, self.data]
 
 
-def _write_section(f: TextIO, keyword: str, registry: Mapping[str, _Section]) -> None:
+def _write_section(f: TextIO, keyword: SifSection, registry: Mapping[str, _Section]) -> None:
     """One ``! name`` + ``<Keyword> <id>`` block per registered object, then the reference's trailing blank line."""
     for name, obj in registry.items():
         f.write(f"! {name}\n{keyword} {obj.id}\n")
@@ -403,13 +404,13 @@ class Simulation:
             f.write("Constants\n")
             f.write(_format_block(self.constants))
             f.write("End\n\n")
-            _write_section(f, "Equation", self.equations)
-            _write_section(f, "Solver", self.solvers)
-            _write_section(f, "Material", self.materials)
-            _write_section(f, "Body", self.bodies)
-            _write_section(f, "Boundary Condition", self.boundaries)
-            _write_section(f, "Body Force", self.body_forces)
-            _write_section(f, "Component", self.components)
+            _write_section(f, SifSection.EQUATION, self.equations)
+            _write_section(f, SifSection.SOLVER, self.solvers)
+            _write_section(f, SifSection.MATERIAL, self.materials)
+            _write_section(f, SifSection.BODY, self.bodies)
+            _write_section(f, SifSection.BOUNDARY_CONDITION, self.boundaries)
+            _write_section(f, SifSection.BODY_FORCE, self.body_forces)
+            _write_section(f, SifSection.COMPONENT, self.components)
 
     def write_startinfo(self, simulation_dir: str) -> None:
         """Write the ELMERSOLVER_STARTINFO file naming the sif."""

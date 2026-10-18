@@ -16,7 +16,7 @@ from femforge.elmer.physics import Physics
 from femforge.elmer.sim import Sim
 from femforge.physical.domain import EntityTag
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import ConditionUnion, Convection, CurrentDensity, FixedTemperature, ForceComponent, HeatFlux, HeatSource, Magnetization
+from femforge.physical.conditions import ConditionUnion, Convection, CurrentDensity, FixedTemperature, CalculateMagneticForce, HeatFlux, HeatSource, Magnetization
 from femforge.materials.air import Air
 from femforge.materials.copper import Copper
 from femforge.materials.neodymium import N52
@@ -42,13 +42,26 @@ class FakePhysicalGroup(PhysicalGroup):
 class FakeBoundaryGroup:
     """Mimics meshing.boundary.BoundaryGroup without requiring gmsh (the dim-2 sibling of FakePhysicalGroup)."""
 
-    def __init__(self, gid: int, name: str, bodies: tuple[str, ...], face_tags: list[int], on_axis: bool = False) -> None:
+    def __init__(
+        self,
+        gid: int,
+        name: str,
+        bodies: tuple[str, ...],
+        face_tags: list[int],
+        on_axis: bool = False,
+        tags: list[EntityTag] | None = None,
+        measure: float | None = None,
+        named: bool = False,
+    ) -> None:
         self.dim: int = 2
         self.id: int = gid
         self.name: str = name
         self.bodies: tuple[str, ...] = bodies
         self.entity_tags: list[int] = face_tags
         self.on_axis: bool = on_axis
+        self.tags: list[EntityTag] = tags or []
+        self.measure: float | None = measure
+        self.named: bool = named
 
     @property
     def is_external(self) -> bool:
@@ -405,7 +418,7 @@ def test_sim_backstops_conditions_edited_after_the_config_checked_them() -> None
     with pytest.raises(ValueError, match="CurrentDensity"):
         Sim(coil_groups)
 
-    torque = EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 0, 1)), ForceComponent(calculate_magnetic_torque=True)])
+    torque = EntityTag(selector={TagKey.MAGNETIZATION: "N"}, conditions=[Magnetization(direction=Direction(0, 0, 1)), CalculateMagneticForce(calculate_magnetic_torque=True)])
     with pytest.raises(ValueError, match="torque"):
         Sim(_groups(torque), frame=Axisymmetric())
 

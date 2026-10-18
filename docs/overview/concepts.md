@@ -12,7 +12,7 @@ config = ff.SimulationConfig(
         materials=[ff.materials.N52(), ff.materials.Steel_1080(), ff.materials.Air()],
         tags=[
             ff.EntityTag(selector={ff.TagKey.NAME: "SEAT"}, conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))]),
-            ff.EntityTag(selector={ff.TagKey.NAME: "BEARING"}, conditions=[ff.ForceComponent()]),
+            ff.EntityTag(selector={ff.TagKey.NAME: "BEARING"}, conditions=[ff.CalculateMagneticForce()]),
         ],
     ),
     physics=ff.PhysicsSelection(selected=ff.Physics.MAGNETOSTATICS),

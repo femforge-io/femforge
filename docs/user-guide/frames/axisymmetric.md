@@ -15,7 +15,7 @@ config = ff.SimulationConfig(
                 selector={ff.TagKey.MAGNETIZATION: "N"},
                 conditions=[ff.Magnetization(direction=ff.Direction(0, 0, 1))],
             ),
-            ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.ForceComponent(label="mover")]),
+            ff.EntityTag(selector={ff.TagKey.NAME: "mover"}, conditions=[ff.CalculateMagneticForce(label="mover")]),
         ],
     ),
 )
@@ -75,7 +75,7 @@ The section raises when a solid does not reach the half-plane, and when a sectio
 | `THERMAL` | `THERMAL` |
 | every other [Physics][femforge.elmer.Physics] member | raises: solve it with `Solid()` |
 
-The solved stack runs in the `Axi Symmetric` coordinate system. Authored `physics.overrides` must integrate per radian too, so customize the physics after you set the frame.
+The solved stack runs in the `Axi Symmetric` coordinate system. Authored `physics.overrides` must run in that coordinate system too, so customize the physics after you set the frame.
 
 ## Conditions
 
@@ -83,7 +83,7 @@ The solved stack runs in the `Axi Symmetric` coordinate system. Authored `physic
 |---|---|
 | [CurrentDensity][femforge.physical.CurrentDensity] | The axisymmetric coil drive: a signed azimuthal current density over a winding window. |
 | [Magnetization][femforge.physical.Magnetization] | The direction must be parallel to the symmetry axis, either sign; it is emitted as its signed axial component. |
-| [ForceComponent][femforge.physical.ForceComponent] | Torque is rejected: drop `calculate_magnetic_torque`, `torque_origin` and `torque_axis`. |
+| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | Torque is rejected: drop `calculate_magnetic_torque`, `torque_origin` and `torque_axis`. |
 
 ## Results
 

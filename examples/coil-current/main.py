@@ -102,7 +102,7 @@ def config(gap: float = 2.0) -> ff.SimulationConfig:
             tags=[
                 ff.EntityTag(selector={ff.TagKey.NAME: COIL}, conditions=[ff.CurrentDensity(value=CURRENT_DENSITY * ff.U.A / ff.U.m**2)], mesh_size=2 * fine),
                 ff.EntityTag(selector={ff.TagKey.NAME: FRAME}, mesh_size=fine),
-                ff.EntityTag(selector={ff.TagKey.NAME: PLUNGER}, conditions=[ff.ForceComponent()], mesh_size=fine),
+                ff.EntityTag(selector={ff.TagKey.NAME: PLUNGER}, conditions=[ff.CalculateMagneticForce()], mesh_size=fine),
             ],
         ),
     )

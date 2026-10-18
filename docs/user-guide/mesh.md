@@ -106,7 +106,7 @@ A mesh is fine enough when refining it no longer changes the quantity you report
 2. Halve `global_mesh_size` and the region sizes near that quantity, and solve again.
 3. Repeat until the change falls below your tolerance.
 
-Check each quantity on its own. A force lumped over a body depends on the field at the body's surface, so a settled field energy does not show that the force has settled. Refine the body that carries a `ForceComponent` and the gap around it, and keep `deterministic=True` through the study so every change comes from the sizes.
+Check each quantity on its own. A force lumped over a body depends on the field at the body's surface, so a settled field energy does not show that the force has settled. Refine the body that carries a `CalculateMagneticForce` and the gap around it, and keep `deterministic=True` through the study so every change comes from the sizes.
 
 ## Solver tolerances
 

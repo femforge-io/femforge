@@ -119,6 +119,16 @@ class Frame(ConfigArea, ABC):
     def lumps_torque(self) -> bool:
         """Whether Elmer's force lumping yields a torque in this frame."""
 
+    @property
+    def revolves(self) -> bool:
+        """Whether the solve section stands for a model revolved about an axis."""
+        return False
+
+    @property
+    def plane_stress(self) -> bool | None:
+        """Whether a 2D elasticity solve is plane stress (True) or plane strain (False); None when the frame poses no plane state."""
+        return None
+
     @abstractmethod
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
         """The STEP the solve meshes: ``step_in`` itself, or its conversion written to ``step_out``."""
@@ -143,6 +153,10 @@ class Frame(ConfigArea, ABC):
     @abstractmethod
     def total(self, integrated: Vec3) -> Vec3:
         """The whole model's total of a vector Elmer integrated over the solve domain."""
+
+    @abstractmethod
+    def solve_share(self, total: Vec3) -> Vec3:
+        """The share of a whole-model ``total`` the solve domain carries, the inverse of [`total`][femforge.frames.Frame.total]."""
 
     @abstractmethod
     def along(self, vector: Vec3, axis: Axis | None) -> float:

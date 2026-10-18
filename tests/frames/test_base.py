@@ -90,3 +90,16 @@ def test_the_default_frame_of_a_dimension_is_the_first_shipped_frame_that_solves
     assert default_frame(2) == Axisymmetric() and default_frame(3) == Solid()
     with pytest.raises(ValueError, match="no shipped frame solves on 4 dimensions"):
         _ = default_frame(4)
+
+
+@pytest.mark.parametrize("frame", [Solid(), Axisymmetric()])
+def test_the_solve_share_of_a_total_is_what_the_solve_integrated(frame: Frame) -> None:
+    integrated = Vec3(0.0, -2.293, 0.0) if frame.revolves else Vec3(-12.58, -2.293, 0.5)
+    share = frame.solve_share(frame.total(integrated))
+
+    assert share.to_list() == pytest.approx(integrated.to_list())
+
+
+def test_only_the_axisymmetric_frame_revolves_and_no_shipped_frame_poses_a_plane_state() -> None:
+    assert [frame.revolves for frame in (Solid(), Axisymmetric())] == [False, True]
+    assert Solid().plane_stress is None and Axisymmetric().plane_stress is None
