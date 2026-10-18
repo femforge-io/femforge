@@ -97,6 +97,8 @@ Results come back in the solve frame. Elmer integrates per metre of depth in `Ca
 | [magnetic_field_energy][femforge.run.magnetic_field_energy], [force_triples][femforge.run.force_triples] and the other readers of `raw` | Per metre of depth. |
 | [FieldQuery.integrate][femforge.run.FieldQuery.integrate] | The plane integral ∫ value dA, per metre of depth. |
 | [FieldQuery.integrate_extruded][femforge.run.FieldQuery.integrate_extruded] | The prism integral ∫ value dA times a depth you pass, usually the thickness. |
+| [Run.strain_energy][femforge.run.Run.strain_energy], [strain_energy][femforge.run.strain_energy] | Per metre of depth: multiply by `thickness_m` for the whole prism. |
+| [clapeyron_energy][femforge.run.clapeyron_energy] | Per metre of depth when you pass the per-metre share of the force, `frame.solve_share(force)`, which balances the strain energy. |
 
 [Result.axial_force][femforge.run.Result.axial_force] projects a force onto an authored axis you pass; the frame has no axis of its own, so `axis=None` raises.
 
