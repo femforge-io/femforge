@@ -27,6 +27,8 @@ The first run downloads everything once:
 3. The four solves run, each in seconds. The terminal logs the force on the plate for each gap and the run that holds it.
 4. Your browser opens the workbench at http://localhost:8080 on the magnetic field of the newest run, the last gap, revolved from its section into 3D with the field lines drawn. A short tour points out the controls on the first start. Pick another run in the **Run** list to compare.
 
+![The workbench after the solves: the last gap revolved into 3D with field lines through the air, and the Symmetry, Field, Field Lines and Bodies controls at the left](../assets/examples/magnet-plate.webp)
+
 Press `Ctrl+C` to stop. A later run loads each solved gap from `magnet-plate/runs/` instead of solving it again, and starts in seconds.
 
 ## The script
@@ -47,4 +49,4 @@ Press `Ctrl+C` to stop. A later run loads each solved gap from `magnet-plate/run
 - Change what the workbench shows first in `viewer()`, such as the colormap or the hidden bodies. A save of `main.py` rebuilds the open workbench.
 - Pin every package at its current version with `uv lock --script magnet-plate/main.py`.
 
-The [examples](https://github.com/femforge-io/femforge/tree/main/examples) go further: a bearing seat in 2D and 3D, a heated copper puck on an FR4 board, and a solenoid pulling a steel plunger.
+The [examples](../examples/index.md) go further: a bearing seat in 2D and 3D, a heated copper puck on an FR4 board, and a solenoid pulling a steel plunger.

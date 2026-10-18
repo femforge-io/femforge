@@ -3,10 +3,32 @@
 [![PyPI](https://img.shields.io/pypi/v/femforge?include_prereleases)](https://pypi.org/project/femforge/)
 [![License](https://img.shields.io/github/license/femforge-io/femforge)](https://github.com/femforge-io/femforge/blob/main/LICENSE)
 [![Quality](https://github.com/femforge-io/femforge/actions/workflows/quality.yml/badge.svg)](https://github.com/femforge-io/femforge/actions/workflows/quality.yml)
-
-![Field lines of a magnet holding a steel ball, from the bearing-seat example](https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/bearing-seat.webp)
+[![Docs](https://img.shields.io/badge/docs-docs.femforge.io-1f9e09)](https://docs.femforge.io)
+[![Examples](https://img.shields.io/badge/examples-4_workbenches-1f9e09)](https://docs.femforge.io/examples/)
 
 femforge is finite-element analysis as a typed Python API.
+
+[![The femforge workbench on the quickstart project: a disc magnet over a steel plate, revolved from its axisymmetric section into 3D, with field lines drawn through the air](https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/examples/magnet-plate.webp)](https://docs.femforge.io/overview/quickstart/)
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://docs.femforge.io/examples/bearing-seat/"><img src="https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/examples/bearing-seat.webp" width="290" alt="The bearing-seat workbench: a magnet holding a steel ball, revolved into 3D with field lines, beside the list of runs"></a><br>
+      <a href="https://docs.femforge.io/examples/bearing-seat/">Bearing seat</a><br>
+      <sub>a magnet holds a ball, in 2D and 3D</sub>
+    </td>
+    <td align="center">
+      <a href="https://docs.femforge.io/examples/coil-current/"><img src="https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/examples/coil-current.webp" width="290" alt="The coil-current workbench: a solenoid's section mirrored across its axis, with field lines through the plunger and the frame"></a><br>
+      <a href="https://docs.femforge.io/examples/coil-current/">Coil current</a><br>
+      <sub>a coil pulls a plunger</sub>
+    </td>
+    <td align="center">
+      <a href="https://docs.femforge.io/examples/thermal/"><img src="https://raw.githubusercontent.com/femforge-io/femforge/main/docs/assets/examples/thermal.webp" width="290" alt="The thermal workbench: a copper puck on an FR4 board in 3D, colored by temperature"></a><br>
+      <a href="https://docs.femforge.io/examples/thermal/">Thermal</a><br>
+      <sub>a puck heats a board</sub>
+    </td>
+  </tr>
+</table>
 
 Open-source solvers can do remarkable physics. Getting them to do it has meant hours in a manual and in forum threads, hunting for the keyword spelling that makes a case run. femforge moves that knowledge into the type system. Every setting is a typed Pydantic field with a docstring, and every physical quantity carries its unit, so your editor completes the config and validation rejects a mistake before anything is meshed or solved.
 
@@ -32,7 +54,7 @@ uvx femforge new magnet-plate
 uv run magnet-plate/main.py
 ```
 
-The script solves a disc magnet pulling on a steel plate at four air gaps, then opens the fields in your browser. The first run downloads about 1.2 GB of packages once, plus a 1.3 GB Docker image when Elmer is not installed natively; later runs start in seconds. The [Quickstart](https://docs.femforge.io/overview/quickstart/) walks through it.
+The script solves a disc magnet pulling on a steel plate at four air gaps, then opens the fields in your browser. The first run downloads about 1.2 GB of packages once, plus a 1.3 GB Docker image when Elmer is not installed natively; later runs start in seconds. The [Quickstart](https://docs.femforge.io/overview/quickstart/) walks through it, and the [examples](https://docs.femforge.io/examples/) go further.
 
 ## A solve in a few lines
 
@@ -68,4 +90,4 @@ With pip: `pip install "femforge[workbench]"` or `pip install femforge`. Elmer r
 
 ---
 
-[Documentation](https://docs.femforge.io) · [Status](https://docs.femforge.io/overview/status/) · [Examples](https://github.com/femforge-io/femforge/tree/main/examples) · [Changelog](https://github.com/femforge-io/femforge/blob/main/CHANGELOG.md) · [License](https://github.com/femforge-io/femforge/blob/main/LICENSE) (Apache-2.0)
+[Documentation](https://docs.femforge.io) · [Examples](https://docs.femforge.io/examples/) · [Status](https://docs.femforge.io/overview/status/) · [Changelog](https://github.com/femforge-io/femforge/blob/main/CHANGELOG.md) · [License](https://github.com/femforge-io/femforge/blob/main/LICENSE) (Apache-2.0)

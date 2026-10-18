@@ -17,6 +17,30 @@ The workbench shows the fields and the runs in a browser, and everything it show
 
 femforge is pre-alpha. The API will change between 0.x releases, and the [changelog](changelog.md) records each change.
 
+## See it
+
+Four workbenches, each a script you can run. [Examples](examples/index.md) describes them.
+
+<div class="grid cards" markdown>
+
+-   [![The quickstart workbench: a disc magnet over a steel plate, revolved into 3D with field lines](assets/examples/magnet-plate.webp)](overview/quickstart.md)
+
+    **[Magnet and plate](overview/quickstart.md)**: a disc magnet pulls on a steel plate at four air gaps. The quickstart.
+
+-   [![The bearing-seat workbench: a magnet holding a steel ball, beside the list of runs](assets/examples/bearing-seat.webp)](examples/bearing-seat.md)
+
+    **[Bearing seat](examples/bearing-seat.md)**: a magnet holds a steel ball, with and without a shell, in 2D and 3D.
+
+-   [![The coil-current workbench: a solenoid's section mirrored across its axis](assets/examples/coil-current.webp)](examples/coil-current.md)
+
+    **[Coil current](examples/coil-current.md)**: a coil in a pot frame pulls a steel plunger across two gaps.
+
+-   [![The thermal workbench: a copper puck on an FR4 board, colored by temperature](assets/examples/thermal.webp)](examples/thermal.md)
+
+    **[Thermal](examples/thermal.md)**: a puck dissipates 1 W on a board that still air cools.
+
+</div>
+
 ## How it fits together
 
 1. [Geometry and tags](user-guide/geometry.md): name each body with its material and name tags, in your CAD's STEP export or in a build123d script.
@@ -31,6 +55,7 @@ femforge is pre-alpha. The API will change between 0.x releases, and the [change
 
 - [Install](overview/install.md) femforge and an Elmer solver.
 - Run a first simulation with the [Quickstart](overview/quickstart.md).
+- Run one of the [examples](examples/index.md), each a workbench over a small model.
 - Read [Concepts](overview/concepts.md) for the pipeline on one page.
 - Check [Status](overview/status.md) for what works today and which tasks are open.
 - Work through the [User guide](user-guide/index.md), one task per page.

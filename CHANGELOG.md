@@ -11,6 +11,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - A guided tour of the field viewer on the first start, replayed from the help button in the app bar.
 - The femforge logo: the docs site shows it in place of the book icon, and the workbench shows it with the femforge name at the left of the app bar and as the browser tab's icon.
 - The color bars are titled with the field's unit, which `ElmerVariable.unit` and `variable_unit` name for every solver output; the potential's unit follows the physics solved.
+- An Examples section of the docs, with a page per example and a screenshot of each workbench; the README, the docs landing page, the Quickstart and the Workbench guide show the same screenshots.
 
 ### Changed
 

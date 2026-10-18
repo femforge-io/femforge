@@ -90,6 +90,7 @@ plugins:
       full_output: llms-full.txt
       sections:
         Overview: [index.md, overview/*.md]
+        Examples: [examples/*.md]
         User guide: [user-guide/*.md]
         API reference: [reference/*.md, reference/workbench/*.md]
         Contributing: [contributing/*.md, contributing/architecture/*.md]
@@ -134,6 +135,11 @@ nav:
       - Concepts: overview/concepts.md
       - Compatibility: overview/compatibility.md
       - Status: overview/status.md
+  - Examples:
+      - examples/index.md
+      - Bearing seat: examples/bearing-seat.md
+      - Coil current: examples/coil-current.md
+      - Thermal: examples/thermal.md
   - User guide:
       - user-guide/index.md
       - Geometry and tags: user-guide/geometry.md

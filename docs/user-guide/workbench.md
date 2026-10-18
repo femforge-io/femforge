@@ -2,6 +2,8 @@
 
 The workbench is a browser app for looking at runs: a dock of panels that shows solved fields in 3D and 2D, browses the run and artifact indexes, and follows runs and sweeps while they solve. It runs as a local [trame](https://kitware.github.io/trame/) server that you start from a script or from the `femforge-workbench` command, and it reads the same telemetry root and run bundles as the rest of femforge. You can also build your own dock from the same panels and list it beside the built-in ones.
 
+![The bearing-seat example's dock: the Runs list at the left, the field view in the middle with its legend, the run's details below it and the field viewer's controls at the right](../assets/examples/bearing-seat.webp)
+
 ## Install
 
 The workbench is a separate package, `femforge-workbench`, that the `workbench` extra installs:
