@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Self, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.pydantic import Map
-from femforge.elmer.config.common.keywords import SifKeywordModel
+from femforge.elmer.config.common.keywords import SifKeywordModel, SifValue, equation_items
 from femforge.materials.properties import ElmerMaterialKeyword
 
 
@@ -193,6 +193,16 @@ class SolverBase(SifKeywordModel):
     exec_solver: ExecSolverField = ExecSolver.ALWAYS
     stabilize: StabilizeField = None
     optimize_bandwidth: OptimizeBandwidthField = None
+
+    def equation_keywords(self) -> dict[str, SifValue]:
+        """The keywords this solver contributes to the Equation block, reflected from its ``EquationScope()`` fields."""
+        out: dict[str, SifValue] = {}
+
+        for key, value in equation_items(self):
+            if isinstance(value, (str, int, float)):
+                out[key] = value
+
+        return out
 
     def fit_frame(self, frame: Frame) -> Self:
         """This solver as it solves under ``frame``: itself when the frame changes nothing, else a fitted copy."""

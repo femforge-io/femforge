@@ -208,3 +208,30 @@ def test_the_stack_check_asks_every_solver(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(ValueError, match="cannot solve solid"):
         physics_config(Physics.THERMAL).check_frame(Solid())
+
+
+def test_the_stress_solver_fits_the_frame_dimension_and_plane_state() -> None:
+    from femforge.frames import Axisymmetric, Solid
+
+    assert StressSolver().fit_frame(Axisymmetric()).variable_dofs == 2
+    assert StressSolver(variable_dofs=2).fit_frame(Solid()).variable_dofs == 3
+    assert StressSolver().fit_frame(Solid()).plane_stress is None
+
+
+def test_the_stress_solver_rejects_a_dimension_the_frame_does_not_solve() -> None:
+    from femforge.frames import Solid
+
+    StressSolver(variable_dofs=None).check_frame(Solid())
+    config = physics_config(Physics.LINEAR_ELASTICITY)
+    config.solver(StressSolver).variable_dofs = 2
+
+    with pytest.raises(ValueError, match="Variable Dofs = 2"):
+        config.check_frame(Solid())
+
+
+def test_the_plane_state_goes_to_the_equation_block_not_the_solver_block() -> None:
+    solver = StressSolver(plane_stress=True)
+
+    assert solver.equation_keywords() == {"Plane Stress": True}
+    assert "Plane Stress" not in solver.to_elmer()
+    assert StressSolver().equation_keywords() == {}

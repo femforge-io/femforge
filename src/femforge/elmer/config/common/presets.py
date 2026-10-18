@@ -133,7 +133,6 @@ def physics_config(physics: Physics) -> PhysicsConfig:
                 constants=Constants(permittivity_of_vacuum=PERMITTIVITY_OF_VACUUM),
                 operating_point=OperatingPoint(),
             )
-        # SCAFFOLD physics: the solver stack is complete, but the per-body wiring in Sim is a marked stub.
         case Physics.LINEAR_ELASTICITY:
             return PhysicsConfig(
                 solvers=[StressSolver(), ResultOutputSolver()],

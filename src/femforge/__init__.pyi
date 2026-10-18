@@ -32,12 +32,14 @@ from .physical.conditions import (
     CoilTerminal as CoilTerminal,
     Convection as Convection,
     CurrentDensity as CurrentDensity,
+    FixedDisplacement as FixedDisplacement,
     FixedPotential as FixedPotential,
     FixedTemperature as FixedTemperature,
     HeatFlux as HeatFlux,
     HeatSource as HeatSource,
     JouleHeat as JouleHeat,
     Magnetization as Magnetization,
+    SurfaceForce as SurfaceForce,
 )
 from .physical.domain import DomainConfig as DomainConfig, EntityTag as EntityTag
 from .physical.units import Quantity as Quantity, U as U, quantity as quantity

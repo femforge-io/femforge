@@ -8,12 +8,14 @@ from .conditions import (
     ConditionUnion as ConditionUnion,
     Convection as Convection,
     CurrentDensity as CurrentDensity,
+    FixedDisplacement as FixedDisplacement,
     FixedPotential as FixedPotential,
     FixedTemperature as FixedTemperature,
     HeatFlux as HeatFlux,
     HeatSource as HeatSource,
     JouleHeat as JouleHeat,
     Magnetization as Magnetization,
+    SurfaceForce as SurfaceForce,
     shipped_conditions as shipped_conditions,
 )
 from .domain import DomainConfig as DomainConfig, EntityTag as EntityTag, conditions_for as conditions_for

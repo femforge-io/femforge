@@ -38,6 +38,7 @@ from .magnetic import (
     read_component_names as read_component_names,
 )
 from .manifest import RunManifest as RunManifest, cache_key as cache_key, git_sha as git_sha, mesh_key as mesh_key, step_key as step_key
+from .mechanical import clapeyron_energy as clapeyron_energy, strain_energy as strain_energy, strain_energy_density as strain_energy_density
 from .parse import parse_result as parse_result, result_vtu as result_vtu
 from .reap import ReapedRun as ReapedRun, reap_runs as reap_runs
 from .result import ManifestStatus as ManifestStatus, MeshStats as MeshStats, Result as Result, RunStatus as RunStatus

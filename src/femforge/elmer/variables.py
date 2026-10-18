@@ -55,6 +55,24 @@ class ElmerVariable(StrEnum):
     ELECTRIC_FIELD = "Electric Field"
     """Fixed by Elmer: the ``Calculate Electric Field`` field of the electrostatic and CalcFields solvers."""
 
+    STRESS = "Stress"
+    """Fixed by Elmer: the StressSolve ``Calculate Stresses`` tensor, in Voigt order xx, yy, zz, xy, yz, xz."""
+
+    STRAIN = "Strain"
+    """Fixed by Elmer: the StressSolve ``Calculate Strains`` tensor, in the stress's Voigt order with tensorial shear."""
+
+    VON_MISES = "VonMises"
+    """Fixed by Elmer: the von Mises stress StressSolve writes beside the stress tensor."""
+
+    PRINCIPAL_STRESS = "Principal Stress"
+    """Fixed by Elmer: the StressSolve ``Calculate Principal`` principal stresses."""
+
+    PRINCIPAL_STRAIN = "Principal Strain"
+    """Fixed by Elmer: the StressSolve ``Calculate Principal`` principal strains."""
+
+    STRAIN_ENERGY_DENSITY = "Strain Energy Density"
+    """Derived by femforge from the stress and strain tensors; Elmer writes no such field."""
+
     @property
     def unit(self) -> str | None:
         """The SI unit the variable's values are in; None for the potential, whose unit the solve decides."""
@@ -81,11 +99,24 @@ class ElmerVariable(StrEnum):
                 return "A/m²"
             case ElmerVariable.ELECTRIC_FIELD:
                 return "V/m"
+            case ElmerVariable.STRESS | ElmerVariable.VON_MISES | ElmerVariable.PRINCIPAL_STRESS:
+                return "Pa"
+            case ElmerVariable.STRAIN | ElmerVariable.PRINCIPAL_STRAIN:
+                return "-"
+            case ElmerVariable.STRAIN_ENERGY_DENSITY:
+                return "J/m³"
 
 
 def elemental(variable: ElmerVariable | str) -> str:
     """The variable's DG counterpart: Elmer registers a solver's elemental field as ``"<name> e"``."""
     return f"{variable}{ELEMENTAL_SUFFIX}"
+
+
+def variable_of(name: str) -> ElmerVariable | None:
+    """The variable a VTU array name spells, nodal or elemental and in any case; None for a name no member spells."""
+    bare: str = name.lower().removesuffix(ELEMENTAL_SUFFIX)
+
+    return next((member for member in ElmerVariable if member.lower() == bare), None)
 
 
 def variable_unit(name: str, physics: Physics | None = None) -> str | None:
@@ -95,8 +126,7 @@ def variable_unit(name: str, physics: Physics | None = None) -> str | None:
         name: The array name as the VTU spells it.
         physics: The physics the run solved, which decides what its potential is; None leaves the potential unitless.
     """
-    bare: str = name.lower().removesuffix(ELEMENTAL_SUFFIX)
-    variable: ElmerVariable | None = next((member for member in ElmerVariable if member.lower() == bare), None)
+    variable: ElmerVariable | None = variable_of(name)
     if variable is None:
         return None
 

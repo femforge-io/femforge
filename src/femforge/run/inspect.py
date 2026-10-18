@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Mapping, cast
 
 from femforge.common.files import BundleFile, RunFile
 from femforge.config import RunMeta
-from femforge.physical.units import VectorQuantity
+from femforge.physical.units import Quantity, VectorQuantity, quantity
 from femforge.run.electrical import electrode_currents as currents_from_raw, phase_currents as phases_from_currents, read_boundary_names
-from femforge.run.entities import Bodies, Boundaries, Entities, load_entities
+from femforge.run.entities import Bodies, Body, Boundaries, Entities, load_entities
 from femforge.run.magnetic import read_component_names
 from femforge.run.manifest import RunManifest
 from femforge.run.parse import parse_result, result_vtu
@@ -203,8 +203,14 @@ class Run:
 
             from femforge.run.fields import FieldMesh
 
-            self._mesh = FieldMesh.load(self.path, bodies=self.bodies)
+            self._mesh = FieldMesh.load(self.path, bodies=self.bodies, boundaries=self.boundaries)
         return self._mesh
+
+    def strain_energy(self, *bodies: Body | str) -> Quantity:
+        """`U` `[J]`: The elastic strain energy stored in the named bodies, or in the whole model when none are named."""
+        from femforge.run.mechanical import strain_energy
+
+        return quantity(strain_energy(self.mesh(), *bodies), "J")
 
 
 def find_runs(runs_dir: str | Path, *, tags: Mapping[str, str] | None = None, text: str | None = None) -> list[Run]:

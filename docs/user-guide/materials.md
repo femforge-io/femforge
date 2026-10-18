@@ -71,6 +71,7 @@ Each call builds a new instance, so an edit to one config's material never leaks
 | --- | --- | --- |
 | `mechanical` | `density` | `Density` |
 | | `elastic_modulus` | `Youngs Modulus` |
+| | `poisson_ratio` | `Poisson Ratio` |
 | | `yield_strength`, `ultimate_tensile_strength` | none |
 | `thermal` | `conductivity` | `Heat Conductivity` |
 | | `specific_heat_capacity` | `Heat Capacity` |
@@ -155,7 +156,7 @@ Each distinct material becomes one Elmer Material block that its bodies share. U
 | `CURRENT_CONDUCTION` | `Electric Conductivity` on conductors |
 | `JOULE_HEATING` | `Heat Conductivity`, plus `Electric Conductivity` on conductors |
 | `COIL_MAGNETOSTATICS` | `Relative Permeability`, plus `Electric Conductivity` on conductors |
-| `LINEAR_ELASTICITY` | none checked |
+| `LINEAR_ELASTICITY` | `Youngs Modulus`, `Poisson Ratio` |
 
 A missing keyword raises one error that names the body, the material and the keywords. The form `MAGNETOSTATICS` solves as in any frame has the same requirement.
 

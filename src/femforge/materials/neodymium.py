@@ -35,6 +35,7 @@ class Neodymium(MaterialProperties):
 
         self.mechanical.density = Static(value=7500 * U.kg / U.m**3)
         self.mechanical.elastic_modulus = Static(value=160e9 * U.Pa)
+        self.mechanical.poisson_ratio = Static(value=0.24 * U.dimensionless)
         # Sintered NdFeB is brittle: it fractures at ~80 MPa in tension with no yield plateau, so yield_strength is left unset.
         self.mechanical.ultimate_tensile_strength = Static(value=80e6 * U.Pa)
 

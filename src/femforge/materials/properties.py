@@ -120,6 +120,7 @@ class ElmerMaterialKeyword(StrEnum):
 
     DENSITY = "Density"
     YOUNGS_MODULUS = "Youngs Modulus"
+    POISSON_RATIO = "Poisson Ratio"
     HEAT_CONDUCTIVITY = "Heat Conductivity"
     HEAT_CAPACITY = "Heat Capacity"
     RELATIVE_PERMEABILITY = "Relative Permeability"
@@ -219,6 +220,9 @@ class MechanicalProperties(_PropertyModel):
 
     elastic_modulus: Annotated[Optional[_PressurePF], ElmerProperty(ElmerMaterialKeyword.YOUNGS_MODULUS, U.Pa)] = None
     """`E` `[Pa]`: Elastic (Young's) modulus."""
+
+    poisson_ratio: Annotated[Optional[_DimensionlessPF], ElmerProperty(ElmerMaterialKeyword.POISSON_RATIO, U.dimensionless, comment="-")] = None
+    """`ν` `[-]`: Poisson's ratio."""
 
     yield_strength: Optional[_PressurePF] = None
     """`σ_y` `[Pa]`: Yield strength."""

@@ -262,7 +262,7 @@ def test_vtu_path_and_cached_mesh(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     calls: list[object] = []
 
-    def fake_load(sim_dir: object, bodies: object = None) -> object:
+    def fake_load(sim_dir: object, bodies: object = None, boundaries: object = None) -> object:
         calls.append(sim_dir)
         return object()
 
@@ -270,3 +270,21 @@ def test_vtu_path_and_cached_mesh(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     first = run.mesh()
     assert run.mesh() is first
     assert len(calls) == 1
+
+
+def test_strain_energy_integrates_the_mesh_density_in_joules(tmp_path: Path) -> None:
+    import numpy as np
+
+    from femforge.run.entities import Bodies, Body
+    from femforge.run.fields import FieldMesh
+
+    run = Run(_bundle(tmp_path))
+    run._mesh = FieldMesh(
+        arrays={"strain energy density": np.array([2.0, 6.0])},
+        measure=np.array([0.5, 0.25]),
+        geometry_ids=np.array([1, 2], dtype=np.int64),
+        bodies=Bodies([Body(name="AIR", mesh_id=1), Body(name="N42_MAGNETIZATIONN", mesh_id=2)]),
+    )
+
+    assert run.strain_energy().to(U.J).magnitude == pytest.approx(2.5)
+    assert run.strain_energy("AIR").to(U.J).magnitude == pytest.approx(1.0)

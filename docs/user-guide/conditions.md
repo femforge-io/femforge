@@ -40,27 +40,29 @@ The STEP holds an air box and a body named `Magnet` tagged `Material=N52`. The `
 | `CURRENT_CONDUCTION` | The static current density driven by electrode potentials. | `StatCurrentSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
 | `JOULE_HEATING` | Current conduction coupled to heat conduction: the temperature its Joule losses produce. | `StatCurrentSolver`, `HeatSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
 | `COIL_MAGNETOSTATICS` | Current conduction chained into magnetostatics: the field of a coil's solved current distribution. | `CoilCurrentSolver`, `MagnetoDynamicsSolver`, `MagnetoDynamicsCalcFieldsSolver`, `SaveScalarsSolver`, `ResultOutputSolver` |
-| `LINEAR_ELASTICITY` | Linear elastic stress and strain. | `StressSolver`, `ResultOutputSolver` |
+| `LINEAR_ELASTICITY` | Small displacements, stresses and strains of a linear elastic solid. | `StressSolver`, `ResultOutputSolver` |
 
-`LINEAR_ELASTICITY` is a scaffold: no condition targets it yet, and the material model has no Poisson ratio.
+`LINEAR_ELASTICITY` reads `Youngs Modulus` and `Poisson Ratio` from every body, so leave air bodies out of an elasticity model. The run writes the displacement, the stress and strain components, the von Mises stress and the principal stresses; `Run.strain_energy()` integrates the strain energy femforge derives from the stress and strain.
 
 Select a physics with [PhysicsSelection][femforge.elmer.config.PhysicsSelection]. The config's frame decides the form a selection solves as, and a physics with no form in the frame raises when you build the config. You never select `MAGNETOSTATICS_2D` yourself; each frame's page lists the physics it solves and as what, see [Frames](frames/index.md).
 
 ## Conditions
 
-| Class | Physics | Target | What it sets |
-| --- | --- | --- | --- |
-| [Magnetization][femforge.physical.Magnetization] | `MAGNETOSTATICS` | body | The magnetization direction. The magnitude B_r/μ₀ comes from the material. |
-| [CurrentDensity][femforge.physical.CurrentDensity] | `MAGNETOSTATICS_2D` | body | `value` [A/m²]: a uniform signed azimuthal current density, the homogenized drive of a stranded coil. |
-| [FixedTemperature][femforge.physical.FixedTemperature] | `THERMAL` | boundary | `value` [K]: a fixed temperature. |
-| [HeatFlux][femforge.physical.HeatFlux] | `THERMAL` | boundary | `value` [W/m²]: a heat flux through the surface. |
-| [Convection][femforge.physical.Convection] | `THERMAL` | outer shell | `coefficient` [W/(m²·K)] and `ext_temperature` [K]: Newton cooling to an ambient. |
-| [HeatSource][femforge.physical.HeatSource] | `THERMAL` | body | `power_density` [W/m³]. With `temperature_coefficient` and `reference_temperature`, the source scales linearly with the local temperature. |
-| [FixedPotential][femforge.physical.FixedPotential] | `CURRENT_CONDUCTION` | boundary | `value` [V]: an electrode potential. The run also integrates the electrode current. |
-| [JouleHeat][femforge.physical.JouleHeat] | `JOULE_HEATING` | body | Heats the body with its solved Joule losses. It takes no value. |
-| [CoilDrive][femforge.physical.CoilDrive] | `COIL_MAGNETOSTATICS` | body | `current` [A]: the total current of a massive coil. Bodies that share one `CoilDrive` instance form one coil. |
-| [CoilTerminal][femforge.physical.CoilTerminal] | `COIL_MAGNETOSTATICS` | outer shell | `role`: the coil's `start` or `end` electrode. Positive current flows from start to end. |
-| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | `MAGNETOSTATICS` | body | Lumps the magnetic force, and optionally the torque about `torque_origin` and `torque_axis`, over the matched bodies. |
+| Class | Physics | Target | Sif block | What it sets |
+| --- | --- | --- | --- | --- |
+| [Magnetization][femforge.physical.Magnetization] | `MAGNETOSTATICS` | body | Material | The magnetization direction. The magnitude B_r/μ₀ comes from the material. |
+| [CurrentDensity][femforge.physical.CurrentDensity] | `MAGNETOSTATICS_2D` | body | Body Force | `value` [A/m²]: a uniform signed azimuthal current density, the homogenized drive of a stranded coil. |
+| [FixedTemperature][femforge.physical.FixedTemperature] | `THERMAL` | boundary | Boundary Condition | `value` [K]: a fixed temperature. |
+| [HeatFlux][femforge.physical.HeatFlux] | `THERMAL` | boundary | Boundary Condition | `value` [W/m²]: a heat flux through the surface. |
+| [Convection][femforge.physical.Convection] | `THERMAL` | outer shell | Boundary Condition | `coefficient` [W/(m²·K)] and `ext_temperature` [K]: Newton cooling to an ambient. |
+| [HeatSource][femforge.physical.HeatSource] | `THERMAL` | body | Body Force | `power_density` [W/m³]. With `temperature_coefficient` and `reference_temperature`, the source scales linearly with the local temperature. |
+| [FixedPotential][femforge.physical.FixedPotential] | `CURRENT_CONDUCTION` | boundary | Boundary Condition | `value` [V]: an electrode potential. The run also integrates the electrode current. |
+| [JouleHeat][femforge.physical.JouleHeat] | `JOULE_HEATING` | body | Body Force | Heats the body with its solved Joule losses. It takes no value. |
+| [CoilDrive][femforge.physical.CoilDrive] | `COIL_MAGNETOSTATICS` | body | Component | `current` [A]: the total current of a massive coil. Bodies that share one `CoilDrive` instance form one coil. |
+| [CoilTerminal][femforge.physical.CoilTerminal] | `COIL_MAGNETOSTATICS` | outer shell | Boundary Condition | `role`: the coil's `start` or `end` electrode. Positive current flows from start to end. |
+| [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | `MAGNETOSTATICS` | body | Component | Lumps the magnetic force, and optionally the torque about `torque_origin` and `torque_axis`, over the matched bodies. |
+| [FixedDisplacement][femforge.physical.FixedDisplacement] | `LINEAR_ELASTICITY` | boundary | Boundary Condition | `x`, `y`, `z` [m]: prescribed displacement components, zero by default; None leaves a component free. |
+| [SurfaceForce][femforge.physical.SurfaceForce] | `LINEAR_ELASTICITY` | named face | Boundary Condition | `force` [N]: a total force spread uniformly over the face as a traction. It needs the face's measured area, so attach it to a tagged face's tag; on a body's tag it raises. |
 
 Every value is a pint quantity of the dimensionality in brackets. Build it with `ff.quantity(300, "kelvin")` or `300 * ff.U.K`. See [Materials](materials.md#units).
 

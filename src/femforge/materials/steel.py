@@ -43,6 +43,7 @@ class Steel_1080(MaterialProperties):
 
         self.mechanical.density = Static(value=7850 * U.kg / U.m**3)
         self.mechanical.elastic_modulus = Static(value=205e9 * U.Pa)
+        self.mechanical.poisson_ratio = Static(value=0.29 * U.dimensionless)
         self.mechanical.yield_strength = Static(value=375e6 * U.Pa)
         self.mechanical.ultimate_tensile_strength = Static(value=615e6 * U.Pa)
 
@@ -79,6 +80,7 @@ class Steel_316(MaterialProperties):
 
         self.mechanical.density = Static(value=8000 * U.kg / U.m**3)
         self.mechanical.elastic_modulus = Static(value=193e9 * U.Pa)
+        self.mechanical.poisson_ratio = Static(value=0.27 * U.dimensionless)
         self.mechanical.yield_strength = Static(value=290e6 * U.Pa)
         self.mechanical.ultimate_tensile_strength = Static(value=580e6 * U.Pa)
 

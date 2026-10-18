@@ -10,19 +10,31 @@ import pytest
 
 from femforge.frames import Axis, Axisymmetric, Frame, Solid
 from femforge.common.tags import TagKey
-from femforge.common.vector import Direction
-from femforge.elmer.config import OperatingPoint, physics_config
+from femforge.common.vector import Direction, Vec3
+from femforge.elmer.config import OperatingPoint, StressSolver, physics_config
 from femforge.elmer.physics import Physics
 from femforge.elmer.sim import Sim
 from femforge.physical.domain import EntityTag
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import ConditionUnion, Convection, CurrentDensity, FixedTemperature, CalculateMagneticForce, HeatFlux, HeatSource, Magnetization
+from femforge.physical.conditions import (
+    CalculateMagneticForce,
+    ConditionUnion,
+    Convection,
+    CurrentDensity,
+    FixedDisplacement,
+    FixedTemperature,
+    HeatFlux,
+    HeatSource,
+    Magnetization,
+    SurfaceForce,
+)
 from femforge.materials.air import Air
 from femforge.materials.copper import Copper
 from femforge.materials.neodymium import N52
 from femforge.materials.pcb import FR4
 from femforge.materials.properties import MaterialProperties
-from femforge.physical.units import U
+from femforge.materials.steel import Steel_316
+from femforge.physical.units import U, quantity
 
 MU0 = 1.25663706212e-6
 
@@ -198,14 +210,34 @@ def test_far_field_only_wired_for_magnetostatics() -> None:
     assert "AV {e}" not in sif
 
 
-def test_linear_elasticity_sif_generates() -> None:
-    sif = _write_sif(physics=Physics.LINEAR_ELASTICITY)
+def _beam_groups() -> list[PhysicalGroup]:
+    return [FakePhysicalGroup(1, "BEAM", Steel_316(), [])]
+
+
+def _beam_boundaries() -> list[FakeBoundaryGroup]:
+    root = EntityTag(selector={TagKey.NAME: "Root"}, conditions=[FixedDisplacement()])
+    tip = EntityTag(selector={TagKey.NAME: "Tip"}, conditions=[SurfaceForce(force=quantity(Vec3(0, 0, 100), "N"))])
+
+    return [
+        FakeBoundaryGroup(11, "BEAM__EXT", ("BEAM",), [101]),
+        FakeBoundaryGroup(12, "ROOT", ("BEAM",), [102], tags=[root], measure=1e-4, named=True),
+        FakeBoundaryGroup(13, "TIP", ("BEAM",), [103], tags=[tip], measure=1e-4, named=True),
+    ]
+
+
+def test_linear_elasticity_sif_clamps_the_root_and_loads_the_tip() -> None:
+    sif = _write_sif(physics=Physics.LINEAR_ELASTICITY, groups=_beam_groups(), boundary_groups=_beam_boundaries())
+
     assert "StressSolver" in sif
-    # material Youngs Modulus reaches the sif (FR4/N52 carry elastic_modulus) via the standard material block.
+    assert "Displace Mesh = False" in sif
+    assert "Poisson Ratio = 0.27" in sif
+    assert "! ROOT_fixed_displacement" in sif and "Displacement 1 = 0.0" in sif
+    assert "! TIP_surface_force" in sif and "Force 3 = 1000000.0" in sif
+    assert "BEAM__EXT" not in sif
 
 
 def test_linear_elasticity_is_selectable_by_string() -> None:
-    assert _write_sif(physics="linear_elasticity")
+    assert _write_sif(physics="linear_elasticity", groups=_beam_groups(), boundary_groups=_beam_boundaries())
 
 
 # --- thermal boundary conditions on adjacency-derived surfaces -----
@@ -480,3 +512,18 @@ def test_symmetry_axis_only_wired_for_axisymmetric_physics() -> None:
     sif = _write_sif(Physics.MAGNETOSTATICS, boundary_groups=_axis_boundary_groups())
     assert set(_boundary_blocks(sif)) == {"AIR__EXT_far_field"}
     assert "symmetry_axis" not in sif
+
+
+def test_a_solver_equation_keyword_lands_in_the_equation_block() -> None:
+    config = physics_config(Physics.LINEAR_ELASTICITY)
+    config.solver(StressSolver).plane_stress = True
+    sim = Sim(_beam_groups(), physics=Physics.LINEAR_ELASTICITY, boundary_groups=_beam_boundaries(), config=config)  # pyright: ignore[reportArgumentType]  # structural fake
+    sim.generate()
+    d = Path(tempfile.mkdtemp())
+    sim.write(str(d))
+    sif = (d / "case.sif").read_text()
+
+    equation = re.search(r"^Equation 1\n(.*?)^End", sif, flags=re.MULTILINE | re.DOTALL)
+
+    assert equation is not None and "Plane Stress = True" in equation.group(1)
+    assert sif.count("Plane Stress") == 1
