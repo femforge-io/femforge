@@ -110,7 +110,7 @@ Write femforge in lowercase everywhere, including at the start of a sentence, ne
 3. For a user-visible change, add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 4. Run the [gates](#gates).
 5. Fork the repository on GitHub, push the branch to your fork, and open a pull request against `main`.
-6. Write the pull request title and description as the commit message. The squash merge uses the title as the commit subject and the description as the commit body. Keep the title short and in the imperative mood, for example `Add a radiation boundary condition`.
+6. Write the pull request title and description as the commit message. The squash merge uses the title as the commit subject and the description as the commit body. Keep the title short and in the imperative mood, for example `Add a radiation boundary condition`, and the description to a few lines.
 
 Do not put trailers or footers that credit a coding assistant, or internal ticket ids, in commit messages, pull request titles, or descriptions. The commit-msg hook and the Fingerprint CI check reject them. Refer to GitHub issues by number instead, for example `#42`.
 

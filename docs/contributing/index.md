@@ -118,7 +118,7 @@ Zensical caches each rendered page under `.cache` keyed by the page source, so a
 4. Run the [gates](#run-the-gates).
 5. Open a pull request against `main` and fill in the template.
 
-The squash merge uses the pull request title as the commit subject and the description as the commit body, so write both as a commit message. Keep the title short and imperative, such as `Add a radiation boundary condition`. Leave out trailers that credit a coding assistant and internal ticket ids; the commit-msg hook and the Fingerprint workflow reject both. Refer to GitHub issues by number, such as `#42`.
+The squash merge uses the pull request title as the commit subject and the description as the commit body, so write both as a commit message. Keep the title short and imperative, such as `Add a radiation boundary condition`, and the description to a few lines. Leave out trailers that credit a coding assistant and internal ticket ids; the commit-msg hook and the Fingerprint workflow reject both. Refer to GitHub issues by number, such as `#42`.
 
 ## License
 

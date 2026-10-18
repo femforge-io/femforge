@@ -95,8 +95,9 @@ Run these in `packages/femforge-workbench/js` when you change `js/` or a workben
 | Workflow | Job | What it runs | When |
 | --- | --- | --- | --- |
 | Quality | `client` | `npm ci`, the four client checks, then uploads the bundle | every push to `main` and every pull request |
-| Quality | `checks` | basedpyright, both ruff gates, and pytest under `xvfb-run` on Python 3.12, 3.13 and 3.14, with the bundle from `client` | after `client` |
-| Quality | `docker-e2e` | fails if the runner has native Elmer, then the Docker end-to-end test | every push to `main` and every pull request |
+| Quality | `checks` | basedpyright, both ruff gates, and pytest under `xvfb-run`, with the bundle from `client` | after `client`; a pull request runs Python 3.12 only, a push to `main` and the Monday run cover 3.12, 3.13 and 3.14 |
+| Quality | `docker-e2e` | fails if the runner has native Elmer, then the Docker end-to-end test | every push to `main` and the Monday run |
+| Dependabot auto-merge | `automerge` | queues a squash merge of a Dependabot pull request once the required checks pass, unless the update is a major version | Dependabot pull requests only |
 | Quality | `package` | `uv build --all-packages --no-sources`, `twine check --strict`, the LICENSE and NOTICE copies, the bundle files in the workbench wheel, and no build output or extra directories in the sdists | after `client` |
 | Fingerprint | `fingerprint` | rejects agent configuration files, assistant attributions and internal ticket ids in the tracked files, the pushed commits, and the pull request title and description | every push to `main`; a pull request when it opens, changes, or reopens |
 | Docs | `docs` | the schema export and `zensical build --strict`, then uploads the site | every push to `main`, every pull request, and on demand |
