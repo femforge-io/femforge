@@ -93,11 +93,12 @@ class Shared(StrEnum):
 
 
 class ItemField(StrEnum):
-    """The keys of a picker item: the label shown, the value chosen and, optionally, whether it is offered but unavailable and the muted parts after its label."""
+    """The keys of a picker item: the label shown, the value chosen and, optionally, whether it is offered but unavailable, a state word and the muted parts after its label."""
 
     TITLE = "title"
     VALUE = "value"
     DISABLED = "disabled"
+    FLAG = "flag"
     DETAIL = "detail"
 
 
@@ -149,7 +150,7 @@ def picker(
     menu: str = "",
     on_open_change: react.Callback | None = None,
 ) -> None:
-    """A single-choice select over the `{title, value}` items a state variable holds, bound to another; an item's `detail` parts read muted after its title.
+    """A single-choice select over the `{title, value}` items a state variable holds, bound to another; an item's `flag` and `detail` parts read after its title.
 
     Args:
         model: The state variable the choice is bound to.
@@ -171,6 +172,7 @@ def picker(
                 [react.Bind(f"{ITEM}.{ItemField.TITLE}")],
                 value=react.Bind(f"{ITEM}.{ItemField.VALUE}"),
                 disabled=react.Bind(f"{ITEM}.{ItemField.DISABLED}"),
+                flag=react.Bind(f"{ITEM}.{ItemField.FLAG}"),
                 detail=react.Bind(f"{ITEM}.{ItemField.DETAIL}"),
             )
 

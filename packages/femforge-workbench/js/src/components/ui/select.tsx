@@ -97,17 +97,30 @@ function SelectLabel({
   )
 }
 
-function SelectItemDetail({ parts }: { parts: string[] }) {
+function SelectItemDetail({
+  id,
+  flag,
+  parts,
+}: {
+  id: string
+  flag?: string
+  parts: string[]
+}) {
+  const pieces = [
+    ...(flag ? [{ text: flag, className: "font-sans text-foreground/70" }] : []),
+    ...parts.map((text) => ({ text, className: "font-mono" })),
+  ]
   return (
     <div
+      id={id}
       data-slot="select-item-detail"
-      className="ml-auto shrink-0 font-mono text-label whitespace-nowrap text-muted-foreground"
+      className="ml-auto shrink-0 text-label whitespace-nowrap text-muted-foreground"
     >
-      {parts.map((part, index) => (
+      {pieces.map((piece, index) => (
         <React.Fragment key={index}>
           {index > 0 && <span aria-hidden="true"> ·</span>}
           {index > 0 && " "}
-          <span>{part}</span>
+          <span className={piece.className}>{piece.text}</span>
         </React.Fragment>
       ))}
     </div>
@@ -117,16 +130,22 @@ function SelectItemDetail({ parts }: { parts: string[] }) {
 function SelectItem({
   className,
   children,
+  flag,
   detail,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /** A state word after the label, set apart from the muted detail. */
+  flag?: string
   /** Muted parts after the label, outside the text Radix copies into the trigger and matches on typeahead. */
   detail?: string[]
 }) {
-  const detailed = detail !== undefined && detail.length > 0
+  const textId = React.useId()
+  const detailId = React.useId()
+  const detailed = Boolean(flag) || (detail !== undefined && detail.length > 0)
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
+      aria-labelledby={detailed ? `${textId} ${detailId}` : textId}
       className={cn(
         "relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
@@ -141,11 +160,16 @@ function SelectItem({
           <CheckIcon className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText className={detailed ? "min-w-0 truncate" : undefined}>
+      <SelectPrimitive.ItemText
+        id={textId}
+        className={detailed ? "min-w-0 truncate" : undefined}
+      >
         {children}
       </SelectPrimitive.ItemText>
       {detailed && " "}
-      {detailed && <SelectItemDetail parts={detail} />}
+      {detailed && (
+        <SelectItemDetail id={detailId} flag={flag} parts={detail ?? []} />
+      )}
     </SelectPrimitive.Item>
   )
 }

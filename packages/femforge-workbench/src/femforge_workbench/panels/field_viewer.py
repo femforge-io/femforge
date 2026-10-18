@@ -3,9 +3,10 @@
 import asyncio
 import json
 import math
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache, partial
 from pathlib import Path
@@ -17,6 +18,7 @@ from trame.app import TrameComponent
 from trame.decorators import change, controller
 from trame.widgets import html, react
 
+from femforge.artifacts.lock import LOCK_SUFFIX, DirLock
 from femforge.common.files import RunFile
 from femforge.common.log import TELEMETRY_ENV, log
 from femforge.common.utils import title
@@ -58,12 +60,18 @@ RUN_PICKER_LIMIT = 200
 RUNS_PERIOD = 1.0
 """How often the run picker checks the run index for runs that landed or finished solving."""
 
+PICK_HOLD = 30.0
+"""`t` `[s]`: The longest the open dropdown holds new runs back, so a page that closed without saying so never freezes the list."""
+
 RUNNING = "running"
+FAILED = "error"
 NO_RUN_SELECTED = title("no run selected")
 NO_RUNS_YET = title("no runs yet")
 NO_RUN_INDEX = title("no run index")
+INDEX_UNREADABLE = title("run index unreadable")
+SOLVING_AS = title("solving")
 NO_INDEX_NOTICE = f"No run index. Pass telemetry to field_viewer or set {TELEMETRY_ENV} to list runs here."
-NO_RUNS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving."
+NO_RUNS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving; the solver's progress and any errors show in its terminal."
 RUN_MENU = "max-w-[36rem]"
 
 CLIM_STEPS = 1000
@@ -460,6 +468,9 @@ class RunFlag(StrEnum):
     SOLVING = "solving"
     """The run is being solved under a live claim; opening it waits for its fields."""
 
+    FAILED = "failed"
+    """The run's solve failed before it wrote fields; opening it says so."""
+
     NO_FIELDS = "no fields"
     """The open run has no fields: its solve failed or its fields were purged."""
 
@@ -476,19 +487,43 @@ class RunEntry:
     physics: str | None = None
     dim: int | None = None
     flag: RunFlag | None = None
+    runs_dir: Path | None = field(default=None, compare=False)
+    """The directory holding the run's bundle and its claim, None when unknown."""
 
     @property
     def by_path(self) -> bool:
         """Whether the run is offered by its bundle directory rather than from the index."""
         return self.value != self.run_id
 
+    @property
+    def name(self) -> str:
+        """How the picker names the run: its description, else its id."""
+        return self.description or self.run_id
+
+    @property
+    def ended(self) -> bool:
+        """Whether a run listed as solving lost its claim, so the index must be read again to learn how it ended."""
+        if self.flag is not RunFlag.SOLVING or self.runs_dir is None:
+            return False
+
+        return not claimed(self.runs_dir, self.run_id)
+
     def item(self) -> Item:
-        """The run as a picker item: its description, else its id, then muted its flag and its id, else its physics and dimension."""
+        """The run as a picker item: its description, else its id, then its flag and, muted, its id, else its physics and dimension."""
         extent = f"{self.dim}D" if self.dim is not None else ""
         identity = [self.run_id] if self.description else [part for part in (title(self.physics or ""), extent) if part]
-        flag = [title(self.flag)] if self.flag is not None else []
+        item: Item = {ItemField.TITLE: self.name, ItemField.VALUE: self.value, ItemField.DETAIL: identity}
+        if self.flag is not None:
+            item[ItemField.FLAG] = title(self.flag)
 
-        return {ItemField.TITLE: self.description or self.run_id, ItemField.VALUE: self.value, ItemField.DETAIL: [*flag, *identity]}
+        return item
+
+
+def claimed(runs_dir: Path, run_id: str) -> bool:
+    """Whether a live claim holds the run: its lock directory exists and its holder still beats."""
+    lock = DirLock(runs_dir / f"{run_id}{LOCK_SUFFIX}")
+
+    return lock.path.is_dir() and not lock.is_stale()
 
 
 def bundle_entry(run: Run, value: str, flag: RunFlag | None) -> RunEntry:
@@ -502,28 +537,41 @@ def bundle_entry(run: Run, value: str, flag: RunFlag | None) -> RunEntry:
     try:
         manifest = run.manifest
     except (FileNotFoundError, ValueError):
-        return RunEntry(value, run.path.name, flag=flag)
+        return RunEntry(value, run.path.name, flag=flag, runs_dir=run.path.parent)
 
-    return RunEntry(value, run.path.name, manifest.config.meta.description, str(manifest.physics), manifest.config.frame.model_dim, flag)
+    return RunEntry(value, run.path.name, manifest.config.meta.description, str(manifest.physics), manifest.config.frame.model_dim, flag, run.path.parent)
 
 
 def run_entries(telemetry: Telemetry | None) -> list[RunEntry]:
-    """The newest indexed runs that have fields or are solving under a live claim, empty without a telemetry root; a solve that died keeps saying running, so its stale claim drops it."""
+    """The newest indexed runs that have fields, are solving under a live claim or failed, empty without a telemetry root; a solve that died keeps saying running, so its stale claim drops it."""
     if telemetry is None:
         return []
 
-    running = pl.col(RunColumn.STATUS) == RUNNING
-    frame = RunQuery(telemetry.runs.scan()).where(pl.col(RunColumn.HAS_VTU) | running).newest(RUN_PICKER_LIMIT).with_live().frame()
-    columns = (RunColumn.RUN_ID, RunColumn.DESCRIPTION, RunColumn.PHYSICS, RunColumn.MODEL_DIM, RunColumn.HAS_VTU, RunColumn.STATUS, LiveRunColumn.STALE)
-    rows = cast("list[tuple[str, str | None, str | None, int | None, bool | None, str | None, bool | None]]", frame.select(columns).rows())
+    status = pl.col(RunColumn.STATUS)
+    offered = pl.col(RunColumn.HAS_VTU) | status.is_in([RUNNING, FAILED])
+    frame = RunQuery(telemetry.runs.scan()).where(offered).newest(RUN_PICKER_LIMIT).with_live().frame()
+    columns = (
+        RunColumn.RUN_ID,
+        RunColumn.DESCRIPTION,
+        RunColumn.PHYSICS,
+        RunColumn.MODEL_DIM,
+        RunColumn.HAS_VTU,
+        RunColumn.STATUS,
+        LiveRunColumn.STALE,
+        RunColumn.RUNS_DIR,
+    )
+    rows = cast("list[tuple[str, str | None, str | None, int | None, bool | None, str | None, bool | None, str | None]]", frame.select(columns).rows())
 
     entries: list[RunEntry] = []
-    for run_id, description, physics, dim, has_vtu, status, stale in rows:
-        claimed = status == RUNNING and stale is False
-        if not has_vtu and not claimed:
+    for run_id, description, physics, dim, has_vtu, state, stale, runs_dir in rows:
+        live = state == RUNNING and stale is False
+        failed = state == FAILED and not has_vtu
+        if not has_vtu and not live and not failed:
             continue
 
-        entries.append(RunEntry(run_id, run_id, description, physics, dim, RunFlag.SOLVING if claimed else None))
+        flag = RunFlag.SOLVING if live else RunFlag.FAILED if failed else None
+        directory = Path(runs_dir) if runs_dir is not None else None
+        entries.append(RunEntry(run_id, run_id, description, physics, dim, flag, directory))
 
     return entries
 
@@ -576,7 +624,10 @@ def similar_bounds(a: Sequence[float], b: Sequence[float]) -> bool:
 
 
 def solving(run: Run) -> bool:
-    """Whether the run is still being solved: its manifest says running, or its bundle has none yet."""
+    """Whether the run is still being solved: a live claim holds it and its manifest says running, or its bundle has none yet."""
+    if not claimed(run.path.parent, run.path.name):
+        return False
+
     try:
         return run.manifest.status == "running"
     except FileNotFoundError:
@@ -597,7 +648,7 @@ def missing_fields(run: Run) -> str | None:
 
 def solving_notice(entry: RunEntry) -> str:
     """What the empty view says while the open run is still solving."""
-    return f"{entry.description or entry.run_id} is still solving. Its fields appear here when it finishes."
+    return f"{entry.name} is still solving. Its fields appear here when it finishes; the solver's terminal shows its progress."
 
 
 def captioned(label: str) -> Field:
@@ -694,6 +745,12 @@ class FieldViewerController(TrameComponent):
         self.open_newest = open_newest
         self.indexed: list[RunEntry] = []
         """The runs the index offered at its last read."""
+        self.unreadable = False
+        """Whether the last read of the index failed, which logs once until a read succeeds."""
+        self.seen: list[Path] | None = None
+        """The index shards at the feed's last read; None reads the index on the next tick."""
+        self.picked_at = 0.0
+        """When the run picker's dropdown last opened, on the monotonic clock."""
         self.indexed = self.scan_runs()
         self.opened: RunEntry | None = None
         """The run open or waited on, kept in the picker however the index changes."""
@@ -750,7 +807,7 @@ class FieldViewerController(TrameComponent):
                 FieldVar.RUN: "",
                 FieldVar.RUN_TEXT: "",
                 FieldVar.RUN_ITEMS: [entry.item() for entry in self.entries],
-                FieldVar.RUN_PLACEHOLDER: self.placeholder(),
+                FieldVar.RUN_PLACEHOLDER: self.placeholder(self.entries),
                 FieldVar.RUN_PICKING: False,
                 FieldVar.RUN_ID: "",
                 FieldVar.BUSY: False,
@@ -831,26 +888,35 @@ class FieldViewerController(TrameComponent):
                 _ = task.cancel()
 
     def scan_runs(self) -> list[RunEntry]:
-        """The runs the index offers, the last ones read when it cannot be read."""
+        """The runs the index offers, the last ones read when it cannot be read; a failure logs once until a read succeeds again."""
         try:
-            return run_entries(self.telemetry)
+            found = run_entries(self.telemetry)
         except Exception:  # noqa: BLE001 - an unreadable index costs the picker, never the viewer
-            log.opt(exception=True).warning("Run index unavailable.")
+            if not self.unreadable:
+                log.opt(exception=True).warning("Run index unavailable.")
+
+            self.unreadable = True
+
             return self.indexed
 
+        self.unreadable = False
+
+        return found
+
     def runs_feed(self, telemetry: Telemetry) -> Feed[list[RunEntry] | None]:
-        """The run picker's refresh: the index is read again only when its shards changed or a run it listed is solving, so an idle tick costs one glob."""
-        seen: list[Path] | None = None
+        """The run picker's refresh: the index is read again only when its shards changed or a run it listed as solving lost its claim, so an idle tick costs one glob."""
 
         def poll() -> list[RunEntry] | None:
-            nonlocal seen
             shards = telemetry.runs.shards()
-            live = any(entry.flag is RunFlag.SOLVING for entry in self.indexed)
-            if shards == seen and not live:
+            ended = any(entry.ended for entry in self.indexed)
+            if shards == self.seen and not ended:
                 return None
 
-            found = run_entries(telemetry)
-            seen = shards
+            found = self.scan_runs()
+            if self.unreadable:
+                return None
+
+            self.seen = shards
 
             return found
 
@@ -866,17 +932,22 @@ class FieldViewerController(TrameComponent):
 
     def offer(self) -> None:
         """Publishes the picker's runs when they changed, holding them back while its dropdown is open so no row moves under the pointer."""
+        held = time.monotonic() - self.picked_at < PICK_HOLD
+        if bool(self.state[FieldVar.RUN_PICKING]) and held:
+            return
+
         entries = merged(self.indexed, self.entries, self.opened, str(self.state[FieldVar.RUN]))
-        if entries == self.entries or bool(self.state[FieldVar.RUN_PICKING]):
+        placeholder = self.placeholder(entries)
+        if entries == self.entries and placeholder == self.state[FieldVar.RUN_PLACEHOLDER]:
             return
 
         self.entries = entries
         with self.state:
             self.state[FieldVar.RUN_ITEMS] = [entry.item() for entry in entries]
-            self.state[FieldVar.RUN_PLACEHOLDER] = self.placeholder()
+            self.state[FieldVar.RUN_PLACEHOLDER] = placeholder
 
     def open_first(self) -> None:
-        """Opens the newest run with fields, else the newest one solving, while nothing is open, opening or selected and the dock was given no run."""
+        """Opens the newest run with fields, else the newest one solving, else the newest failed one, while nothing is open, opening or selected and the dock was given no run."""
         loading = self.load_task is not None and not self.load_task.done()
         asked = bool(self.state[FieldVar.RUN]) or bool(self.state[Shared.SELECTED_RUN_ID])
         if not self.open_newest or loading or asked:
@@ -884,7 +955,8 @@ class FieldViewerController(TrameComponent):
 
         solved = [entry for entry in self.entries if entry.flag is None]
         waiting = [entry for entry in self.entries if entry.flag is RunFlag.SOLVING]
-        candidates = [*solved, *waiting]
+        failed = [entry for entry in self.entries if entry.flag is RunFlag.FAILED]
+        candidates = [*solved, *waiting, *failed]
         if not candidates:
             return
 
@@ -909,12 +981,15 @@ class FieldViewerController(TrameComponent):
 
         return offered
 
-    def placeholder(self) -> str:
-        """What the run picker reads while nothing is chosen, saying why when it has nothing to offer."""
-        if self.entries:
+    def placeholder(self, entries: Sequence[RunEntry]) -> str:
+        """What the run picker reads while nothing is chosen, saying why when `entries` offers nothing."""
+        if entries:
             return NO_RUN_SELECTED
 
-        return NO_RUNS_YET if self.telemetry is not None else NO_RUN_INDEX
+        if self.telemetry is None:
+            return NO_RUN_INDEX
+
+        return INDEX_UNREADABLE if self.unreadable else NO_RUNS_YET
 
     @property
     def visible(self) -> bool:
@@ -948,10 +1023,13 @@ class FieldViewerController(TrameComponent):
         self.generation += 1
         token = self.generation
         waiting = False
+        value = str(location.path) if isinstance(location, Run) else str(location)
+        listed = next((entry for entry in self.entries if entry.value == value), None)
+        name = listed.name if listed is not None else value
         self.set_busy(True)
-        self.status(f"opening {location}")
+        self.status(f"opening {name}")
         if self.scene is None:
-            self.notice(f"Opening {location}")
+            self.notice(f"Opening {name}")
 
         try:
             run = await asyncio.to_thread(self.resolve, location)
@@ -959,16 +1037,19 @@ class FieldViewerController(TrameComponent):
             waiting = reason is not None and await asyncio.to_thread(solving, run)
             missing = RunFlag.NO_FIELDS if reason is not None else None
             flag = RunFlag.SOLVING if waiting else missing
-            value = str(location.path) if isinstance(location, Run) else str(location)
             opened = await asyncio.to_thread(bundle_entry, run, value, flag)
             indexed = await asyncio.to_thread(self.scan_runs)
             if token != self.generation:
                 return
 
             self.indexed = indexed
+            self.seen = None
             offered = self.adopt(opened, run.path)
             if waiting:
-                self.clear(solving_notice(offered))
+                self.clear(solving_notice(offered), status=f"{offered.name} is solving")
+                with self.quiet():
+                    self.state[FieldVar.SOLVED_AS] = SOLVING_AS
+
                 self.wait_task = asyncio.create_task(self.await_fields(location, run.path, token))
                 return
 
@@ -1007,8 +1088,8 @@ class FieldViewerController(TrameComponent):
                 self.open(location)
                 return
 
-    def clear(self, reason: str) -> None:
-        """Empties both views and the run's controls, saying why, so nothing left on screen reads as the run asked for."""
+    def clear(self, reason: str, *, status: str | None = None) -> None:
+        """Empties both views and the run's controls, saying why over the view and in `status`, the reason itself when None, so nothing left on screen reads as the run asked for."""
         self.run = None
         self.scene = None
         self.drawn = None
@@ -1028,7 +1109,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.NONE)
 
         self.notice(reason)
-        self.status(reason)
+        self.status(status if status is not None else reason)
 
         log.bind(reason=reason).info("Field views cleared.")
 
@@ -1553,8 +1634,10 @@ class FieldViewerController(TrameComponent):
 
     @change(FieldVar.RUN_PICKING)
     def on_picking(self, **_: object) -> None:
-        """Offers the runs held back while the run picker's dropdown was open, once it closes."""
+        """Notes when the run picker's dropdown opens, and offers the runs it held back once it closes."""
         if bool(self.state[FieldVar.RUN_PICKING]):
+            self.picked_at = time.monotonic()
+
             return
 
         self.offer()

@@ -121,6 +121,7 @@ class SelectItem(Element):
         value: Prop[str] = None,
         disabled: Prop[bool] = None,
         text_value: Prop[str] = None,
+        flag: Prop[str] = None,
         detail: Prop[list[str]] = None,
         **kwargs: Unpack[Shared],
     ) -> None:
@@ -131,6 +132,7 @@ class SelectItem(Element):
             value: The value the option chooses.
             disabled: Disables the option.
             text_value: The text typeahead matches, for a label that is not plain text.
+            flag: A state word after the label, such as Solving, set apart from the muted detail.
             detail: Muted parts after the label, never copied into the trigger nor matched on typeahead.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """

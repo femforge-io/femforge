@@ -66,7 +66,7 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 
 | Rule | Code | Test |
 | --- | --- | --- |
-| Field lines follow the shown field when it has three components, else the magnetic flux density. | `packages/femforge-workbench/src/femforge_workbench/panels/field_viewer.py:1301-1311` | `tests/workbench/test_field_viewer.py::test_the_field_lines_follow_the_shown_vector_field_and_fall_back_to_the_flux_density` |
+| Field lines follow the shown field when it has three components, else the magnetic flux density. | `packages/femforge-workbench/src/femforge_workbench/panels/field_viewer.py:1382-1392` | `tests/workbench/test_field_viewer.py::test_the_field_lines_follow_the_shown_vector_field_and_fall_back_to_the_flux_density` |
 | A page has one VTK.wasm mirror: a panel that switches to the mirror moves every older mirroring panel to streaming. | `packages/femforge-workbench/src/femforge_workbench/panels/scene.py:523-528`, `packages/femforge-workbench/src/femforge_workbench/panels/scene.py:677-682` | `tests/workbench/test_scene.py::test_the_newest_panel_takes_the_mirror_and_the_older_ones_stream` |
 | Mirrored polydata carries 32-bit cell arrays, because the wasm32 runtime misreads 64-bit ids. | `packages/femforge-workbench/src/femforge_workbench/panels/scene.py:221-230` | `tests/workbench/test_scene.py::test_the_mirror_gets_cell_arrays_its_32_bit_runtime_reads` |
 

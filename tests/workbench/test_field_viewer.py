@@ -11,9 +11,9 @@ import numpy as np
 import polars as pl
 import pytest
 
-from femforge.artifacts.lock import LOCK_SUFFIX, DirLock
+from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock
 from femforge.common.files import BundleFile
-from femforge.common.log import TELEMETRY_ENV
+from femforge.common.log import TELEMETRY_ENV, log
 from femforge.config import RunMeta, SimulationConfig
 from femforge.meshing.config import MeshConfig
 from femforge.run.bundle import write_manifest
@@ -58,14 +58,18 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     names_of,
     number_of,
     pair_of,
+    INDEX_UNREADABLE,
     NO_INDEX_NOTICE,
     NO_RUN_INDEX,
     NO_RUN_SELECTED,
     NO_RUNS_NOTICE,
     NO_RUNS_YET,
+    PICK_HOLD,
+    SOLVING_AS,
     RunEntry,
     RunFlag,
     bundle_entry,
+    claimed,
     merged,
     run_entries,
     seed_count,
@@ -229,6 +233,7 @@ def test_the_run_picker_and_the_bundle_path_field_sit_in_the_app_bar(tmp_path: P
     assert prop(find(header, "ff-select-trigger")[0], "aria-label") == "Run"
     assert _bound(find(header, "ff-select-value")[0], "placeholder") == str(FieldVar.RUN_PLACEHOLDER)
     assert _bound(find(header, "ff-select-item")[0], "detail") == f"item.{ItemField.DETAIL}"
+    assert _bound(find(header, "ff-select-item")[0], "flag") == f"item.{ItemField.FLAG}"
     assert app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_INDEX
 
 
@@ -430,13 +435,14 @@ def test_a_run_still_solving_empties_the_views_and_opens_once_it_ends(tmp_path: 
         await controller.settle()
         await controller.load(pending)
 
-        notice = "pending is still solving. Its fields appear here when it finishes."
+        notice = "pending is still solving. Its fields appear here when it finishes; the solver's terminal shows its progress."
         assert controller.scene is None and app.state[FieldVar.FIELDS] == [] and app.state[FieldVar.BODY_ROWS] == []
         assert str(SceneActor.BODIES) not in viewer.plotter.renderer.actors, "nothing of the last run is left to read as this one"
-        assert app.state[viewer.key(SceneVar.NOTICE)] == notice and app.state[StateVar.STATUS] == notice
+        assert app.state[viewer.key(SceneVar.NOTICE)] == notice and app.state[StateVar.STATUS] == "pending is solving", "the status line stays short"
+        assert app.state[FieldVar.SOLVED_AS] == SOLVING_AS, "the controls agree with the picker"
         assert app.state[FieldVar.BUSY] is True, "the busy bar pulses until the fields open"
         assert app.state[FieldVar.RUN] == str(pending) and app.state[FieldVar.RUN_TEXT] == str(pending)
-        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0] == {"title": "pending", "value": str(pending), "detail": ["Solving"]}
+        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0] == {"title": "pending", "value": str(pending), "detail": [], "flag": "Solving"}
 
         _ = held.rename(pending / "case_t0001.vtu")
         solved = True
@@ -499,7 +505,8 @@ def test_a_finished_run_without_fields_says_so_and_waits_for_nothing(tmp_path: P
 
         assert controller.wait_task is None and app.state[FieldVar.BUSY] is False
         assert app.state[viewer.key(SceneVar.NOTICE)] == "fieldless: The solve wrote no fields"
-        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0][ItemField.DETAIL] == ["No Fields", "Magnetostatics", "3D"]
+        item = cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0]
+        assert item[ItemField.DETAIL] == ["Magnetostatics", "3D"] and item[ItemField.FLAG] == "No Fields"
 
     asyncio.run(run())
 
@@ -738,9 +745,10 @@ def test_a_run_reads_as_its_description_with_its_id_or_physics_muted_beside_it(t
     described = bundle_entry(Run(bundle), "hex", RunFlag.SOLVING)
 
     assert plain == RunEntry(str(bundle), "hex") and plain.by_path and not described.by_path
-    assert described.item() == {"title": "4 mm gap", "value": "hex", "detail": ["Solving", "hex"]}
+    assert described.item() == {"title": "4 mm gap", "value": "hex", "detail": ["hex"], "flag": "Solving"}
     assert RunEntry("a", "a", None, "magnetostatics", 2).item() == {"title": "a", "value": "a", "detail": ["Magnetostatics", "2D"]}
-    assert RunEntry("a", "a", flag=RunFlag.NO_FIELDS).item()[ItemField.DETAIL] == ["No Fields"]
+    assert RunEntry("a", "a", flag=RunFlag.NO_FIELDS).item() == {"title": "a", "value": "a", "detail": [], "flag": "No Fields"}
+    assert described.runs_dir == tmp_path, "an opened bundle knows where its claim lives"
 
 
 def test_a_run_cleared_while_it_expands_is_not_drawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1294,11 +1302,13 @@ def test_the_index_offers_runs_with_fields_and_runs_solving_under_a_live_claim(t
     entries = run_entries(telemetry)
     claim.release()
 
-    assert entries == [RunEntry("live", "live", flag=RunFlag.SOLVING), RunEntry("solved", "solved", "1 mm gap")], "a solve that died without a claim is not listed"
-    assert run_entries(telemetry) == [RunEntry("solved", "solved", "1 mm gap")]
+    failed = RunEntry("failed", "failed", flag=RunFlag.FAILED)
+    assert entries == [failed, RunEntry("live", "live", flag=RunFlag.SOLVING), RunEntry("solved", "solved", "1 mm gap")], "a solve that died without a claim is not listed"
+    assert run_entries(telemetry) == [failed, RunEntry("solved", "solved", "1 mm gap")]
+    assert entries[1].runs_dir == runs_dir, "a solving run knows where its claim lives"
 
 
-def test_the_run_feed_reads_the_index_again_only_when_its_shards_changed_or_a_run_is_solving(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_run_feed_reads_the_index_again_only_when_its_shards_changed_or_a_solving_run_lost_its_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _live_shell("gated", tmp_path, monkeypatch)
     controller = _controller(app)
     feed = _feed(controller)
@@ -1315,12 +1325,12 @@ def test_the_run_feed_reads_the_index_again_only_when_its_shards_changed_or_a_ru
     controller.indexed = found or []
 
     assert found == [RunEntry("live", "live", flag=RunFlag.SOLVING)]
-    assert feed.poll() == found, "a solving run is read every tick, so its end shows at once"
+    assert feed.poll() is None, "a solve that still holds its claim costs one glob and one claim check"
 
     claim.release()
     controller.indexed = feed.poll() or []
 
-    assert controller.indexed == [] and feed.poll() is None
+    assert controller.indexed == [] and feed.poll() is None, "a claim gone reads the index again, which drops the dead solve"
 
 
 def test_the_newest_run_with_fields_opens_once_and_a_run_that_lands_later_never_replaces_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1347,7 +1357,7 @@ def test_the_newest_run_with_fields_opens_once_and_a_run_that_lands_later_never_
         assert controller.scene is not None and controller.scene.run_id == "solved", "a run with fields opens before a newer one still solving"
         assert app.state[FieldVar.RUN] == "solved" and app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_SELECTED
         assert app.state[FieldVar.RUN_ITEMS] == [
-            {"title": "1 mm gap", "value": "solving", "detail": ["Solving", "solving"]},
+            {"title": "1 mm gap", "value": "solving", "detail": ["solving"], "flag": "Solving"},
             {"title": "0.5 mm gap", "value": "solved", "detail": ["solved"]},
         ]
 
@@ -1360,10 +1370,10 @@ def test_the_newest_run_with_fields_opens_once_and_a_run_that_lands_later_never_
         assert _values(app) == ["newer", "solving", "solved"]
 
         app.state[FieldVar.RUN_PICKING] = True
+        controller.on_picking()
         held = app.state[FieldVar.RUN_ITEMS]
         _index(telemetry, runs_dir, "newest", 3, "ok", has_vtu=True)
         controller.publish_runs(feed.poll())
-        controller.on_picking()
 
         assert app.state[FieldVar.RUN_ITEMS] is held, "no row moves under the pointer while the dropdown is open"
 
@@ -1371,6 +1381,17 @@ def test_the_newest_run_with_fields_opens_once_and_a_run_that_lands_later_never_
         controller.on_picking()
 
         assert _values(app) == ["newest", "newer", "solving", "solved"]
+
+        app.state[FieldVar.RUN_PICKING] = True
+        controller.on_picking()
+        controller.picked_at -= PICK_HOLD
+        _index(telemetry, runs_dir, "latest", 4, "ok", has_vtu=True)
+        controller.publish_runs(feed.poll())
+
+        assert _values(app)[0] == "latest", "a dropdown whose page went away without closing holds the list for a while only"
+
+        app.state[FieldVar.RUN_PICKING] = False
+        controller.on_picking()
 
         published = app.state[FieldVar.RUN_ITEMS]
         controller.publish_runs(feed.poll())
@@ -1399,7 +1420,7 @@ def test_the_newest_run_solving_opens_when_none_has_fields_and_keeps_the_busy_ba
         controller.release()
         claim.release()
 
-        assert app.state[viewer.key(SceneVar.NOTICE)] == "0.5 mm gap is still solving. Its fields appear here when it finishes."
+        assert app.state[viewer.key(SceneVar.NOTICE)] == "0.5 mm gap is still solving. Its fields appear here when it finishes; the solver's terminal shows its progress."
         assert busy is True and waiting is not None and app.state[FieldVar.RUN] == "solving"
 
     asyncio.run(run())
@@ -1426,16 +1447,172 @@ def test_nothing_opens_by_itself_once_a_run_was_asked_for(tmp_path: Path, monkey
     asyncio.run(run())
 
 
-def test_an_unreadable_index_keeps_the_runs_last_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unreadable_index_keeps_the_runs_last_read_says_so_and_logs_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def broken(_telemetry: Telemetry | None) -> list[RunEntry]:
         raise OSError("disk gone")
 
+    def empty(_telemetry: Telemetry | None) -> list[RunEntry]:
+        return []
+
     app = _live_shell("broken", tmp_path, monkeypatch)
     controller = _controller(app)
-    controller.indexed = [RunEntry("kept", "kept")]
+    feed = _feed(controller)
     monkeypatch.setattr(field_viewer_module, "run_entries", broken)
+    messages: list[str] = []
+    sink = log.add(messages.append, level="WARNING", format="{message}")
+    try:
+        polls = [feed.poll(), feed.poll()]
+    finally:
+        log.remove(sink)
+
+    controller.publish_runs(None)
+
+    assert polls == [None, None], "the last runs stay"
+    assert sum("Run index unavailable." in message for message in messages) == 1, "a failure streak logs once"
+    assert app.state[FieldVar.RUN_PLACEHOLDER] == INDEX_UNREADABLE and app.state[FieldVar.RUN_ITEMS] == []
+
+    controller.indexed = [RunEntry("kept", "kept")]
 
     assert controller.scan_runs() == [RunEntry("kept", "kept")]
+
+    monkeypatch.setattr(field_viewer_module, "run_entries", empty)
+
+    assert feed.poll() == [] and not controller.unreadable
+
+
+def test_a_failed_poll_leaves_the_offered_runs_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _live_shell("raising", tmp_path, monkeypatch)
+        controller = _controller(app)
+        feed = _feed(controller)
+        controller.open_newest = False
+        controller.indexed = [RunEntry("kept", "kept")]
+        controller.publish_runs(None)
+        items = app.state[FieldVar.RUN_ITEMS]
+        calls = 0
+
+        def poll() -> list[RunEntry] | None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("shard caught mid-write")
+
+            return None
+
+        feed.poll = poll
+        feed.period = 0.01
+        task = asyncio.create_task(feed.cycle())
+        await _until(lambda: feed.polls >= 1)
+        _ = task.cancel()
+
+        assert calls >= 2 and app.state[FieldVar.RUN_ITEMS] is items
+
+    asyncio.run(run())
+
+
+def test_a_claim_is_live_while_its_holder_beats(tmp_path: Path) -> None:
+    assert not claimed(tmp_path, "run")
+
+    lock = _claim(tmp_path, "run")
+
+    assert claimed(tmp_path, "run")
+
+    owner = lock.owner()
+    assert owner is not None
+    silent = owner.model_copy(update={"heartbeat_at": owner.heartbeat_at - timedelta(hours=1)})
+    _ = (lock.path / OWNER_FILE).write_text(silent.model_dump_json(), encoding="utf-8")
+
+    assert not claimed(tmp_path, "run"), "a holder that stopped beating holds nothing"
+
+
+def test_a_solve_that_dies_ends_the_wait_and_the_busy_bar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("femforge_workbench.panels.field_viewer.FIELDS_PERIOD", 0.01)
+
+    async def run() -> None:
+        app = _shell("dead", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        runs_dir = tmp_path / "runs"
+        pending = runs_dir / "pending"
+        pending.mkdir(parents=True)
+        claim = _claim(runs_dir, "pending")
+
+        await controller.load(pending)
+        waiting = controller.wait_task
+
+        assert waiting is not None and app.state[FieldVar.BUSY] is True
+
+        claim.release()
+        await waiting
+        await controller.settle()
+
+        assert app.state[FieldVar.BUSY] is False and app.state[viewer.key(SceneVar.NOTICE)] == "pending: The solve wrote no fields"
+        assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0][ItemField.FLAG] == "No Fields", "a dead solve never reads Solving"
+
+    asyncio.run(run())
+
+
+def test_the_open_run_loses_its_solving_flag_once_its_solve_ends_and_stays_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("femforge_workbench.panels.field_viewer.FIELDS_PERIOD", 0.01)
+
+    async def run() -> None:
+        app = _live_shell("ending", tmp_path, monkeypatch)
+        controller = _controller(app)
+        feed = _feed(controller)
+        telemetry = Telemetry(tmp_path / "telemetry")
+        runs_dir = tmp_path / "runs"
+        pending = runs_dir / "solving"
+        pending.mkdir(parents=True)
+        _index(telemetry, runs_dir, "solving", 0, "running", has_vtu=False, description="0.5 mm gap")
+        claim = _claim(runs_dir, "solving")
+
+        controller.publish_runs(feed.poll())
+        await controller.settle()
+        waiting = controller.wait_task
+
+        assert waiting is not None and app.state[FieldVar.RUN] == "solving"
+
+        built = _bundle(tmp_path / "built", _hex_grid())
+        for file in built.iterdir():
+            _ = file.rename(pending / file.name)
+
+        _index(telemetry, runs_dir, "solving", 0, "ok", has_vtu=True, description="0.5 mm gap")
+        claim.release()
+        await waiting
+        await controller.settle()
+
+        assert controller.seen is None, "an open reads the index itself, so the next tick reads it again"
+
+        controller.publish_runs(feed.poll())
+        await controller.settle()
+
+        assert controller.scene is not None and controller.scene.run_id == "solving" and app.state[FieldVar.RUN] == "solving"
+        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "0.5 mm gap", "value": "solving", "detail": ["solving"]}]
+        assert app.state[FieldVar.BUSY] is False
+
+    asyncio.run(run())
+
+
+def test_a_failed_run_opens_when_nothing_else_is_listed_and_says_why(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _live_shell("failed", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        runs_dir = tmp_path / "runs"
+        (runs_dir / "broken").mkdir(parents=True)
+        _index(Telemetry(tmp_path / "telemetry"), runs_dir, "broken", 0, "error", has_vtu=False, description="0.5 mm gap")
+
+        controller.publish_runs(_feed(controller).poll())
+        await asyncio.sleep(0)
+        opening = app.state[viewer.key(SceneVar.NOTICE)]
+        await controller.settle()
+
+        assert opening == "Opening 0.5 mm gap", "the run is named the way the picker names it"
+        assert app.state[FieldVar.RUN] == "broken" and app.state[FieldVar.BUSY] is False
+        assert app.state[viewer.key(SceneVar.NOTICE)] == "broken: The solve wrote no fields"
+        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "0.5 mm gap", "value": "broken", "detail": ["broken"], "flag": "Failed"}]
+
+    asyncio.run(run())
 
 
 def test_the_run_feed_runs_with_the_server_and_stops_with_the_last_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
