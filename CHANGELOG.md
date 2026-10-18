@@ -15,12 +15,14 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - `Run.strain_energy()` and `femforge.run` `strain_energy`, `clapeyron_energy` and `strain_energy_density` read the elastic strain energy back; `FieldQuery.where_boundary` and `surface_mean` select a boundary and average a field over its area.
 - The `Cartesian2D` frame solves the planar section of a prismatic model per metre of depth and scales the typed forces by its `thickness`: magnetostatics, heat conduction, and linear elasticity in plane stress or plane strain (`PlaneState`). `FieldQuery.integrate_extruded(depth)` integrates a planar section over a prism, and `Vec3.cross` is the vector product.
 - A 2D frame sections each named face into a named edge, a `TaggedEdge` that now takes `name=` and is exported from `femforge`, so the conditions on a named face land on its edge of the section.
+- The field viewer shows elasticity runs: it opens on the displacement, offers Von Mises, Strain Energy Density and the principal stresses and strains with the Max, Mid and Min Principal modes, and leaves the stress and strain tensors out. `FieldKind` and `line_vectors` join `femforge.viz`.
 
 ### Changed
 
 - `ForceComponent` is now `CalculateMagneticForce`, with the kind `calculate_magnetic_force`, after the Elmer keyword it sets. Rename it in your scripts and saved configs.
 - A customized solver stack must use the frame's coordinate system exactly, not only one that integrates the same way.
 - A boundary group bordered twice by one tag gets that tag's conditions once.
+- Field lines follow the first vector field when the run has no flux density, such as the displacement or the volume current, while a scalar is shown.
 - Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
 - The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
 - `SolvePlane` names its directions `x_dir` and `y_dir`, for the old `radial` and `axis`, and gains `normal`.

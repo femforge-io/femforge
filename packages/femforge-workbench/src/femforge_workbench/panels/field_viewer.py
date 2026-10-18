@@ -29,8 +29,8 @@ from femforge.run.result import Result
 from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
-from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, sample_colormap
-from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, select_flux_density_array
+from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, line_vectors, sample_colormap
+from femforge.viz.field_lines import FieldLineOptions, SeedPlacement
 from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
@@ -203,7 +203,7 @@ class FieldVar(StrEnum):
     CLIM_MAX = "field_clim_max"
     CLIM_STEP = "field_clim_step"
     VISIBLE_BODIES = "field_visible_bodies"
-    HAS_FLUX = "field_has_flux"
+    HAS_VECTORS = "field_has_vectors"
     STREAMLINES = "field_streamlines"
     SEED_PLACEMENTS = "field_seed_placements"
     SEED_PLACEMENT = "field_seed_placement"
@@ -253,7 +253,7 @@ TOUR_STEPS: list[TourStep] = [
     {
         "target": f"#{TOUR_PREFIX}{LINES_SECTION}",
         "title": "Trace the Field",
-        "body": "Field lines follow the flux density from seeds on the center plane. Raise the seed count for denser lines.",
+        "body": "Field lines follow the shown vector field, or the flux density or displacement while a scalar is shown, from seeds on the center plane. Raise the seed count for denser lines.",
         "side": "right",
     },
     {
@@ -452,14 +452,9 @@ def body_rows(bodies: Bodies, names: Sequence[str], looks: Mapping[str, BodyStyl
     return rows
 
 
-def has_flux_density(fields: Sequence[FieldInfo]) -> bool:
-    """Whether the fields include a magnetic flux density, the array the field lines integrate."""
-    try:
-        _ = select_flux_density_array(info.name for info in fields)
-    except KeyError:
-        return False
-
-    return True
+def has_vector_field(fields: Sequence[FieldInfo]) -> bool:
+    """Whether the fields include a vector field for the field lines to follow."""
+    return line_vectors(fields, "") is not None
 
 
 class RunFlag(StrEnum):
@@ -831,7 +826,7 @@ class FieldViewerController(TrameComponent):
                 FieldVar.CLIM_MAX: 1.0,
                 FieldVar.CLIM_STEP: 1.0 / CLIM_STEPS,
                 FieldVar.VISIBLE_BODIES: [],
-                FieldVar.HAS_FLUX: False,
+                FieldVar.HAS_VECTORS: False,
                 FieldVar.STREAMLINES: display.streamlines is not None,
                 FieldVar.SEED_PLACEMENTS: placement_items(),
                 FieldVar.SEED_PLACEMENT: str(lines.seed_placement),
@@ -1103,7 +1098,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.MODES] = []
             self.state[FieldVar.BODY_ROWS] = []
             self.state[FieldVar.VISIBLE_BODIES] = []
-            self.state[FieldVar.HAS_FLUX] = False
+            self.state[FieldVar.HAS_VECTORS] = False
             self.state[FieldVar.LINES_BODIES] = body_items([])
             self.state[FieldVar.SOLVED_AS] = NO_RUN
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.NONE)
@@ -1174,7 +1169,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.BODY_ROWS] = self.rows(scene)
             self.state[FieldVar.BODY_COLORMAP_SHOWN] = str(self.state[FieldVar.BODY_COLORMAP]) if self.painted(BodyPaint.COLORMAP) else SAME_AS_FIELD
             self.state[FieldVar.VISIBLE_BODIES] = [body for body in self.bodies if body not in self.hidden_bodies]
-            self.state[FieldVar.HAS_FLUX] = has_flux_density(scene.fields)
+            self.state[FieldVar.HAS_VECTORS] = has_vector_field(scene.fields)
             self.state[FieldVar.LINES_BODIES] = body_items(self.bodies)
             self.state[FieldVar.LINES_BODY] = self.lines_body(scene)
 
@@ -1331,7 +1326,7 @@ class FieldViewerController(TrameComponent):
         expansion = Expansion(str(state[FieldVar.EXPANSION]))
         scene = self.scene
         dim = expansion.dim if scene is not None and scene.expandable else self.model_dim
-        drawing_lines = bool(state[FieldVar.STREAMLINES]) and bool(state[FieldVar.HAS_FLUX])
+        drawing_lines = bool(state[FieldVar.STREAMLINES]) and bool(state[FieldVar.HAS_VECTORS])
         streamlines = self.streamline_options(dim) if drawing_lines else None
         opacity_map = pair_of(state[FieldVar.OPACITY_RANGE]) if bool(state[FieldVar.OPACITY_MAPPING]) else None
 
@@ -1380,16 +1375,11 @@ class FieldViewerController(TrameComponent):
         )
 
     def vector_field(self) -> str | None:
-        """The shown field's array name when it has three components, None for the flux density the lines fall back to."""
+        """The vector field the lines follow, by [`line_vectors`][femforge.viz.line_vectors]; None without a run or a vector field."""
         if self.scene is None:
             return None
 
-        try:
-            info = self.scene.field_info(str(self.state[FieldVar.FIELD]))
-        except KeyError:
-            return None
-
-        return info.name if info.components == 3 else None
+        return line_vectors(self.scene.fields, str(self.state[FieldVar.FIELD]))
 
     def request_redraw(self) -> None:
         """Redraws with the latest state once the loop is free; bursts of changes collapse into one draw."""
@@ -1907,7 +1897,7 @@ class FieldControlsPanel(PanelComponent):
 
     def build_lines(self) -> None:
         """The field-line section: the switch, the seeds, the region and the two integration sliders."""
-        setting(FieldVar.STREAMLINES, "Show field lines", disabled=react.Bind(f"!{FieldVar.HAS_FLUX}"))
+        setting(FieldVar.STREAMLINES, "Show field lines", disabled=react.Bind(f"!{FieldVar.HAS_VECTORS}"))
 
         with captioned("Seeds"):
             picker(str(FieldVar.SEED_PLACEMENT), str(FieldVar.SEED_PLACEMENTS), width=FULL_WIDTH)

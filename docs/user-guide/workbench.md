@@ -105,7 +105,7 @@ The controls come in four sections:
 
 **The legend starts hidden.** The range slider wears the colormap between its thumbs, so the controls read as the legend. Set Legend to Vertical or Horizontal to draw a color bar in the view, titled with the field's unit, before a screenshot. Field lines share that bar while they map like the field, and get a bar of their own only when their colormap or range differs. Moving a thumb of the range slider pins the range and turns Auto Range off.
 
-The Mode picker offers what the quantity supports:
+The Quantity picker lists every scalar, vector and principal-value array of the run. A stress or strain tensor is left out; read it with [Run.mesh()][femforge.run.Run.mesh]. The Mode picker offers what the quantity supports:
 
 | [DisplayMode][femforge.viz.DisplayMode] | Colors by | Offered for |
 |---|---|---|
@@ -114,6 +114,8 @@ The Mode picker offers what the quantity supports:
 | `POLAR_XY` | the in-plane direction as hue, brightened by the in-plane magnitude | vectors |
 | `VALUE` | the value | scalars, the default |
 | `ABSVALUE` | the absolute value | scalars |
+| `MAX_PRINCIPAL` | the largest principal value | principal stresses and strains, the default |
+| `MID_PRINCIPAL`, `MIN_PRINCIPAL` | the middle or the smallest principal value | principal stresses and strains |
 
 Each body's color comes from one of three sources, its [BodyPaint][femforge.viz.BodyPaint]:
 
@@ -125,7 +127,7 @@ Each body's color comes from one of three sources, its [BodyPaint][femforge.viz.
 
 **The automatic color range spans every body.** With Auto range on, the range is the union of each body's own range, over every body whether it is shown, hidden or painted another way, so hiding a body never rescales the rest. Each body is clamped to its 2nd to 98th percentile, so a small body keeps its range beside a large one. Log scale keeps only the positive values and starts at their 1st percentile. Turn Auto range off to pin the range with the slider.
 
-Field lines integrate the magnetic flux density, so the switch stays off for a run without one. They start on, from 18 × 18 seeds on the center plane. Seeds sit on a grid in the domain's bounding box: a volume, the center plane or a line along X through the center. A run shown flat moves volume seeds to the center plane. Length is the fraction of the domain diagonal a line may run, and each line ends at its first sharp reversal. Integrate Within limits the lines to one body.
+Field lines follow the shown vector field. While a scalar or a principal value is shown, they follow the magnetic flux density, else the first vector field, such as the displacement of an elasticity run. The switch stays off for a run without a vector field. They start on, from 18 × 18 seeds on the center plane. Seeds sit on a grid in the domain's bounding box: a volume, the center plane or a line along X through the center. A run shown flat moves volume seeds to the center plane. Length is the fraction of the domain diagonal a line may run, and each line ends at its first sharp reversal. Integrate Within limits the lines to one body.
 
 ## Runs and figures
 

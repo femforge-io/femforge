@@ -95,6 +95,22 @@ def _hex_grid() -> pv.UnstructuredGrid:
     return grid
 
 
+def _elastic_grid() -> pv.UnstructuredGrid:
+    grid = _hex_grid()
+    del grid.cell_data["joule heating"]
+    del grid.point_data["magnetic flux density"]
+    points = np.asarray(grid.points)
+    count = len(points)
+    grid.point_data["displacement"] = np.column_stack([1e-3 * points[:, 0], 1e-3 * points[:, 1], -1e-4 * points[:, 0] ** 2])
+    grid.point_data["stress"] = np.tile([1e6, 2e6, 3e6, 0.0, 0.0, 0.0], (count, 1))
+    grid.point_data["strain"] = np.tile([1e-5, 2e-5, 3e-5, 0.0, 0.0, 0.0], (count, 1))
+    grid.point_data["vonmises"] = np.full(count, 1.7e6)
+    grid.point_data["principal stress"] = np.tile([2e6, 3e6, 1e6], (count, 1))
+    grid.point_data["strain energy density"] = np.full(count, 70.0)
+
+    return grid
+
+
 def _quad_grid() -> pv.UnstructuredGrid:
     points = np.array([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0), (2.0, 0.0, 0.0), (2.0, 1.0, 0.0)], dtype=np.float64)
     cells = np.array([4, 0, 1, 2, 3, 4, 1, 4, 5, 2])
@@ -256,7 +272,7 @@ def test_a_3d_run_draws_in_the_plotter_and_integrates_field_lines_off_the_loop(t
         assert app.state[FieldVar.RUN_ID] == "hex" and app.state[FieldVar.RUN_TEXT] == str(bundle)
         assert app.state[FieldVar.FIELDS] == [{"title": "Joule Heating", "value": "joule heating"}, {"title": "Magnetic Flux Density", "value": "magnetic flux density"}]
         assert app.state[FieldVar.FIELD] == "joule heating" and app.state[FieldVar.MODE] == "value"
-        assert app.state[FieldVar.VISIBLE_BODIES] == ["LEFT", "RIGHT"] and app.state[FieldVar.HAS_FLUX] is True
+        assert app.state[FieldVar.VISIBLE_BODIES] == ["LEFT", "RIGHT"] and app.state[FieldVar.HAS_VECTORS] is True
         assert app.state[FieldVar.CLIM_MIN] == 2.0 and app.state[FieldVar.CLIM_MAX] == 3.0
         assert app.state[FieldVar.LINES_BODIES] == [{"title": "Whole Domain", "value": ""}, {"title": "LEFT", "value": "LEFT"}, {"title": "RIGHT", "value": "RIGHT"}]
         assert [row[RowKey.ID] for row in cast("list[dict[str, object]]", app.state[FieldVar.BODY_ROWS])] == ["LEFT", "RIGHT"]
@@ -299,10 +315,45 @@ def test_the_field_lines_follow_the_shown_vector_field_and_fall_back_to_the_flux
 
         return followed
 
-    assert asyncio.run(run()) == ["magnetic field strength", None, "magnetic flux density"]
+    assert asyncio.run(run()) == ["magnetic field strength", "magnetic flux density", "magnetic flux density"]
 
 
-def test_a_run_without_a_flux_array_draws_with_the_field_line_switch_left_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_elasticity_run_opens_on_the_displacement_and_offers_von_mises_and_strain_energy_density(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("elastic", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_bundle(tmp_path / "beam", _elastic_grid()))
+        await controller.settle()
+
+        titles = [item["title"] for item in cast("list[dict[str, object]]", app.state[FieldVar.FIELDS])]
+
+        assert titles == ["Displacement", "Principal Stress", "Strain Energy Density", "Von Mises"]
+        assert app.state[FieldVar.FIELD] == "displacement" and app.state[FieldVar.MODE] == "magnitude"
+        assert app.state[FieldVar.HAS_VECTORS] is True
+
+        app.state[FieldVar.FIELD] = "principal stress"
+        controller.on_field()
+        modes = [item["value"] for item in cast("list[dict[str, object]]", app.state[FieldVar.MODES])]
+
+        assert modes == ["max_principal", "mid_principal", "min_principal"] and app.state[FieldVar.MODE] == "max_principal"
+
+        app.state[FieldVar.FIELD] = "vonmises"
+        controller.on_field()
+        app.state[FieldVar.STREAMLINES] = True
+        app.state[FieldVar.LINE_COUNT] = [2]
+        controller.request_redraw()
+        await controller.settle()
+
+        assert controller.streamline_options(3).vectors == "displacement"
+        assert controller.scene is not None and controller.scene.spec.field == "vonmises"
+        assert str(StreamlineActor.LINES) in viewer.plotter.renderer.actors
+
+    asyncio.run(run())
+
+
+def test_a_run_without_a_vector_field_draws_with_the_field_line_switch_left_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
         app = _shell("no-flux", tmp_path, monkeypatch)
         controller = _controller(app)
@@ -313,7 +364,7 @@ def test_a_run_without_a_flux_array_draws_with_the_field_line_switch_left_on(tmp
         await controller.load(_bundle(tmp_path / "plain", grid))
         await controller.settle()
 
-        assert app.state[FieldVar.HAS_FLUX] is False and app.state[FieldVar.STREAMLINES] is True
+        assert app.state[FieldVar.HAS_VECTORS] is False and app.state[FieldVar.STREAMLINES] is True
         assert controller.scene is not None and controller.scene.spec.streamlines is None
         assert str(app.state[StateVar.STATUS]) == "plain: 1 fields, 2 bodies, 3D"
 
