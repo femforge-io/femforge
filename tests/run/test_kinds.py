@@ -54,18 +54,65 @@ def _config(**mesh: object) -> SimulationConfig:
 STEP_TEXT = "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('x'),'2;1');\nFILE_NAME('a.step','{stamp}',('me'),(''),'occ','b3d','');\nENDSEC;\nDATA;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\nENDSEC;\nEND-ISO-10303-21;\n"
 
 
-def test_step_digest_masks_the_export_timestamp(tmp_path: Path) -> None:
+def _bracket(face_name: str = "Left", face_color: str = "red", shift: float = 0.0, material: str = "Steel316") -> TaggedCompound:
+    import build123d as b3d
+
+    box = b3d.Box(20, 4, 6)
+    face = TaggedFace(box.faces().sort_by(b3d.Axis.X)[0], name=face_name)
+    face.color = b3d.Color(face_color)
+    block = TaggedPart([b3d.Box(4, 4, 4)], tags={TagKey.MATERIAL: "Air"}, name="Block")
+    block.location = b3d.Location((shift, 0, 10))
+    bar = TaggedPart([box], tags={TagKey.MATERIAL: material}, name="Bar")
+    bar.color = b3d.Color("gray")
+    return TaggedCompound(children=[bar, face, block])
+
+
+def test_step_digest_is_the_same_for_every_export_of_one_model(tmp_path: Path) -> None:
+    model = _bracket()
+    digests: set[str] = set()
+    for name in ("a.step", "b.step"):
+        model.export_step(str(tmp_path / name))
+        digests.add(step_digest(tmp_path / name))
+
+    assert digests == {model.fingerprint()}
+
+
+def test_step_digest_moves_with_names_colors_placement_and_tags(tmp_path: Path) -> None:
+    variants = (_bracket(), _bracket(face_name="Right"), _bracket(face_color="blue"), _bracket(shift=1.0), _bracket(material="Steel1080"))
+    digests: set[str] = set()
+    for variant in variants:
+        variant.export_step(str(tmp_path / "model.step"))
+        digests.add(step_digest(tmp_path / "model.step"))
+
+    assert len(digests) == len(variants)
+
+
+def test_step_digest_of_a_missing_file_hashes_its_path() -> None:
+    assert step_digest("data/missing.step") == step_digest("data/missing.step")
+    assert step_digest("data/missing.step") != step_digest("data/other.step")
+
+
+def test_step_digest_of_a_step_that_does_not_import_masks_its_timestamp_and_warns(tmp_path: Path) -> None:
+    from femforge.common.log import log
+
     first = tmp_path / "a.step"
     second = tmp_path / "b.step"
     _ = first.write_text(STEP_TEXT.format(stamp="2026-08-30T15:42:25"), encoding="utf-8")
     _ = second.write_text(STEP_TEXT.format(stamp="2026-09-02T21:00:00"), encoding="utf-8")
-    assert step_digest(first) == step_digest(second)
+    warnings: list[str] = []
+    sink_id: int = log.add(warnings.append, level="WARNING", format="{message} | {extra}")
+
+    try:
+        assert step_digest(first) == step_digest(second)
+    finally:
+        log.remove(sink_id)
+
+    assert len(warnings) == 2
+    assert "did not import" in warnings[0]
+    assert "a.step" in warnings[0]
 
     _ = second.write_text(STEP_TEXT.format(stamp="2026-09-02T21:00:00").replace("(0.,0.,0.)", "(1.,0.,0.)"), encoding="utf-8")
     assert step_digest(first) != step_digest(second)
-
-    assert step_digest("data/missing.step") == step_digest("data/missing.step")
-    assert step_digest("data/missing.step") != step_digest("data/other.step")
 
 
 def test_step_kind_builds_the_geometry_into_its_workdir(tmp_path: Path) -> None:

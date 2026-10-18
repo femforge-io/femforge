@@ -108,6 +108,27 @@ def test_reuse_returns_the_finished_bundle_without_solving(tmp_path: Path) -> No
     assert solver.calls == 2
 
 
+def test_reuse_survives_a_re_export_of_the_authored_step(tmp_path: Path) -> None:
+    def model() -> TaggedCompound:
+        bar = TaggedPart([b3d.Box(20, 4, 6)], tags={TagKey.MATERIAL: "Steel316"}, name="Bar")
+        bar.color = b3d.Color("gray")
+        return TaggedCompound(children=[bar])
+
+    step = tmp_path / "authored.step"
+    config = SimulationConfig(mesh=MeshConfig(step=str(step)))
+    solver = _CountingSolver()
+    driver = Driver(runs_dir=tmp_path / "runs", code_sha="sha1", solver=solver)
+
+    model().export_step(str(step))
+    first = driver.evaluate(config)
+    model().export_step(str(step))
+    second = driver.evaluate(config)
+
+    assert solver.calls == 1
+    assert second.status == "ok"
+    assert second.run_id == first.run_id
+
+
 def test_reuse_skips_error_bundles_and_accepts_diverged_ones(tmp_path: Path) -> None:
     config = _config()
     fixture = (FIXTURES / "elmersolver.log").read_text(encoding="utf-8")

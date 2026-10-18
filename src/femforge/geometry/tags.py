@@ -1,10 +1,12 @@
 """Tagged build123d shapes whose tags ride their STEP names into the mesh."""
 
+import json
 from collections.abc import Iterable, Sequence
 from typing import ClassVar, cast
 
 import build123d as b3d
 
+from femforge.artifacts.keys import sha256_json
 from femforge.common.tags import HasTags, TagDict, TagKey
 from femforge.geometry.utils import Any3D, AnyShape, Mixin3D
 
@@ -63,6 +65,41 @@ class TaggedCompound(b3d.Compound, HasTags):
             leaves.extend(placed)
 
         return leaves
+
+    def fingerprint(self) -> str:
+        """SHA-256 of every placed leaf's kind, tags, RGB color and mass properties to nine significant digits, so it ignores leaf order and survives a STEP round trip."""
+
+        def rounded(value: float, scale: float) -> float:
+            # Integration noise leaves values like 1e-13 where an exact zero belongs, which nine significant digits would keep.
+            return 0.0 if abs(value) < 1e-9 * scale else float(f"{value:.9g}")
+
+        def describe(leaf: TaggedPart | TaggedFace | TaggedEdge) -> list[object]:
+            box: b3d.BoundBox = leaf.bounding_box(optimal=True)
+            scale: float = box.diagonal
+            center: b3d.Vector = leaf.center(b3d.CenterOf.MASS)
+            # STEP export drops transparency, so alpha is left out.
+            rgba = None if leaf.color is None else cast("tuple[float, float, float, float]", tuple(leaf.color))
+            color: list[float] | None = None if rgba is None else [rounded(channel, 1.0) for channel in rgba[:3]]
+            volume: float | None = rounded(leaf.volume, scale**3) if isinstance(leaf, TaggedPart) else None
+            area: float | None = None if isinstance(leaf, TaggedEdge) else rounded(leaf.area, scale**2)
+            length: float | None = rounded(leaf.length, scale) if isinstance(leaf, TaggedEdge) else None
+            tags: list[list[str]] = sorted([str(key), value] for key, value in leaf.tags.items())
+
+            return [
+                type(leaf).__name__,
+                leaf.tags.get(TagKey.NAME),
+                tags,
+                color,
+                volume,
+                area,
+                length,
+                [rounded(coordinate, scale) for coordinate in center],
+                [rounded(coordinate, scale) for coordinate in box.min],
+                [rounded(coordinate, scale) for coordinate in box.max],
+            ]
+
+        described: list[list[object]] = [describe(leaf) for leaf in self.placed_leaves()]
+        return sha256_json(sorted(described, key=json.dumps))
 
     def flatten_and_tag(self) -> b3d.Compound:
         """A new compound of the world-placed tagged leaves (see [`placed_leaves`][]), labelled with their tags; ``self`` is left untouched."""

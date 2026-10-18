@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, SerializeAsAny
 from femforge.artifacts.keys import artifact_key, sha256_json, spec_payload
 from femforge.artifacts.kind import ArtifactKind, BuiltinKind, Produced
 from femforge.common.files import BundleFile
+from femforge.common.log import log
 from femforge.common.pydantic import HashExclude
 from femforge.config import SimulationConfig
 from femforge.frames import FrameUnion
@@ -35,16 +37,29 @@ _FILE_NAME_HEADER = re.compile(rb"FILE_NAME\s*\(.*?\)\s*;", re.DOTALL)
 
 
 def step_digest(path: str | Path) -> str:
-    """SHA-256 of a STEP with its ``FILE_NAME`` header (the export timestamp) masked; of the path string when the file is absent, so pure-logic keys stay deterministic."""
+    """The [`TaggedCompound.fingerprint`][femforge.geometry.tags.TaggedCompound.fingerprint] of the imported STEP, so a re-export digests alike; of the path string when the file is absent."""
     file: Path = Path(path)
     if not file.is_file():
         return hashlib.sha256(str(path).encode("utf-8")).hexdigest()
 
-    return hashlib.sha256(_FILE_NAME_HEADER.sub(b"FILE_NAME();", file.read_bytes())).hexdigest()
+    # Keyed on the bytes, not the mtime: a re-export within one clock tick must not hit a stale entry.
+    return _file_digest(file.resolve(), hashlib.sha256(file.read_bytes()).hexdigest())
+
+
+@lru_cache(maxsize=64)
+def _file_digest(file: Path, content: str) -> str:
+    """The digest of ``file`` while its bytes hash to ``content``, falling back to its timestamp-masked bytes when it does not import."""
+    from femforge.geometry.step import import_tagged_step
+
+    try:
+        return import_tagged_step(file).fingerprint()
+    except Exception as error:
+        log.bind(path=str(file), content=content, error=str(error)).warning("STEP did not import; keying it on its bytes.")
+        return hashlib.sha256(_FILE_NAME_HEADER.sub(b"FILE_NAME();", file.read_bytes())).hexdigest()
 
 
 class AuthoredStep(BaseModel):
-    """An authored STEP file: its masked content digest is the identity, its path only where it is read from."""
+    """An authored STEP file: its geometric digest is the identity, its path only where it is read from."""
 
     model_config = ConfigDict(use_attribute_docstrings=True)
 
@@ -52,7 +67,7 @@ class AuthoredStep(BaseModel):
     """Where the file is read from; moving it does not change the geometry."""
 
     digest: str
-    """The file's ``step_digest``."""
+    """The file's ``step_digest``: the fingerprint of its tagged leaves, so re-exporting the same model keeps it."""
 
 
 class StepSpec(BaseModel):
@@ -102,7 +117,7 @@ STEP: ArtifactKind[StepSpec] = ArtifactKind(
 
 
 def step_spec(config: SimulationConfig) -> StepSpec:
-    """The STEP spec of ``config``: its parametric geometry, else the authored ``mesh.step`` by content digest."""
+    """The STEP spec of ``config``: its parametric geometry, else the authored ``mesh.step`` by geometric digest."""
     source: GeometryArea | AuthoredStep = config.geometry if config.geometry is not None else AuthoredStep(path=config.mesh.step, digest=step_digest(config.mesh.step))
     return StepSpec(source=source, frame=config.frame)
 

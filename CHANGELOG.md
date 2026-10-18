@@ -36,6 +36,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 ### Fixed
 
 - The field viewer recolors the bodies when another field is picked. It used to keep drawing the values of the field it opened on, so a switch from the displacement to Von Mises left the bodies at the bottom of the colormap.
+- Exporting an authored STEP again keeps its run identity, so the driver reuses the run. The digest now hashes the names, tags, colors and mass properties of its bodies, `TaggedCompound.fingerprint`, instead of the bytes, which changed on every export; runs on an authored STEP are solved once more on first use.
 
 ## [0.1.0] - 2026-10-17
 
