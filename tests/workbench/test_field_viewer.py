@@ -20,6 +20,7 @@ from femforge.run.bundle import write_manifest
 from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
+from femforge.run.mechanical import VOIGT_COMPONENTS
 from femforge.telemetry.paths import Telemetry
 from femforge.telemetry.schemas import RUN_INDEX_SCHEMA, RunColumn
 from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, SceneActor
@@ -102,11 +103,15 @@ def _elastic_grid() -> pv.UnstructuredGrid:
     points = np.asarray(grid.points)
     count = len(points)
     grid.point_data["displacement"] = np.column_stack([1e-3 * points[:, 0], 1e-3 * points[:, 1], -1e-4 * points[:, 0] ** 2])
-    grid.point_data["stress"] = np.tile([1e6, 2e6, 3e6, 0.0, 0.0, 0.0], (count, 1))
-    grid.point_data["strain"] = np.tile([1e-5, 2e-5, 3e-5, 0.0, 0.0, 0.0], (count, 1))
+
+    for variable, values in (("stress", (1e6, 2e6, 3e6, 0.0, 0.0, 0.0)), ("strain", (1e-5, 2e-5, 3e-5, 0.0, 0.0, 0.0))):
+        for component, value in zip(VOIGT_COMPONENTS, values, strict=True):
+            grid.point_data[f"{variable}_{component}"] = np.full(count, value)
+
     grid.point_data["vonmises"] = np.full(count, 1.7e6)
+    grid.point_data["tresca"] = np.full(count, 1e6)
     grid.point_data["principal stress"] = np.tile([2e6, 3e6, 1e6], (count, 1))
-    grid.point_data["strain energy density"] = np.full(count, 70.0)
+    grid.point_data["principal strain"] = np.tile([2e-5, 3e-5, 1e-5], (count, 1))
 
     return grid
 
@@ -329,7 +334,7 @@ def test_an_elasticity_run_opens_on_the_displacement_and_offers_von_mises_and_st
 
         titles = [item["title"] for item in cast("list[dict[str, object]]", app.state[FieldVar.FIELDS])]
 
-        assert titles == ["Displacement", "Principal Stress", "Strain Energy Density", "Von Mises"]
+        assert titles == ["Displacement", "Principal Strain", "Principal Stress", "Strain Energy Density", "Tresca", "Von Mises"]
         assert app.state[FieldVar.FIELD] == "displacement" and app.state[FieldVar.MODE] == "magnitude"
         assert app.state[FieldVar.HAS_VECTORS] is True
 

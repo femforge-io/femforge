@@ -59,14 +59,14 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 | --- | --- | --- |
 | An MPI solve's scalars are read from rank 0 and never summed, since every rank writes the globally reduced row. | `src/femforge/run/parse.py:98-122` | `tests/run/test_parse.py::test_parse_mpi_rank_dats_read_rank_zero` |
 | An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:117-119`, `src/femforge/run/parse.py:213-216` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
-| The field display's automatic range is the union of every body's own robust range, hidden or styled bodies included. | `src/femforge/viz/field_display.py:524-566`, `src/femforge/viz/field_display.py:923-927` | `tests/viz/test_field_display.py::test_the_color_range_covers_every_body_however_it_is_shown` |
+| The field display's automatic range is the union of every body's own robust range, hidden or styled bodies included. | `src/femforge/viz/field_display.py:535-577`, `src/femforge/viz/field_display.py:934-938` | `tests/viz/test_field_display.py::test_the_color_range_covers_every_body_however_it_is_shown` |
 | A field line ends at its first sharp reversal, where the cosine between consecutive steps drops below -0.5. | `src/femforge/viz/field_lines.py:222-259` | `tests/viz/test_field_lines.py::test_a_line_ends_at_its_first_sharp_reversal_and_a_straight_one_stays_whole` |
 
 ## Workbench
 
 | Rule | Code | Test |
 | --- | --- | --- |
-| Field lines follow the shown vector field, else the magnetic flux density, else the first vector field. | `src/femforge/viz/field_display.py:297-314` | `tests/viz/test_field_display.py::test_line_vectors_prefer_the_shown_vector_then_the_flux_density_then_the_first_vector` |
+| Field lines follow the shown vector field, else the magnetic flux density, else the first vector field. | `src/femforge/viz/field_display.py:308-325` | `tests/viz/test_field_display.py::test_line_vectors_prefer_the_shown_vector_then_the_flux_density_then_the_first_vector` |
 | A page has one VTK.wasm mirror: a panel that switches to the mirror moves every older mirroring panel to streaming. | `packages/femforge-workbench/src/femforge_workbench/panels/scene.py:523-528`, `packages/femforge-workbench/src/femforge_workbench/panels/scene.py:677-682` | `tests/workbench/test_scene.py::test_the_newest_panel_takes_the_mirror_and_the_older_ones_stream` |
 | Mirrored polydata carries 32-bit cell arrays, because the wasm32 runtime misreads 64-bit ids. | `packages/femforge-workbench/src/femforge_workbench/panels/scene.py:221-230` | `tests/workbench/test_scene.py::test_the_mirror_gets_cell_arrays_its_32_bit_runtime_reads` |
 

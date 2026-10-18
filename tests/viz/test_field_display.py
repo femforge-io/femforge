@@ -11,6 +11,7 @@ import pytest
 from femforge.common.files import BundleFile
 from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
 from femforge.run.inspect import Run
+from femforge.run.mechanical import VOIGT_COMPONENTS, derived_arrays
 from femforge.viz.field_display import (
     SCALARS_ARRAY,
     Association,
@@ -120,8 +121,13 @@ def test_field_info_modes_depend_on_the_component_count() -> None:
         ("magnetic flux density e", 3, FieldKind.VECTOR),
         ("principal stress", 3, FieldKind.PRINCIPAL),
         ("Principal Strain e", 3, FieldKind.PRINCIPAL),
+        ("tresca", 1, FieldKind.SCALAR),
         ("stress", 6, FieldKind.TENSOR),
         ("strain", 4, FieldKind.TENSOR),
+        ("stress_xx", 1, FieldKind.TENSOR),
+        ("Strain_XZ e", 1, FieldKind.TENSOR),
+        ("custom_xx", 1, FieldKind.SCALAR),
+        ("stress_ab", 1, FieldKind.SCALAR),
     ],
 )
 def test_field_kind_follows_the_width_and_the_principal_variables(name: str, components: int, kind: FieldKind) -> None:
@@ -140,28 +146,41 @@ def test_field_infos_excludes_geometry_ids_and_sorts_by_display_name() -> None:
     assert infos[1].dtype == "float64"
 
 
-def _elastic_arrays() -> dict[str, np.typing.NDArray[np.generic]]:
-    return {
-        "stress": np.zeros((4, 6)),
-        "strain": np.zeros((4, 6)),
-        "displacement": np.zeros((4, 3)),
+def _elastic_arrays() -> dict[str, np.typing.NDArray[np.float64]]:
+    """The point arrays of an Elmer elasticity VTU, its split tensor columns stacked by the derived fields."""
+    columns: dict[str, np.typing.NDArray[np.float64]] = {f"{variable}_{component}": np.full(4, 1.0) for variable in ("stress", "strain") for component in VOIGT_COMPONENTS}
+    solved: dict[str, np.typing.NDArray[np.float64]] = {
+        **columns,
         "vonmises": np.zeros(4),
+        "tresca": np.zeros(4),
+        "displacement": np.zeros((4, 3)),
         "principal stress": np.zeros((4, 3)),
-        "strain energy density": np.zeros(4),
+        "principal strain": np.zeros((4, 3)),
     }
 
+    return {**solved, **derived_arrays(solved)}
 
-def test_field_infos_leave_out_tensors_and_keep_the_elasticity_fields() -> None:
-    infos = field_infos(_elastic_arrays(), {})
 
-    assert [info.name for info in infos] == ["displacement", "principal stress", "strain energy density", "vonmises"]
-    assert [info.kind for info in infos] == [FieldKind.VECTOR, FieldKind.PRINCIPAL, FieldKind.SCALAR, FieldKind.SCALAR]
+def test_field_infos_leave_out_tensors_and_their_columns_and_keep_the_elasticity_fields() -> None:
+    arrays = _elastic_arrays()
+    infos = field_infos(arrays, {})
+
+    assert {"stress", "strain", "stress_xx", "strain_xz"} <= arrays.keys()
+    assert [info.name for info in infos] == ["displacement", "principal strain", "principal stress", "strain energy density", "tresca", "vonmises"]
+    assert [info.kind for info in infos] == [FieldKind.VECTOR, FieldKind.PRINCIPAL, FieldKind.PRINCIPAL, FieldKind.SCALAR, FieldKind.SCALAR, FieldKind.SCALAR]
 
 
 def test_elasticity_fields_take_their_units_and_names() -> None:
     titles = [info.title for info in field_infos(_elastic_arrays(), {})]
 
-    assert titles == ["Displacement [m]", "Principal Stress [Pa]", "Strain Energy Density [J/m³]", "Von Mises [Pa]"]
+    assert titles == [
+        "Displacement [m]",
+        "Principal Strain [-]",
+        "Principal Stress [Pa]",
+        "Strain Energy Density [J/m³]",
+        "Tresca [Pa]",
+        "Von Mises [Pa]",
+    ]
     assert FieldInfo(name="vonmises e", association=Association.CELL, components=1, dtype="float64").display_name == "Von Mises E"
 
 

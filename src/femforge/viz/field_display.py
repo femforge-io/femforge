@@ -17,6 +17,7 @@ from femforge.elmer.physics import Physics
 from femforge.elmer.variables import ELEMENTAL_SUFFIX, ElmerVariable, elemental, variable_of, variable_unit
 from femforge.frames import Frame, SolvePlane, default_frame
 from femforge.run.fields import GEOMETRY_IDS_ARRAY, select_array
+from femforge.run.mechanical import VOIGT_COMPONENTS
 from femforge.viz.colormaps import register_paraview
 from femforge.viz.field_lines import (
     Bounds,
@@ -159,22 +160,32 @@ class FieldKind(StrEnum):
     """Three principal values, which no rotation changes."""
 
     TENSOR = "tensor"
-    """Any other width, such as a Voigt stress tensor; not displayed."""
+    """A Voigt tensor, whole or as one of the ``stress_xx`` columns Elmer splits it into, or any other width; not displayed."""
 
 
 PRINCIPAL_VARIABLES: frozenset[ElmerVariable] = frozenset({ElmerVariable.PRINCIPAL_STRESS, ElmerVariable.PRINCIPAL_STRAIN})
 """The 3-component variables that hold principal values rather than a vector."""
 
+TENSOR_VARIABLES: frozenset[ElmerVariable] = frozenset({ElmerVariable.STRESS, ElmerVariable.STRAIN})
+"""The Voigt tensor variables, whose split ``<name>_xx`` columns are tensor parts rather than scalars."""
+
 
 def field_kind(name: str, components: int) -> FieldKind:
     """The kind of a VTU array by its name and its component count."""
-    if components == 1:
-        return FieldKind.SCALAR
 
-    if components != 3:
+    def tensor_column() -> bool:
+        bare: str = name.lower().removesuffix(ELEMENTAL_SUFFIX)
+        variable, _, component = bare.rpartition("_")
+
+        return component in VOIGT_COMPONENTS and variable_of(variable) in TENSOR_VARIABLES
+
+    if components == 3:
+        return FieldKind.PRINCIPAL if variable_of(name) in PRINCIPAL_VARIABLES else FieldKind.VECTOR
+
+    if components != 1 or tensor_column():
         return FieldKind.TENSOR
 
-    return FieldKind.PRINCIPAL if variable_of(name) in PRINCIPAL_VARIABLES else FieldKind.VECTOR
+    return FieldKind.SCALAR
 
 
 class Legend(StrEnum):

@@ -105,7 +105,7 @@ The controls come in four sections:
 
 **The legend starts hidden.** The range slider wears the colormap between its thumbs, so the controls read as the legend. Set Legend to Vertical or Horizontal to draw a color bar in the view, titled with the field's unit, before a screenshot. Field lines share that bar while they map like the field, and get a bar of their own only when their colormap or range differs. Moving a thumb of the range slider pins the range and turns Auto Range off.
 
-The Quantity picker lists every scalar, vector and principal-value array of the run. A stress or strain tensor is left out; read it with [Run.mesh()][femforge.run.Run.mesh]. The Mode picker offers what the quantity supports:
+The Quantity picker lists every scalar, vector and principal-value array of the run. The stress and strain tensors are left out, with the `stress_xx` and `strain_xx` columns Elmer splits them into; read them with [Run.mesh()][femforge.run.Run.mesh]. The Mode picker offers what the quantity supports:
 
 | [DisplayMode][femforge.viz.DisplayMode] | Colors by | Offered for |
 |---|---|---|

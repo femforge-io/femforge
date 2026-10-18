@@ -64,6 +64,9 @@ class ElmerVariable(StrEnum):
     VON_MISES = "VonMises"
     """Fixed by Elmer: the von Mises stress StressSolve writes beside the stress tensor."""
 
+    TRESCA = "Tresca"
+    """Fixed by Elmer: the Tresca (maximum shear) stress StressSolve writes beside the principal stresses."""
+
     PRINCIPAL_STRESS = "Principal Stress"
     """Fixed by Elmer: the StressSolve ``Calculate Principal`` principal stresses."""
 
@@ -99,7 +102,7 @@ class ElmerVariable(StrEnum):
                 return "A/m²"
             case ElmerVariable.ELECTRIC_FIELD:
                 return "V/m"
-            case ElmerVariable.STRESS | ElmerVariable.VON_MISES | ElmerVariable.PRINCIPAL_STRESS:
+            case ElmerVariable.STRESS | ElmerVariable.VON_MISES | ElmerVariable.TRESCA | ElmerVariable.PRINCIPAL_STRESS:
                 return "Pa"
             case ElmerVariable.STRAIN | ElmerVariable.PRINCIPAL_STRAIN:
                 return "-"
