@@ -22,6 +22,7 @@ from femforge.elmer.config.output.result_output import ResultOutputSolver
 from femforge.elmer.config.output.save_scalars import SaveScalarsSolver
 from femforge.elmer.config.thermal.heat import HeatSolver
 from femforge.elmer.solver_log import LoopTargets, normalize_solver_key
+from femforge.elmer.variables import ElmerVariable
 
 
 if TYPE_CHECKING:
@@ -70,6 +71,13 @@ class PhysicsConfig(BaseModel):
             if isinstance(spec, kind):
                 return spec
         raise KeyError(f"No {kind.__name__} in this physics' solver stack ({[type(s).__name__ for s in self.solvers]}).")
+
+    @property
+    def primary_variable(self) -> ElmerVariable | None:
+        """The field a viewer opens the run on: the display variable of the stack's last solver that names one."""
+        declared: list[ElmerVariable] = [solver.display_variable for solver in self.solvers if solver.display_variable is not None]
+
+        return declared[-1] if declared else None
 
     def check_frame(self, frame: Frame) -> None:
         """Raise when this stack's coordinate system is not ``frame``'s or one of its solvers cannot solve under ``frame``."""

@@ -35,6 +35,8 @@ class HeatSolver(SolverBase, LinearSystem, NonlinearSystem, SteadyState):
     kind: Literal["HeatSolver"] = "HeatSolver"
     """Discriminator that names this solver, doubling as its sif Solver label."""
 
+    display_variable: ClassVar[ElmerVariable | None] = ElmerVariable.TEMPERATURE
+
     required_material_keys: ClassVar[frozenset[ElmerMaterialKeyword]] = frozenset({ElmerMaterialKeyword.HEAT_CONDUCTIVITY})
 
     equation: EquationField = "HeatSolver"

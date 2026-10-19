@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from femforge.elmer.physics import Physics
+from femforge.elmer.variables import ElmerVariable
 from femforge.elmer.config import (
     Constants,
     ElectrostaticsSolver,
@@ -259,3 +260,31 @@ def test_a_cartesian_stack_cannot_solve_a_cartesian_2d_frame() -> None:
 
     with pytest.raises(ValueError, match="Coordinate System 'Cartesian' cannot solve frame=Cartesian2D"):
         physics_config(Physics.THERMAL).check_frame(Cartesian2D(thickness=10 * U.mm))
+
+
+_PRIMARIES: list[tuple[Physics, ElmerVariable]] = [
+    (Physics.MAGNETOSTATICS, ElmerVariable.MAGNETIC_FLUX_DENSITY),
+    (Physics.MAGNETOSTATICS_2D, ElmerVariable.MAGNETIC_FLUX_DENSITY),
+    (Physics.COIL_MAGNETOSTATICS, ElmerVariable.MAGNETIC_FLUX_DENSITY),
+    (Physics.THERMAL, ElmerVariable.TEMPERATURE),
+    (Physics.JOULE_HEATING, ElmerVariable.TEMPERATURE),
+    (Physics.ELECTROSTATICS, ElmerVariable.POTENTIAL),
+    (Physics.CURRENT_CONDUCTION, ElmerVariable.POTENTIAL),
+    (Physics.LINEAR_ELASTICITY, ElmerVariable.DISPLACEMENT),
+]
+
+
+@pytest.mark.parametrize(("physics", "primary"), _PRIMARIES)
+def test_each_preset_names_its_primary_variable(physics: Physics, primary: ElmerVariable) -> None:
+    assert physics_config(physics).primary_variable is primary
+
+
+def test_the_primary_variable_cases_cover_every_physics() -> None:
+    assert {physics for physics, _ in _PRIMARIES} == set(Physics)
+
+
+def test_a_stack_without_a_display_variable_names_none() -> None:
+    bare = physics_config(Physics.THERMAL).model_copy(update={"solvers": [ResultOutputSolver()]})
+
+    assert bare.primary_variable is None
+    assert "display_variable" not in StressSolver().model_dump()
