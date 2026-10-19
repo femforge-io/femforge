@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 
+from femforge.common.utils import title
 from femforge.elmer.physics import Physics
 
 
@@ -16,7 +17,7 @@ class ElmerVariable(StrEnum):
     """
 
     POTENTIAL = "Potential"
-    """The conduction/electrostatic scalar potential (also the Dirichlet keyword of [`FixedPotential`][femforge.physical.conditions.FixedPotential]).
+    """The conduction/electrostatic scalar potential (also the Dirichlet keyword of [`FixedVoltage`][femforge.physical.conditions.FixedVoltage]).
     NOT renameable: coupled HeatSolve resolves the electric solution by this exact name for ``Joule Heat = True`` — any other name silently zeroes the heat source."""
 
     TEMPERATURE = "Temperature"
@@ -108,6 +109,35 @@ class ElmerVariable(StrEnum):
                 return "-"
             case ElmerVariable.STRAIN_ENERGY_DENSITY:
                 return "J/m³"
+
+    @property
+    def display_name(self) -> str:
+        """The variable's name as a viewer labels it: "Voltage Potential" for the potential, the Title Case value for the rest."""
+        match self:
+            case ElmerVariable.POTENTIAL:
+                return "Voltage Potential"
+            case (
+                ElmerVariable.TEMPERATURE
+                | ElmerVariable.DISPLACEMENT
+                | ElmerVariable.JOULE_HEATING
+                | ElmerVariable.MAGNETIC_FLUX_DENSITY
+                | ElmerVariable.MAGNETIC_FIELD_ENERGY
+                | ElmerVariable.EDDY_CURRENT_POWER
+                | ElmerVariable.MAGNETIC_FIELD_STRENGTH
+                | ElmerVariable.NODAL_FORCE
+                | ElmerVariable.CURRENT_DENSITY
+                | ElmerVariable.JFIX
+                | ElmerVariable.VOLUME_CURRENT
+                | ElmerVariable.ELECTRIC_FIELD
+                | ElmerVariable.STRESS
+                | ElmerVariable.STRAIN
+                | ElmerVariable.VON_MISES
+                | ElmerVariable.TRESCA
+                | ElmerVariable.PRINCIPAL_STRESS
+                | ElmerVariable.PRINCIPAL_STRAIN
+                | ElmerVariable.STRAIN_ENERGY_DENSITY
+            ):
+                return title(self.value)
 
     @property
     def lines_by_default(self) -> bool:

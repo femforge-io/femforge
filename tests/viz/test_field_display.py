@@ -107,6 +107,17 @@ def test_field_infos_take_their_units_from_the_variable_catalogue_and_the_physic
     assert magnetic["potential"] == "T·m" and electric["potential"] == "V"
 
 
+def test_the_potential_reads_as_a_voltage_potential_unless_it_is_magnetic() -> None:
+    from femforge.elmer.physics import Physics
+
+    arrays = {"potential": SCALARS, "potential e": SCALARS}
+    electric = {info.name: info.title for info in field_infos(arrays, {}, Physics.CURRENT_CONDUCTION)}
+    magnetic = {info.name: info.title for info in field_infos(arrays, {}, Physics.MAGNETOSTATICS_2D)}
+
+    assert electric == {"potential": "Voltage Potential [V]", "potential e": "Voltage Potential E [V]"}
+    assert magnetic == {"potential": "Potential [T·m]", "potential e": "Potential E [T·m]"}
+
+
 def test_field_info_display_name_applies_the_renames() -> None:
     plain = FieldInfo(name="joule heating", association=Association.CELL, components=1, dtype="float64")
     renamed = FieldInfo(name="Jfix", association=Association.CELL, components=3, dtype="float64")
