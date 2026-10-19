@@ -9,13 +9,13 @@ from femforge.frames import Axis, Axisymmetric, Cartesian2D, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.physical.units import U, quantity
 from femforge.common.files import BundleFile
-from femforge.run.result import Result
+from femforge.run.result import Result, RunStatus
 
 
 def _result() -> Result:
     return Result(
         frame=Solid(),
-        status="ok",
+        status=RunStatus.OK,
         force=quantity(Vec3(1.0, 2.0, 3.0), U.N),
         torque=quantity(Vec3(0.0, 0.0, 0.5), U.N * U.m),
         flux_density_max=1.2 * U.T,
@@ -47,7 +47,7 @@ def test_result_round_trips_through_json() -> None:
 
 
 def test_optional_quantities_default_to_none() -> None:
-    bare = Result(frame=Solid(), status="error")
+    bare = Result(frame=Solid(), status=RunStatus.ERROR)
     assert bare.force is None and bare.torque is None and bare.flux_density_max is None
     assert Result.model_validate_json(bare.model_dump_json()).status == "error"
 
@@ -61,7 +61,7 @@ def test_force_rejects_wrong_dimensionality() -> None:
 def test_component_forces_round_trip_through_json() -> None:
     result = Result(
         frame=Solid(),
-        status="ok",
+        status=RunStatus.OK,
         component_forces={"N42_MAGNETIZATIONN": quantity(Vec3(0.0, 0.0, 4.2), U.N)},
         component_torques={"N42_MAGNETIZATIONN": quantity(Vec3(0.0, 0.1, 0.0), U.N * U.m)},
     )
@@ -88,7 +88,7 @@ def test_a_result_without_a_frame_fails_to_load_rather_than_loading_as_solid() -
 
 def test_frame_round_trips() -> None:
     frame = Axisymmetric(axis=Axis(origin=Vec3(1, 2, 3), direction=Direction(1, 0, 0)))
-    restored = Result.model_validate_json(Result(status="ok", frame=frame).model_dump_json())
+    restored = Result.model_validate_json(Result(status=RunStatus.OK, frame=frame).model_dump_json())
     assert isinstance(restored.frame, Axisymmetric)
     assert restored.frame.axis.direction.to_list() == [1, 0, 0]
     assert restored.frame.axis.origin.to_list() == [1, 2, 3]
@@ -99,7 +99,7 @@ MINUS_Z = Axis(direction=Direction(0, 0, -1))
 
 def test_axial_force_of_a_solid_run_projects_onto_the_given_axis() -> None:
     force = quantity(Vec3(3.0, 4.0, -2.0), U.N)
-    result = Result(frame=Solid(), status="ok", component_forces={"MAGNET": force})
+    result = Result(frame=Solid(), status=RunStatus.OK, component_forces={"MAGNET": force})
     assert result.axial_force("MAGNET", axis=Axis.Z).m_as("newton") == pytest.approx(-2.0)
     assert result.axial_force("MAGNET", axis=MINUS_Z).m_as("newton") == pytest.approx(2.0)
     assert result.axial_force("MAGNET", axis=Axis.X).m_as("newton") == pytest.approx(3.0)
@@ -110,7 +110,7 @@ def test_axial_force_of_a_solid_run_projects_onto_the_given_axis() -> None:
 
 def test_axial_force_of_an_axisymmetric_run_reads_solve_y_along_the_symmetry_axis() -> None:
     force = quantity(Vec3(0.0, 7.5, 0.0), U.N)
-    result = Result(frame=Axisymmetric(), status="ok", component_forces={"MAGNET": force})
+    result = Result(frame=Axisymmetric(), status=RunStatus.OK, component_forces={"MAGNET": force})
     assert result.axial_force("MAGNET").m_as("newton") == pytest.approx(7.5)
     assert result.axial_force("MAGNET", axis=Axis.Z).m_as("newton") == pytest.approx(7.5)
     assert result.axial_force("MAGNET", axis=MINUS_Z).m_as("newton") == pytest.approx(-7.5)
@@ -121,7 +121,7 @@ def test_axial_force_of_an_axisymmetric_run_reads_solve_y_along_the_symmetry_axi
 
 def test_axial_force_of_a_cartesian_2d_run_projects_the_plane_components_onto_the_axis() -> None:
     force = quantity(Vec3(3.0, 4.0, 0.0), U.N)
-    result = Result(frame=Cartesian2D(normal=Axis.X, thickness=10 * U.mm), status="ok", component_forces={"MAGNET": force})
+    result = Result(frame=Cartesian2D(normal=Axis.X, thickness=10 * U.mm), status=RunStatus.OK, component_forces={"MAGNET": force})
 
     assert result.axial_force("MAGNET", axis=Axis.Y).m_as("newton") == pytest.approx(3.0)
     assert result.axial_force("MAGNET", axis=Axis.Z).m_as("newton") == pytest.approx(4.0)

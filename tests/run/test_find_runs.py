@@ -7,13 +7,14 @@ from femforge.config import RunMeta, SimulationConfig
 from femforge.run.bundle import write_manifest
 from femforge.run.inspect import Run, find_runs
 from femforge.run.manifest import RunManifest
+from femforge.run.result import RunStatus
 
 
 def _bundle(runs_dir: Path, name: str, *, description: str | None = None, tags: dict[str, str] | None = None, notes: str = "", mtime: float | None = None) -> Path:
     config = SimulationConfig()
     config.meta.description = description
     config.meta.tags = tags or {}
-    manifest = RunManifest.build(config, status="ok", run_id=name, code_sha=name, notes=notes)
+    manifest = RunManifest.build(config, status=RunStatus.OK, run_id=name, code_sha=name, notes=notes)
     bundle = runs_dir / name
     bundle.mkdir(parents=True)
     path = write_manifest(bundle, manifest)

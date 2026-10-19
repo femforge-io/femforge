@@ -25,6 +25,7 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.run.driver import Driver
 from femforge.physical.units import U
 from femforge.run.retention import RetentionPolicy
+from femforge.run.result import RunStatus
 
 pytestmark = pytest.mark.skipif(os.environ.get("FEMFORGE_DOCKER_TESTS") != "1", reason="set FEMFORGE_DOCKER_TESTS=1 to run the Docker end-to-end tests")
 
@@ -63,7 +64,7 @@ def test_a_docker_driver_converts_partitions_and_solves_without_native_elmer(tmp
     result = driver.evaluate(config)
 
     bundle: Path = tmp_path / "runs" / str(result.run_id)
-    assert result.status == "ok", (bundle / "elmersolver.log").read_text(encoding="utf-8")[-3000:]
+    assert result.status == RunStatus.OK, (bundle / "elmersolver.log").read_text(encoding="utf-8")[-3000:]
     assert (bundle / "mesh.header").is_file()
     assert (bundle / "partitioning.2").is_dir()
     assert (bundle / "elmergrid.log").is_file() and (bundle / "elmergrid_partition.log").is_file()

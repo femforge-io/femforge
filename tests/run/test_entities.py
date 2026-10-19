@@ -22,6 +22,7 @@ from femforge.run.entities import (
     write_entities,
 )
 from femforge.run.manifest import RunManifest
+from femforge.run.result import RunStatus
 
 FIXED_DT = datetime(2026, 6, 14, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -128,7 +129,7 @@ def _manifest(tmp_path: Path) -> RunManifest:
             ],
         ),
     )
-    return RunManifest.build(config, status="ok", code_sha="sha1", created_at=FIXED_DT)
+    return RunManifest.build(config, status=RunStatus.OK, code_sha="sha1", created_at=FIXED_DT)
 
 
 _MESH_NAMES = """\

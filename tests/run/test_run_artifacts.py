@@ -23,6 +23,7 @@ from femforge.run.artifacts import BundlePolicy, MeshRebindError, bundle_files, 
 from femforge.run.bundle import write_manifest
 from femforge.run.kinds import ELMER_MESH, STEP, MeshSpec, StepSpec, mesh_spec
 from femforge.run.manifest import RunManifest
+from femforge.run.result import RunStatus
 
 
 @dataclass
@@ -247,7 +248,7 @@ def test_rehydrate_and_prune_follow_the_manifest(tmp_path: Path) -> None:
     )
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         run_id="run123",
         code_sha="sha1",
     )

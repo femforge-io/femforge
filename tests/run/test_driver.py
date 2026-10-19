@@ -30,11 +30,12 @@ from femforge.run.bundle import load_manifest, write_manifest
 from femforge.run.driver import Driver, SolveState, default_backend
 from femforge.run.manifest import RunManifest, cache_key
 from femforge.common.names import bundle_name
-from femforge.run.result import MeshStats
+from femforge.run.result import LifecycleStatus, MeshStats, RunStatus
 from femforge.run.retention import Cleanup, CleanupTrigger, RetentionPolicy
 from femforge.run.stages import Stage, StageEvent
 
 FIXTURES: Path = Path(__file__).parent / "fixtures"
+STALL_LOG: Path = Path(__file__).parents[1] / "elmer" / "fixtures" / "stall" / "lucid_cactus.log"
 
 
 def _fake_solver(config: SimulationConfig, sim_dir: Path) -> MeshStats:
@@ -56,7 +57,7 @@ def test_driver_evaluate_parses_and_writes_bundle(tmp_path: Path) -> None:
     result = driver.evaluate(config)
 
     # The parsed Result comes from the fixture.
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert result.force is not None
     assert result.force.magnitude.x == pytest.approx(12.5)
     assert result.wall_time == pytest.approx(5.12)
@@ -70,7 +71,7 @@ def test_driver_evaluate_parses_and_writes_bundle(tmp_path: Path) -> None:
     manifest = load_manifest(bundle)
 
     assert manifest.run_id == run_id
-    assert manifest.status == "ok"
+    assert manifest.status == RunStatus.OK
     assert manifest.git_sha == "sha1"
     assert manifest.mesh_stats is not None
     assert manifest.mesh_stats.element_count == 1000
@@ -105,7 +106,7 @@ def test_driver_evaluates_a_config_with_nonlinear_steel(tmp_path: Path) -> None:
 
     result = driver.evaluate(config)
 
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     bundle = tmp_path / _run_name(config)
     assert (bundle / "manifest.json").is_file()
     assert load_manifest(bundle).run_id == _run_name(config)
@@ -321,7 +322,7 @@ def test_staged_default_solve_runs_stages_in_order(tmp_path: Path) -> None:
     result = driver.evaluate(config)
 
     assert driver.calls == ["prepare_geometry", "pre_mesh", "mesh", "post_mesh", "build_sim", "configure_sim", "write_sif", "run_solver"]
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
 
     bundle = tmp_path / _run_name(config)
     # write_sif generated a real sif carrying the configure_sim edit; mesh_stats reported the faked mesh.
@@ -336,7 +337,7 @@ def test_staged_default_solve_with_default_hooks(tmp_path: Path) -> None:
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"))
     driver = _MinimalStagedDriver(runs_dir=tmp_path, code_sha="sha1")
     result = driver.evaluate(config)
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert (tmp_path / _run_name(config) / "case.sif").is_file()
 
 
@@ -399,7 +400,7 @@ def test_manifest_is_written_running_before_the_solver_runs(tmp_path: Path) -> N
     result = driver.evaluate(config)
 
     assert observed == ["running"]
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert load_manifest(tmp_path / _run_name(config)).status == "ok"
 
 
@@ -420,7 +421,7 @@ def test_evaluate_clears_stale_outputs_from_a_reused_run_dir(tmp_path: Path) -> 
 
     result = Driver(runs_dir=tmp_path, code_sha="sha1", solver=asserting_solver).evaluate(config)
     assert "stale column" not in result.raw
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
 
 
 def test_a_raising_solver_persists_error_status_and_propagates(tmp_path: Path) -> None:
@@ -445,8 +446,8 @@ def test_staged_solve_records_nine_finished_stage_events(tmp_path: Path) -> None
     result = _MinimalStagedDriver(runs_dir=tmp_path, code_sha="sha1").evaluate(config)
 
     manifest = load_manifest(tmp_path / _run_name(config))
-    assert result.status == "ok"
-    assert manifest.status == "ok"
+    assert result.status == RunStatus.OK
+    assert manifest.status == RunStatus.OK
     assert [event.stage for event in manifest.stage_history] == [stage for stage in Stage if stage is not Stage.PUBLISH]
     assert all(event.finished_at is not None and event.finished_at >= event.started_at for event in manifest.stage_history)
     assert manifest.current_stage is None
@@ -476,7 +477,7 @@ def test_a_raising_stage_leaves_the_failed_stage_unfinished(tmp_path: Path) -> N
         _ = _ExplodingMeshDriver(runs_dir=tmp_path, code_sha="sha1").evaluate(config)
 
     manifest = load_manifest(tmp_path / _run_name(config))
-    assert manifest.status == "error"
+    assert manifest.status == RunStatus.ERROR
     # Cleanup still runs (and finishes) after the crash; the crashed stage stays the current one.
     stages = [event.stage for event in manifest.stage_history]
     assert stages == [Stage.PREPARE_GEOMETRY, Stage.PRE_MESH, Stage.MESH, Stage.CLEANUP]
@@ -491,7 +492,7 @@ def test_evaluate_refuses_a_bundle_name_collision(tmp_path: Path) -> None:
     run_dir.mkdir(parents=True)
     foreign = RunManifest.build(
         SimulationConfig(mesh=MeshConfig(step="data/other.step")),
-        status="ok",
+        status=RunStatus.OK,
         code_sha="other",
     )
     _ = write_manifest(run_dir, foreign)
@@ -510,6 +511,13 @@ def test_on_stage_event_without_an_active_run_is_a_no_op(tmp_path: Path) -> None
 
 
 # --- retention ---------------------------------------------------------------
+
+
+class _StagedMeshOnlyDriver(Driver):
+    """Fakes only the mesh; the sif and the solve on the driver's backend run for real."""
+
+    def mesh(self, state: SolveState) -> None:
+        state.element_count = 7
 
 
 class _MeshDroppingDriver(_MinimalStagedDriver):
@@ -550,7 +558,7 @@ def test_lean_retention_drops_the_mesh_after_a_successful_run(tmp_path: Path) ->
     result = driver.evaluate(config)
 
     bundle = tmp_path / _run_name(config)
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert not (bundle / "mesh.nodes").exists()
     assert not (bundle / "mesh.elements").exists()
     assert (bundle / "case_t0001.vtu").is_file()
@@ -562,7 +570,7 @@ def test_lean_retention_drops_the_mesh_after_a_successful_run(tmp_path: Path) ->
 
     record = manifest.cleanups[0]
     assert record.trigger is CleanupTrigger.DRIVER
-    assert record.status == "ok"
+    assert record.status == RunStatus.OK
     assert record.policy == RetentionPolicy.lean()
     removed = sorted((entry.path, entry.size, entry.reason) for entry in record.removed)
     assert removed == [("mesh.elements", 200, Cleanup.ON_SUCCESS), ("mesh.nodes", 100, Cleanup.ON_SUCCESS)]
@@ -593,7 +601,7 @@ def test_on_success_rules_keep_files_of_a_failed_solve_but_always_removes_them(t
     lean = _FailingSolveDriver(runs_dir=tmp_path, code_sha="sha1", retention=RetentionPolicy.lean())
     result = lean.evaluate(config)
     bundle = tmp_path / _run_name(config)
-    assert result.status == "error"
+    assert result.status == RunStatus.ERROR
     assert (bundle / "mesh.nodes").is_file()
     assert load_manifest(bundle).cleanups == []
 
@@ -627,7 +635,7 @@ def test_always_rules_apply_when_the_solver_raises(tmp_path: Path) -> None:
     bundle = tmp_path / _run_name(config)
     manifest = load_manifest(bundle)
 
-    assert manifest.status == "error"
+    assert manifest.status == RunStatus.ERROR
     assert not (bundle / "elmersolver.log").exists()
     assert not (bundle / "run.log").exists()
     assert (bundle / "case.dat").is_file()
@@ -671,7 +679,7 @@ def test_nuke_removes_the_run_directory_and_unstamps_run_dir(tmp_path: Path) -> 
         retention=RetentionPolicy.nuke(),
     ).evaluate(config)
 
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert result.run_id == _run_name(config)
     assert result.run_dir is None
     assert not (tmp_path / _run_name(config)).exists()
@@ -697,7 +705,7 @@ def test_an_interrupt_skips_cleanup_and_leaves_the_bundle_running(tmp_path: Path
 
     bundle = tmp_path / _run_name(config)
     manifest = load_manifest(bundle)
-    assert manifest.status == "running"
+    assert manifest.status == LifecycleStatus.RUNNING
     assert manifest.stage_history == []
     assert (bundle / "elmersolver.log").is_file()
     assert driver._active is None
@@ -715,7 +723,7 @@ def test_cleanup_failures_are_logged_not_raised(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr(retention_module, "remove_path", held_open)
     result = _MeshDroppingDriver(runs_dir=tmp_path, code_sha="sha1", retention=RetentionPolicy.lean()).evaluate(config)
     bundle = tmp_path / _run_name(config)
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert (bundle / "mesh.nodes").is_file()
     assert load_manifest(bundle).cleanups == []
 
@@ -825,7 +833,7 @@ def test_a_telemetry_write_that_fails_only_warns(tmp_path: Path, monkeypatch: py
     )
     result = driver.evaluate(config)
 
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
 
 
 def test_a_driver_with_its_own_telemetry_root_keeps_its_run_logs_there(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -954,3 +962,52 @@ def test_run_solver_partitions_the_bundle_before_a_parallel_solve(tmp_path: Path
 
     assert backend.calls == [("partition", tmp_path, 2, True), ("solve", tmp_path, 2)]
     assert any("nodal forces" in warning for warning in warnings)
+
+
+class _StallingBackend(_RecordingBackend):
+    """Relays a CG solve whose residual froze and stops relaying once the driver cancels it."""
+
+    def solve(
+        self,
+        sim_dir: Path,
+        *,
+        n_procs: int = 1,
+        on_line: LineSink | None = None,
+        timeout_s: float | None = None,
+        cancel: CancelToken | None = None,
+    ) -> CommandResult:
+        self.calls.append(("solve", sim_dir, n_procs))
+        log_path = sim_dir / "elmersolver.log"
+        with log_path.open("w", encoding="utf-8") as stream:
+            for line in STALL_LOG.read_text(encoding="utf-8").splitlines():
+                if cancel is not None and cancel.is_set():
+                    break
+
+                _ = stream.write(line + "\n")
+                if on_line is not None:
+                    on_line(line + "\n")
+
+        return CommandResult(returncode=1, duration_s=0.0, log_path=log_path, timed_out=False)
+
+
+def test_a_stalled_solve_is_marked_stalled_and_reused(tmp_path: Path) -> None:
+    from femforge.elmer.config import PhysicsSelection
+
+    config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), physics=PhysicsSelection(selected=Physics.LINEAR_ELASTICITY))
+    backend = _StallingBackend()
+    driver = _StagedMeshOnlyDriver(runs_dir=tmp_path, code_sha="sha1", backend=backend)
+
+    result = driver.evaluate(config)
+
+    assert result.status is RunStatus.STALLED
+    manifest = load_manifest(tmp_path / _run_name(config))
+    assert manifest.status is RunStatus.STALLED
+    assert manifest.stall is not None
+    assert manifest.stall.iteration == 1339
+    assert manifest.stall.solver == "linear elasticity"
+    assert len(manifest.stall.tail) == 20
+
+    again = driver.evaluate(config)
+
+    assert again.status is RunStatus.STALLED
+    assert [call for call in backend.calls if call[0] == "solve"] == [("solve", tmp_path / _run_name(config), 1)]

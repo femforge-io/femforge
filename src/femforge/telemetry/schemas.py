@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import cast, get_args
 
 import polars as pl
 
 from femforge.common.log import LogLevel
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, RunStatus
 
 
 __all__ = [
@@ -35,7 +34,6 @@ __all__ = [
     "SweepEventColumn",
     "SweepState",
     "categories",
-    "literal_categories",
 ]
 
 TIMESTAMP = pl.Datetime("us", "UTC")
@@ -45,20 +43,6 @@ TIMESTAMP = pl.Datetime("us", "UTC")
 def categories[E: StrEnum](members: type[E]) -> list[str]:
     """The values of a StrEnum as the plain strings ``pl.Enum`` accepts (it rejects enum members)."""
     return [member.value for member in members]
-
-
-def literal_categories(alias: object) -> list[str]:
-    """The strings of a ``Literal`` union, flattened one level so a union of Literals reads as one vocabulary."""
-    values: list[str] = []
-    for arg in cast("tuple[object, ...]", get_args(alias)):
-        nested = cast("tuple[object, ...]", get_args(arg))
-        if not nested:
-            values.append(str(arg))
-            continue
-
-        values.extend(str(value) for value in nested)
-
-    return values
 
 
 class RunSource(StrEnum):
@@ -297,7 +281,7 @@ RUN_INDEX_SCHEMA = pl.Schema(
         RunColumn.RUN_ID: pl.String,
         RunColumn.CACHE_KEY: pl.String,
         RunColumn.RUNS_DIR: pl.String,
-        RunColumn.STATUS: pl.Enum(literal_categories(ManifestStatus)),
+        RunColumn.STATUS: pl.Enum([*categories(LifecycleStatus), *categories(RunStatus)]),
         RunColumn.CREATED_AT: TIMESTAMP,
         RunColumn.FINISHED_AT: TIMESTAMP,
         RunColumn.CURRENT_STAGE: pl.String,

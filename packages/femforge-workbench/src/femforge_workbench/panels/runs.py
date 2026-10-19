@@ -22,7 +22,7 @@ from femforge.run.artifacts import rehydrate_bundle
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.run.purge import cleanup_bundle
-from femforge.run.result import ManifestStatus, Result
+from femforge.run.result import LifecycleStatus, ManifestStatus, Result
 from femforge.run.retention import BundleEntry, Cleanup, CleanupPlan, CleanupRecord, Preset, RetentionPolicy, bundle_inventory, plan_cleanup
 from femforge.run.stages import StageEvent
 from femforge.telemetry.paths import Telemetry
@@ -53,7 +53,7 @@ WATCH_PERIOD_S = 1.0
 STARTING = "starting"
 """The status of a bundle directory whose manifest is not written yet."""
 
-WATCHED: frozenset[str] = frozenset({"running", STARTING})
+WATCHED: frozenset[str] = frozenset({LifecycleStatus.RUNNING, STARTING})
 """The statuses the detail panel keeps re-reading until the run ends."""
 
 DEFAULT_LIMIT = 500
@@ -78,6 +78,7 @@ class StatusVariant(StrEnum):
     ERROR = "destructive"
     RUNNING = "secondary"
     ABANDONED = "outline"
+    STALLED = "outline"
 
     @classmethod
     def of(cls, status: str) -> str:
@@ -332,7 +333,7 @@ def run_rows(frame: pl.DataFrame, live: Collection[str] = ()) -> list[Row]:
     return rows
 
 
-def stage_rows(history: Sequence[StageEvent], now: datetime, *, status: ManifestStatus = "running") -> list[Row]:
+def stage_rows(history: Sequence[StageEvent], now: datetime, *, status: ManifestStatus = LifecycleStatus.RUNNING) -> list[Row]:
     """One timeline row per pipeline stage: done with its duration, still running, or crashed where the pipeline stopped.
 
     Args:
@@ -353,7 +354,7 @@ def stage_rows(history: Sequence[StageEvent], now: datetime, *, status: Manifest
         last: bool = index == len(history) - 1
         state = StageState.DONE
         if unfinished:
-            state = StageState.RUNNING if last and status == "running" else StageState.CRASHED
+            state = StageState.RUNNING if last and status is LifecycleStatus.RUNNING else StageState.CRASHED
 
         seconds: float = elapsed(event.started_at, event.finished_at if event.finished_at is not None else now)
         rows.append(
@@ -881,7 +882,7 @@ class RunDetailPanel(PanelComponent):
             path=str(sim_dir),
             meta=self.summary(manifest),
             stages=stage_rows(manifest.stage_history, datetime.now(timezone.utc), status=manifest.status),
-            scalars=scalar_rows(run.result) if manifest.status != "running" else [],
+            scalars=scalar_rows(run.result) if manifest.status is not LifecycleStatus.RUNNING else [],
             components=component_rows(run),
             currents=current_rows(run),
             refs=ref_rows(manifest.artifacts, self.store),

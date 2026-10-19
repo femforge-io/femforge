@@ -16,7 +16,7 @@ from femforge.common.files import BundleFile, RunFile
 from femforge.common.log import get_console, log
 from femforge.run.bundle import write_manifest
 from femforge.run.manifest import RunManifest
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, ManifestStatus, RunStatus
 from femforge.run.retention import Cleanup, CleanupRecord, CleanupReport, CleanupTrigger, Preset, RetentionPolicy, apply_cleanup, plan_cleanup, remove_run_dir
 
 
@@ -146,7 +146,7 @@ def _skip_reason(
     except Exception:  # noqa: BLE001 - a foreign or schema-drifted manifest is skipped, never rewritten blind
         return SkipReason.UNREADABLE
 
-    if manifest.status == "running":
+    if manifest.status is LifecycleStatus.RUNNING:
         touched = datetime.fromtimestamp((bundle / BundleFile.MANIFEST).stat().st_mtime, tz=timezone.utc)
         if now - touched < running_grace:
             return SkipReason.RUNNING
@@ -276,7 +276,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--only-status",
         nargs="*",
         default=None,
-        choices=["ok", "diverged", "error", "running", "abandoned"],
+        choices=[status.value for status in (*LifecycleStatus, *RunStatus)],
         help="Touch only bundles in these statuses.",
     )
     _ = parser.add_argument(

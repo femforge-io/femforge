@@ -20,7 +20,7 @@ from femforge.physical.units import quantity
 from femforge.run.bundle import write_bundle, write_manifest
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
-from femforge.run.result import Result
+from femforge.run.result import LifecycleStatus, Result, RunStatus
 from femforge.run.retention import Preset
 from femforge.run.stages import Stage, StageEvent
 from femforge.telemetry.artifacts import ArtifactQuery
@@ -191,10 +191,10 @@ def _telemetry(root: Path, runs_dir: Path, store_root: Path) -> Telemetry:
 
 
 def _bundle(tmp_path: Path) -> Path:
-    manifest = RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step")), status="ok", run_id=RUN_ID, created_at=FIXED_DT)
+    manifest = RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step")), status=RunStatus.OK, run_id=RUN_ID, created_at=FIXED_DT)
     result = Result(
         frame=Solid(),
-        status="ok",
+        status=RunStatus.OK,
         component_forces={"MAGNETS": quantity(Vec3(1.0, -2.0, 0.5), "newton")},
         component_torques={"MAGNETS": quantity(Vec3(0.0, 0.0, 0.25), "newton * meter")},
     )
@@ -273,8 +273,8 @@ def test_stage_rows_mark_the_last_unfinished_stage_running_and_earlier_ones_cras
         StageEvent(stage=Stage.RUN_SOLVER, started_at=FIXED_DT + timedelta(seconds=5)),
     ]
 
-    running = stage_rows(history, now, status="running")
-    crashed = stage_rows(history, now, status="error")
+    running = stage_rows(history, now, status=LifecycleStatus.RUNNING)
+    crashed = stage_rows(history, now, status=RunStatus.ERROR)
 
     assert [row[StageField.STATE] for row in running] == ["Done", "Running"]
     assert [row[StageField.STATE] for row in crashed] == ["Done", "Crashed"]
@@ -283,6 +283,7 @@ def test_stage_rows_mark_the_last_unfinished_stage_running_and_earlier_ones_cras
     assert running[1][StageField.VARIANT] == StatusVariant.RUNNING and crashed[1][StageField.VARIANT] == StatusVariant.ERROR
     assert "bg-primary" in str(running[1][StageField.DOT]) and "bg-destructive" in str(crashed[1][StageField.DOT])
     assert StatusVariant.of("") == StatusVariant.of("a status nobody named") == UNKNOWN_VARIANT, "an unrecognised status must not read as success"
+    assert StatusVariant.of("stalled") == StatusVariant.of("diverged") == "outline"
     assert stage_rows([], now) == []
 
 
@@ -513,12 +514,12 @@ def test_the_detail_panel_follows_a_running_run_until_it_ends(tmp_path: Path, mo
         await detail.show(RUN_ID)
         starting = str(app.state[detail.key(DetailVar.STATUS)])
 
-        _ = write_manifest(bundle, RunManifest.build(config, status="running", run_id=RUN_ID, created_at=FIXED_DT))
+        _ = write_manifest(bundle, RunManifest.build(config, status=LifecycleStatus.RUNNING, run_id=RUN_ID, created_at=FIXED_DT))
         while app.state[detail.key(DetailVar.STATUS)] != "Running":
             await asyncio.sleep(0.01)
 
         running = str(app.state[detail.key(DetailVar.STATUS)])
-        _ = write_manifest(bundle, RunManifest.build(config, status="ok", run_id=RUN_ID, created_at=FIXED_DT))
+        _ = write_manifest(bundle, RunManifest.build(config, status=RunStatus.OK, run_id=RUN_ID, created_at=FIXED_DT))
         while detail.watch.running:
             await asyncio.sleep(0.01)
 

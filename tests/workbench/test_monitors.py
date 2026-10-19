@@ -57,6 +57,7 @@ from femforge_workbench.panels import terminal  # noqa: E402
 from femforge_workbench.panels.terminal import EXITED, LOCAL_LABEL, Mode, PtyBridge, Target, TerminalPanel, TerminalVar, attach_targets  # noqa: E402
 from femforge_workbench.persist import LocalJsonStore  # noqa: E402
 from femforge_workbench.registry import MONITORS, resolve  # noqa: E402
+from femforge.run.result import LifecycleStatus
 from tests.workbench.tree import find, prop  # noqa: E402
 
 
@@ -103,7 +104,7 @@ def _index_run(telemetry: Telemetry, runs_dir: Path, run_id: str, status: str) -
 def _running_bundle(runs_dir: Path, run_id: str) -> Path:
     manifest = RunManifest.build(
         SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step")),
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id=run_id,
         created_at=FIXED_DT,
     )

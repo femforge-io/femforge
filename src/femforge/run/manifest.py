@@ -15,6 +15,7 @@ from femforge.common.names import bundle_name
 from femforge.config import SimulationConfig
 from femforge.elmer.config import PhysicsConfig
 from femforge.elmer.physics import Physics
+from femforge.elmer.solver_log import StallVerdict
 from femforge.run.kinds import cache_key, mesh_key, step_key
 from femforge.run.result import ManifestStatus, MeshStats
 from femforge.run.retention import CleanupRecord
@@ -95,7 +96,10 @@ class RunManifest(BaseModel):
     """Mesh size/quality summary for consistency auditing."""
 
     status: ManifestStatus
-    """Lifecycle status: ``"running"`` while the pipeline executes, then the terminal solve status (mirrors Result.status), or ``"abandoned"`` when its claim went silent first."""
+    """Lifecycle status: ``running`` while the pipeline executes, then the terminal solve status (mirrors Result.status), or ``abandoned`` when its claim went silent first."""
+
+    stall: StallVerdict | None = None
+    """The watchdog's verdict when it stopped the solve; None otherwise."""
 
     stage_history: list[StageEvent] = Field(default_factory=list)
     """Per-stage start/finish timeline, appended as the pipeline runs."""

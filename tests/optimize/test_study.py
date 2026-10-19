@@ -10,7 +10,7 @@ from femforge.common.vector import Vec3
 from femforge.optimize.parameterization import ParamSpec
 from femforge.optimize.study import Study
 from femforge.physical.units import U, quantity
-from femforge.run.result import Result
+from femforge.run.result import Result, RunStatus
 
 
 def _rows(df: pd.DataFrame) -> list[dict[Hashable, object]]:
@@ -20,9 +20,9 @@ def _rows(df: pd.DataFrame) -> list[dict[Hashable, object]]:
 
 def _study() -> Study:
     study = Study()
-    study.record(point={"g": 0.5}, run_id="run-a", result=Result(frame=Solid(), status="ok", force=quantity(Vec3(2.0, 0.0, 0.0), U.N)), objective=2.0)
-    study.record(point={"g": 1.0}, run_id="run-b", result=Result(frame=Solid(), status="ok", force=quantity(Vec3(5.0, 0.0, 0.0), U.N)), objective=5.0)
-    study.record(point={"g": 2.0}, run_id="run-c", result=Result(frame=Solid(), status="ok", force=quantity(Vec3(1.0, 0.0, 0.0), U.N)), objective=1.0)
+    study.record(point={"g": 0.5}, run_id="run-a", result=Result(frame=Solid(), status=RunStatus.OK, force=quantity(Vec3(2.0, 0.0, 0.0), U.N)), objective=2.0)
+    study.record(point={"g": 1.0}, run_id="run-b", result=Result(frame=Solid(), status=RunStatus.OK, force=quantity(Vec3(5.0, 0.0, 0.0), U.N)), objective=5.0)
+    study.record(point={"g": 2.0}, run_id="run-c", result=Result(frame=Solid(), status=RunStatus.OK, force=quantity(Vec3(1.0, 0.0, 0.0), U.N)), objective=1.0)
     return study
 
 
@@ -58,7 +58,7 @@ def test_to_dataframe_shape_and_columns() -> None:
 
 def test_to_dataframe_missing_quantities_are_none() -> None:
     study = Study()
-    study.record(point={"g": 0.5}, run_id="run-x", result=Result(frame=Solid(), status="error", force=None), objective=float("-inf"))
+    study.record(point={"g": 0.5}, run_id="run-x", result=Result(frame=Solid(), status=RunStatus.ERROR, force=None), objective=float("-inf"))
     row = _rows(study.to_dataframe())[0]
     assert row["force"] is None
     assert row["torque"] is None
@@ -67,7 +67,7 @@ def test_to_dataframe_missing_quantities_are_none() -> None:
 
 def test_to_dataframe_keeps_knob_columns_numeric_and_names_their_units() -> None:
     study = Study(space={"g": ParamSpec(low=0.2, high=2.0, unit="mm"), "scale": ParamSpec(low=0.5, high=2.0)})
-    study.record(point={"g": 0.5, "scale": 1.0}, run_id="run-u", result=Result(frame=Solid(), status="ok"), objective=1.0)
+    study.record(point={"g": 0.5, "scale": 1.0}, run_id="run-u", result=Result(frame=Solid(), status=RunStatus.OK), objective=1.0)
 
     df = study.to_dataframe()
 

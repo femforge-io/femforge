@@ -32,7 +32,7 @@ from femforge.run.driver import Driver
 from femforge.run.fields import FieldMesh
 from femforge.run.inspect import Run
 from femforge.run.mechanical import strain_energy
-from femforge.run.result import Result
+from femforge.run.result import Result, RunStatus
 
 from tests.elmer.test_thermal_solve_integration import _find_elmer
 
@@ -136,7 +136,7 @@ def _solve(
     )
     result: Result = Driver(runs_dir=tmp_path / "runs", docker=False, code_sha="test").evaluate(config)
 
-    assert result.status == "ok", result
+    assert result.status == RunStatus.OK, result
     assert result.run_dir is not None
 
     return result, FieldMesh.load(result.run_dir)

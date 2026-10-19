@@ -15,13 +15,13 @@ from femforge.run import purge as purge_module
 from femforge.run.bundle import write_manifest
 from femforge.run.manifest import RunManifest
 from femforge.run.purge import SkipReason, cleanup_bundle, main, purge_runs, render_report
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, ManifestStatus, RunStatus
 from femforge.run.retention import Cleanup, CleanupTrigger, RetentionPolicy
 
 FIXED_DT = datetime(2026, 9, 2, 10, 0, 0, tzinfo=timezone.utc)
 
 
-def _bundle(runs_dir: Path, name: str, status: ManifestStatus = "ok", *, created_at: datetime = FIXED_DT) -> Path:
+def _bundle(runs_dir: Path, name: str, status: ManifestStatus = RunStatus.OK, *, created_at: datetime = FIXED_DT) -> Path:
     bundle = runs_dir / name
     bundle.mkdir(parents=True)
 
@@ -110,9 +110,9 @@ def test_cleanup_bundle_requires_a_manifest(tmp_path: Path) -> None:
 
 def test_purge_runs_applies_the_skip_rules(tmp_path: Path) -> None:
     ok = _bundle(tmp_path, "ok-run")
-    error = _bundle(tmp_path, "error-run", "error")
-    _ = _bundle(tmp_path, "running-fresh", "running")
-    stale = _bundle(tmp_path, "running-stale", "running")
+    error = _bundle(tmp_path, "error-run", RunStatus.ERROR)
+    _ = _bundle(tmp_path, "running-fresh", LifecycleStatus.RUNNING)
+    stale = _bundle(tmp_path, "running-stale", LifecycleStatus.RUNNING)
 
     old = 1_000_000_000
     os.utime(stale / "manifest.json", (old, old))
@@ -147,7 +147,7 @@ def test_purge_runs_filters_by_status_and_age(tmp_path: Path) -> None:
     _ = _bundle(
         tmp_path,
         "diverged-old",
-        "diverged",
+        RunStatus.DIVERGED,
         created_at=month_ago,
     )
 
@@ -155,7 +155,7 @@ def test_purge_runs_filters_by_status_and_age(tmp_path: Path) -> None:
         tmp_path,
         RetentionPolicy.lean(),
         dry_run=True,
-        only_status=["ok"],
+        only_status=[RunStatus.OK],
     )
     assert {cleanup.plan.sim_dir.name for cleanup in by_status.reports} == {"ok-old", "ok-new"}
     assert by_status.skipped_by_reason() == {SkipReason.STATUS: 1}
@@ -230,11 +230,22 @@ def test_main_is_a_dry_run_unless_apply(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_main_only_status_selects_abandoned_bundles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    abandoned = _bundle(tmp_path, "abandoned-run", "abandoned")
+    abandoned = _bundle(tmp_path, "abandoned-run", LifecycleStatus.ABANDONED)
     finished = _bundle(tmp_path, "ok-run")
     monkeypatch.setattr(purge_module, "get_console", lambda: Console(file=StringIO(), width=200))
 
     assert main(["--runs-dir", str(tmp_path), "--preset", "lean", "--elmer-mesh", "always", "--only-status", "abandoned", "--apply"]) == 0
 
     assert not (abandoned / "mesh.nodes").exists()
+    assert (finished / "mesh.nodes").exists()
+
+
+def test_main_only_status_selects_stalled_bundles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stalled = _bundle(tmp_path, "stalled-run", RunStatus.STALLED)
+    finished = _bundle(tmp_path, "ok-run")
+    monkeypatch.setattr(purge_module, "get_console", lambda: Console(file=StringIO(), width=200))
+
+    assert main(["--runs-dir", str(tmp_path), "--preset", "lean", "--elmer-mesh", "always", "--only-status", "stalled", "--apply"]) == 0
+
+    assert not (stalled / "mesh.nodes").exists()
     assert (finished / "mesh.nodes").exists()

@@ -11,7 +11,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.run import retention as retention_module
 from femforge.run.bundle import write_manifest
 from femforge.run.manifest import RunManifest
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, ManifestStatus, RunStatus
 from femforge.run.retention import Cleanup, CleanupRecord, CleanupTrigger, Preset, RemovedFile, RetentionPolicy, apply_cleanup, bundle_inventory, plan_cleanup, remove_run_dir
 
 FIXED_DT = datetime(2026, 9, 2, 10, 0, 0, tzinfo=timezone.utc)
@@ -44,7 +44,7 @@ SIZES: dict[str, int] = {
 }
 
 
-def _bundle(tmp_path: Path, status: ManifestStatus = "ok") -> Path:
+def _bundle(tmp_path: Path, status: ManifestStatus = RunStatus.OK) -> Path:
     bundle = tmp_path / "run"
     bundle.mkdir()
     manifest = RunManifest.build(
@@ -69,11 +69,11 @@ def _names(bundle: Path) -> set[str]:
 # --- Cleanup rules -----------------------------------------------------------
 
 
-@pytest.mark.parametrize("status", ["running", "ok", "diverged", "error"])
+@pytest.mark.parametrize("status", [LifecycleStatus.RUNNING, RunStatus.OK, RunStatus.DIVERGED, RunStatus.ERROR, RunStatus.STALLED])
 def test_cleanup_rules_by_status(status: ManifestStatus) -> None:
     assert Cleanup.NEVER.applies(status) is False
     assert Cleanup.ALWAYS.applies(status) is True
-    assert Cleanup.ON_SUCCESS.applies(status) is (status == "ok")
+    assert Cleanup.ON_SUCCESS.applies(status) is (status is RunStatus.OK)
 
 
 def test_cleanup_escalation_picks_the_stricter_rule() -> None:
@@ -121,12 +121,12 @@ def test_presets() -> None:
 
 def test_default_policy_removes_nothing_unless_cached(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
-    assert plan_cleanup(bundle, RetentionPolicy.default(), status="ok").entries == ()
+    assert plan_cleanup(bundle, RetentionPolicy.default(), status=RunStatus.OK).entries == ()
 
     plan = plan_cleanup(
         bundle,
         RetentionPolicy.default(),
-        status="error",
+        status=RunStatus.ERROR,
         cached=["mesh.nodes", "mesh.elements"],
     )
     assert {entry.relative for entry in plan.entries} == {"mesh.nodes", "mesh.elements"}
@@ -135,7 +135,7 @@ def test_default_policy_removes_nothing_unless_cached(tmp_path: Path) -> None:
     kept = plan_cleanup(
         bundle,
         RetentionPolicy.keep_all(),
-        status="ok",
+        status=RunStatus.OK,
         cached=["mesh.nodes"],
     )
     assert kept.entries == ()
@@ -143,7 +143,7 @@ def test_default_policy_removes_nothing_unless_cached(tmp_path: Path) -> None:
 
 def test_lean_removes_the_meshes_only_on_success(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
-    plan = plan_cleanup(bundle, RetentionPolicy.lean(), status="ok")
+    plan = plan_cleanup(bundle, RetentionPolicy.lean(), status=RunStatus.OK)
 
     planned = {entry.relative for entry in plan.entries}
     assert planned == {"geometry.msh", "mesh.header", "mesh.nodes", "mesh.elements", "mesh.boundary", "partitioning.4", "elmergrid_partition.log"}
@@ -151,18 +151,18 @@ def test_lean_removes_the_meshes_only_on_success(tmp_path: Path) -> None:
     assert plan.total_bytes == 4022
     assert plan.remove_run_dir is False
 
-    for status in ("error", "diverged", "running"):
+    for status in (RunStatus.ERROR, RunStatus.DIVERGED, RunStatus.STALLED, LifecycleStatus.RUNNING):
         assert plan_cleanup(bundle, RetentionPolicy.lean(), status=status).entries == ()
 
 
 def test_minimal_adds_the_fields(tmp_path: Path) -> None:
-    plan = plan_cleanup(_bundle(tmp_path), RetentionPolicy.minimal(), status="ok")
+    plan = plan_cleanup(_bundle(tmp_path), RetentionPolicy.minimal(), status=RunStatus.OK)
     assert plan.bytes_by_class()[RunFile.FIELDS] == 4096
 
 
 def test_manifest_and_result_are_never_planned(tmp_path: Path) -> None:
     everything = RetentionPolicy.nuke().model_copy(update={"run_dir": Cleanup.NEVER})
-    plan = plan_cleanup(_bundle(tmp_path), everything, status="running")
+    plan = plan_cleanup(_bundle(tmp_path), everything, status=LifecycleStatus.RUNNING)
     names = {entry.relative for entry in plan.entries}
 
     assert "manifest.json" not in names
@@ -173,7 +173,7 @@ def test_manifest_and_result_are_never_planned(tmp_path: Path) -> None:
 
 def test_nuke_plans_the_whole_directory(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
-    plan = plan_cleanup(bundle, RetentionPolicy.nuke(), status="error")
+    plan = plan_cleanup(bundle, RetentionPolicy.nuke(), status=RunStatus.ERROR)
     assert plan.remove_run_dir is True
     assert plan.entries == ()
     assert plan.total_bytes == plan.run_dir_bytes == sum(SIZES.values()) + (bundle / "manifest.json").stat().st_size
@@ -188,7 +188,7 @@ def test_plan_refuses_a_linked_directory(tmp_path: Path, monkeypatch: pytest.Mon
 
     monkeypatch.setattr(Path, "is_symlink", linked)
     with pytest.raises(ValueError, match="link"):
-        _ = plan_cleanup(bundle, RetentionPolicy.lean(), status="ok")
+        _ = plan_cleanup(bundle, RetentionPolicy.lean(), status=RunStatus.OK)
 
 
 def test_plan_skips_linked_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,7 +198,7 @@ def test_plan_skips_linked_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         return path.name == "mesh.nodes"
 
     monkeypatch.setattr(Path, "is_symlink", linked)
-    plan = plan_cleanup(bundle, RetentionPolicy.lean(), status="ok")
+    plan = plan_cleanup(bundle, RetentionPolicy.lean(), status=RunStatus.OK)
     assert "mesh.nodes" not in {entry.relative for entry in plan.entries}
 
 
@@ -207,7 +207,7 @@ def test_plan_skips_linked_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 def test_apply_removes_files_and_directories_and_records_relative_paths(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
-    report = apply_cleanup(plan_cleanup(bundle, RetentionPolicy.lean(), status="ok"))
+    report = apply_cleanup(plan_cleanup(bundle, RetentionPolicy.lean(), status=RunStatus.OK))
 
     assert report.failed == []
     assert report.dry_run is False
@@ -223,7 +223,7 @@ def test_apply_removes_files_and_directories_and_records_relative_paths(tmp_path
 def test_dry_run_touches_nothing(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     before = _names(bundle)
-    report = apply_cleanup(plan_cleanup(bundle, RetentionPolicy.minimal(), status="ok"), dry_run=True)
+    report = apply_cleanup(plan_cleanup(bundle, RetentionPolicy.minimal(), status=RunStatus.OK), dry_run=True)
     assert report.dry_run is True
     assert len(report.removed) == 8
     assert _names(bundle) == before
@@ -240,7 +240,7 @@ def test_apply_reports_a_path_it_cannot_remove(tmp_path: Path, monkeypatch: pyte
         real_remove(path)
 
     monkeypatch.setattr(retention_module, "remove_path", flaky)
-    report = apply_cleanup(plan_cleanup(bundle, RetentionPolicy.lean(), status="ok"))
+    report = apply_cleanup(plan_cleanup(bundle, RetentionPolicy.lean(), status=RunStatus.OK))
     assert report.failed == [("mesh.nodes", "held open")]
     assert "mesh.nodes" not in {entry.path for entry in report.removed}
     assert (bundle / "mesh.nodes").exists()
@@ -249,7 +249,7 @@ def test_apply_reports_a_path_it_cannot_remove(tmp_path: Path, monkeypatch: pyte
 
 def test_apply_reports_the_run_dir_and_remove_run_dir_deletes_it(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
-    plan = plan_cleanup(bundle, RetentionPolicy.nuke(), status="ok")
+    plan = plan_cleanup(bundle, RetentionPolicy.nuke(), status=RunStatus.OK)
     report = apply_cleanup(plan)
 
     assert report.removed == [
@@ -272,7 +272,7 @@ def test_cleanup_record_totals_and_coverage() -> None:
     record = CleanupRecord(
         applied_at=FIXED_DT,
         trigger=CleanupTrigger.DRIVER,
-        status="ok",
+        status=RunStatus.OK,
         policy=RetentionPolicy.lean(),
         removed=[
             RemovedFile(

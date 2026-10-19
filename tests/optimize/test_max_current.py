@@ -22,7 +22,7 @@ from femforge.common.tags import CurrentDir, TagKey
 from femforge.physical.conditions import Convection, FixedPotential
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import Quantity, U, quantity
-from femforge.run.result import Result
+from femforge.run.result import Result, RunStatus
 
 
 def test_seed_scales_current_by_sqrt_of_temperature_headroom() -> None:
@@ -56,14 +56,14 @@ def test_seed_rejects_no_rise_no_headroom_and_no_current() -> None:
 
 
 def test_seed_from_result_reads_temperature_max() -> None:
-    result = Result(frame=Solid(), status="ok", temperature_max=310 * U.K)
+    result = Result(frame=Solid(), status=RunStatus.OK, temperature_max=310 * U.K)
     seed = seed_from_result(result, reference_current=2 * U.A, ambient_temperature=300 * U.K, limit_temperature=340 * U.K)
     assert seed.max_current.to(U.A).magnitude == pytest.approx(4.0)
 
 
 def test_seed_from_result_requires_temperature_max() -> None:
     with pytest.raises(ValueError, match="temperature_max"):
-        _ = seed_from_result(Result(frame=Solid(), status="ok"), reference_current=2 * U.A, ambient_temperature=300 * U.K, limit_temperature=340 * U.K)
+        _ = seed_from_result(Result(frame=Solid(), status=RunStatus.OK), reference_current=2 * U.A, ambient_temperature=300 * U.K, limit_temperature=340 * U.K)
 
 
 _V_REF = 1.0
@@ -114,9 +114,9 @@ class _ToyCoil:
     def evaluate(self, config: SimulationConfig) -> Result:
         volts = _entry_volts(config)
         if self.diverge_above_volts is not None and volts > self.diverge_above_volts:
-            return Result(frame=Solid(), status="diverged")
+            return Result(frame=Solid(), status=RunStatus.DIVERGED)
         r = 0.5 * (self.r0 + math.sqrt(self.r0**2 + 4 * self.r0 * self.alpha * self.theta * volts**2))
-        return Result(frame=Solid(), status="ok", temperature_max=(self.t0 + self.theta * volts**2 / r) * U.K, raw={"current": volts / r})
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(self.t0 + self.theta * volts**2 / r) * U.K, raw={"current": volts / r})
 
     def max_current_at(self, limit_kelvin: float) -> float:
         """The exact current whose steady temperature is the limit: I = sqrt(dT / (theta·R(T_limit)))."""
@@ -152,7 +152,7 @@ def test_voltage_search_lands_on_the_analytic_limit_in_two_steps() -> None:
     assert lo == pytest.approx(coil.max_current_at(360.0), rel=0.02)
     assert lo <= coil.max_current_at(360.0) * 1.001  # the accepted current sits on the conservative side
     assert search.upper_bracket_current is not None and lo < search.upper_bracket_current.to(U.A).magnitude
-    assert all(step.evaluations >= 1 and step.result.status == "ok" for step in search.steps)
+    assert all(step.evaluations >= 1 and step.result.status == RunStatus.OK for step in search.steps)
     # The accepted step is the under solve that IS max_current — no re-solve needed to inspect its steady state.
     assert search.accepted in search.steps and search.accepted.outcome == "under"
     assert search.accepted.measured_current is not None
@@ -213,7 +213,7 @@ def test_current_saturation_is_runaway_even_when_every_solve_converges() -> None
     # above the saturation level simply cannot be realized — the voltage-iteration shortfall must classify runaway.
     def saturating(config: SimulationConfig) -> Result:
         current = min(_entry_volts(config), 2.0)
-        return Result(frame=Solid(), status="ok", temperature_max=(300 + 5 * current * current) * U.K, raw={"current": current})
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(300 + 5 * current * current) * U.K, raw={"current": current})
 
     search = find_max_current(
         evaluate=saturating,
@@ -225,7 +225,7 @@ def test_current_saturation_is_runaway_even_when_every_solve_converges() -> None
     )
 
     assert search.converged and search.runaway
-    assert all(step.result.status == "ok" for step in search.steps)
+    assert all(step.result.status == RunStatus.OK for step in search.steps)
     saturation_steps = [step for step in search.steps if step.outcome == "runaway"]
     assert saturation_steps and all(step.measured_current is not None for step in saturation_steps)
     assert search.max_current.to(U.A).magnitude <= 2.0
@@ -237,7 +237,7 @@ def test_unsettled_inner_iteration_raises() -> None:
 
     def alternating(_config: SimulationConfig) -> Result:
         calls["count"] += 1
-        return Result(frame=Solid(), status="ok", temperature_max=310 * U.K, raw={"current": 10.0 if calls["count"] % 2 else 1.0})
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=310 * U.K, raw={"current": 10.0 if calls["count"] % 2 else 1.0})
 
     with pytest.raises(ValueError, match="did not settle"):
         _ = find_max_current(
@@ -252,7 +252,7 @@ def test_unsettled_inner_iteration_raises() -> None:
 
 def test_zero_measured_current_raises() -> None:
     def dead(_config: SimulationConfig) -> Result:
-        return Result(frame=Solid(), status="ok", temperature_max=310 * U.K, raw={"current": 0.0})
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=310 * U.K, raw={"current": 0.0})
 
     with pytest.raises(ValueError, match="zero phase current"):
         _ = find_max_current(
@@ -267,7 +267,7 @@ def test_zero_measured_current_raises() -> None:
 
 def test_missing_temperature_on_a_converged_solve_raises() -> None:
     def no_temperature(config: SimulationConfig) -> Result:
-        return Result(frame=Solid(), status="ok", raw={"current": _entry_volts(config)})
+        return Result(frame=Solid(), status=RunStatus.OK, raw={"current": _entry_volts(config)})
 
     with pytest.raises(ValueError, match="temperature_max"):
         _ = find_max_current(
@@ -288,7 +288,7 @@ def test_direct_drive_linear_case_accepts_the_seed_in_one_solve() -> None:
     # verification solve accepts it on the temperature residual — no bracketing ever needed.
     def linear(config: SimulationConfig) -> Result:
         current = _entry_volts(config)
-        return Result(frame=Solid(), status="ok", temperature_max=(300 + 10 * current * current) * U.K)
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(300 + 10 * current * current) * U.K)
 
     reference = linear(_drive_config(1.0))
     seed = seed_from_result(reference, reference_current=1 * U.A, ambient_temperature=300 * U.K, limit_temperature=340 * U.K)
@@ -320,7 +320,7 @@ def test_direct_drive_converges_on_a_coupled_source_within_a_few_solves() -> Non
 
     def coupled(config: SimulationConfig) -> Result:
         x = _entry_volts(config) ** 2
-        return Result(frame=Solid(), status="ok", temperature_max=(300 + k * x / (1 - alpha * k * x)) * U.K)
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(300 + k * x / (1 - alpha * k * x)) * U.K)
 
     true_max_current = math.sqrt(40.0 / (k * (1 + alpha * 40.0)))  # dT = 40 K at the limit
     reference = coupled(_drive_config(1.0))
@@ -344,7 +344,7 @@ def test_direct_drive_concave_response_converges_via_illinois_damping() -> None:
     # dT ∝ I (concave in x = I²): consecutive over samples pile on one side, which plain false position
     # stalls on; the Illinois halving keeps the proposals moving.
     def concave(config: SimulationConfig) -> Result:
-        return Result(frame=Solid(), status="ok", temperature_max=(300 + 40 * _entry_volts(config)) * U.K)
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(300 + 40 * _entry_volts(config)) * U.K)
 
     search = find_max_current(
         evaluate=concave,
@@ -365,7 +365,7 @@ def test_direct_drive_zero_rise_plateau_expands_geometrically() -> None:
     # expand cap until the threshold brackets it.
     def plateau(config: SimulationConfig) -> Result:
         hot = _entry_volts(config) >= 2.0
-        return Result(frame=Solid(), status="ok", temperature_max=(400.0 if hot else 300.0) * U.K)
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(400.0 if hot else 300.0) * U.K)
 
     search = find_max_current(
         evaluate=plateau,
@@ -387,8 +387,8 @@ def test_direct_drive_runaway_edge_with_ambient_floor_bisects() -> None:
     # proposal degrades to the midpoint safeguard and the bracket still closes on the edge.
     def cliff(config: SimulationConfig) -> Result:
         if _entry_volts(config) >= 2.0:
-            return Result(frame=Solid(), status="diverged")
-        return Result(frame=Solid(), status="ok", temperature_max=300 * U.K)
+            return Result(frame=Solid(), status=RunStatus.DIVERGED)
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=300 * U.K)
 
     search = find_max_current(
         evaluate=cliff,
@@ -410,8 +410,8 @@ def test_solver_error_raises_instead_of_masquerading_as_runaway() -> None:
     # bracket it would silently bias max_current low while the search still reports success.
     def broken(config: SimulationConfig) -> Result:
         if _entry_volts(config) >= 2.0:
-            return Result(frame=Solid(), status="error")
-        return Result(frame=Solid(), status="ok", temperature_max=(300 + 10 * _entry_volts(config) ** 2) * U.K, raw={"current": _entry_volts(config)})
+            return Result(frame=Solid(), status=RunStatus.ERROR)
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(300 + 10 * _entry_volts(config) ** 2) * U.K, raw={"current": _entry_volts(config)})
 
     for drive in (_direct(), VoltageDrive(current_of=_current_of, reference_current=1 * U.A)):
         with pytest.raises(SolveFailedError, match="not a physics outcome"):
@@ -430,7 +430,7 @@ def test_temperature_of_searches_a_custom_metric() -> None:
     # I = sqrt(2), the per-material extractor must carry the search to the material's own crossing at I = 2.
     def solve(config: SimulationConfig) -> Result:
         x = _entry_volts(config) ** 2
-        return Result(frame=Solid(), status="ok", temperature_max=(300 + 20 * x) * U.K, raw={"material_t": 300 + 10 * x})
+        return Result(frame=Solid(), status=RunStatus.OK, temperature_max=(300 + 20 * x) * U.K, raw={"material_t": 300 + 10 * x})
 
     def material_temperature(result: Result) -> Quantity:
         return quantity(result.raw["material_t"], "kelvin")

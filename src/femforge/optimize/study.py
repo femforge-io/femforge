@@ -80,7 +80,7 @@ class Study(BaseModel):
             row: dict[str, object] = dict(entry.point)
             row["run_id"] = entry.run_id
             row["objective"] = entry.objective
-            row["status"] = entry.result.status
+            row["status"] = entry.result.status.value
 
             force = entry.result.force
             row["force"] = force.to(U.N).magnitude.magnitude() if force is not None else None

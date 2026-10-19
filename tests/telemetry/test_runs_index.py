@@ -17,6 +17,7 @@ from femforge.telemetry.context import sweep_point
 from femforge.telemetry.paths import Telemetry
 from femforge.telemetry.runs import RunIndex, RunQuery, live_runs, run_row
 from femforge.telemetry.schemas import LIVE_RUN_SCHEMA, RUN_INDEX_SCHEMA, LiveRunColumn, RunColumn, RunSource
+from femforge.run.result import LifecycleStatus, RunStatus
 
 
 if TYPE_CHECKING:
@@ -255,7 +256,7 @@ def test_record_appends_a_driver_row_carrying_the_sweep_point(tmp_path: Path) ->
     sim_dir.mkdir(parents=True)
     manifest = RunManifest.build(
         SimulationConfig(),
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id="driven-0001",
         code_sha="sha1",
     )
@@ -277,7 +278,7 @@ def test_record_without_a_written_manifest_stamps_the_current_time(tmp_path: Pat
     index = _index(tmp_path)
     manifest = RunManifest.build(
         SimulationConfig(),
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id="unwritten-0001",
         code_sha="sha1",
     )
@@ -296,7 +297,7 @@ def test_a_recorded_run_is_not_read_again_by_the_next_scan(tmp_path: Path) -> No
     sim_dir = _bundle(tmp_path / "runs", "driven-0001")
     manifest = RunManifest.build(
         SimulationConfig(),
-        status="ok",
+        status=RunStatus.OK,
         run_id="driven-0001",
         code_sha="sha1",
     )
@@ -315,7 +316,7 @@ def test_a_rescanned_run_keeps_the_sweep_the_driver_filed_it_under(tmp_path: Pat
     sim_dir.mkdir(parents=True)
     manifest = RunManifest.build(
         SimulationConfig(),
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id="driven-0002",
         code_sha="sha1",
     )
@@ -324,7 +325,7 @@ def test_a_rescanned_run_keeps_the_sweep_the_driver_filed_it_under(tmp_path: Pat
     with sweep_point("sweep-a", "point-7"):
         index.record(manifest, sim_dir)
 
-    manifest.status = "abandoned"
+    manifest.status = LifecycleStatus.ABANDONED
     _ = (sim_dir / BundleFile.MANIFEST).write_text(manifest.model_dump_json(), encoding="utf-8")
     later = (datetime.now(timezone.utc) + timedelta(minutes=1)).timestamp()
     os.utime(sim_dir / BundleFile.MANIFEST, (later, later))

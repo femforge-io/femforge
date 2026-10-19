@@ -17,7 +17,7 @@ from femforge.run.bundle import load_manifest
 from femforge.run.driver import Driver
 from femforge.run.manifest import cache_key
 from femforge.common.names import bundle_name
-from femforge.run.result import MeshStats, Result
+from femforge.run.result import MeshStats, Result, RunStatus
 
 RUN_FIXTURES: Path = Path(__file__).parents[1] / "run" / "fixtures"
 
@@ -33,7 +33,7 @@ class _FakeDriver:
         size: float = config.mesh.global_mesh_size.m_as("m")
         self.seen.append(size)
         force_x: float = 1.0 / size  # finer mesh (smaller size) -> larger "force"
-        return Result(frame=Solid(), status="ok", force=quantity(Vec3(force_x, 0.0, 0.0), U.N))
+        return Result(frame=Solid(), status=RunStatus.OK, force=quantity(Vec3(force_x, 0.0, 0.0), U.N))
 
 
 def _parameterization() -> Parameterization:
