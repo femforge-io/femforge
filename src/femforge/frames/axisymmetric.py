@@ -12,7 +12,7 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import Axis, Frame, FrameFact, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
+from femforge.frames.base import ALIGNMENT_TOLERANCE, Axis, Frame, FrameFact, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
 from femforge.physical.readout import readout
 from femforge.physical.units import quantity
 
@@ -86,13 +86,16 @@ class Axisymmetric(Frame):
         """True: the section stands for the model revolved about ``axis``."""
         return True
 
-    def face_measure(self, length: float, centroid: Vec3) -> FrameFact:
-        """The surface a section line of ``length`` metres sweeps about the axis, ``2π·r̄·L`` with ``r̄`` the radius of ``centroid``.
+    def face_measure(self, length: float, centroid: Vec3) -> FrameFact | None:
+        """The surface a section line of ``length`` metres sweeps about the axis, ``2π·r̄·L`` with ``r̄`` the radius of ``centroid``; None for a line on the axis, which sweeps none.
 
         Args:
             length: `L` `[m]`: The group's length in the solve plane.
             centroid: `[m]`: The group's centroid in the solve frame, X radial.
         """
+        if abs(centroid.x) <= ALIGNMENT_TOLERANCE * length:
+            return None
+
         area = quantity(math.tau * centroid.x * length, "m**2")
 
         return FrameFact(label="Revolved Area", value=f"2π·r̄·L = {readout(area)}")
