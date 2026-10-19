@@ -160,13 +160,14 @@ def test_an_interface_normal_points_out_of_its_first_body(tmp_path: Path) -> Non
 
 
 def test_a_curved_body_is_bounded_by_its_mesh_nodes(tmp_path: Path) -> None:
-    rod = TaggedPart([b3d.Cylinder(10, 20)], tags={TagKey.MATERIAL: "Steel316"}, name="Beam")
-    rod.color = b3d.Color("gray")
+    ring = TaggedPart([b3d.Torus(15, 5)], tags={TagKey.MATERIAL: "Steel316"}, name="Beam")
+    ring.color = b3d.Color("gray")
 
-    mesher, _ = _mesh(tmp_path / "rod.step", rod)
+    mesher, _ = _mesh(tmp_path / "ring.step", ring)
     body = mesher.physical_groups[0]
     shell: BoundaryGroup = mesher.boundary_groups[0]
 
     assert body.bbox is not None
-    assert body.bbox.high.y <= 0.0101 and body.bbox.low.y >= -0.0101
+    assert body.bbox.high.x == pytest.approx(0.02, rel=1e-6) and body.bbox.low.y == pytest.approx(-0.02, rel=1e-6)
+    assert body.bbox.high.z <= 0.0051 and body.bbox.low.z >= -0.0051
     assert shell.name == "BEAM__EXT" and shell.normal is None
