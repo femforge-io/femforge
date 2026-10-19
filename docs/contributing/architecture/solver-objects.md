@@ -241,7 +241,7 @@ keyword_table(GenericSolver)
 2. **`generate()` builds the sif graph** from the possibly edited stack: the simulation and constants blocks, then solvers, equations, materials, bodies and boundaries in dependency order, then `validate()` (`src/femforge/elmer/sim.py:125-146`).
 3. **`write(dir)`** writes the start-info file, the sif and the two id maps, and requires `generate()` first (`src/femforge/elmer/sim.py:526-543`).
 
-The driver's `build_sim` stage constructs `Sim` from the resolved stack and applies `prepare_for_mpi` for a partitioned solve; `write_sif` calls `generate().write()` (`src/femforge/run/driver.py:654-680`). `Sim` takes no config object: its bodies come from the mesh groups, and it owns only its solver stack.
+The driver's `build_sim` stage constructs `Sim` from the resolved stack and applies `prepare_for_mpi` for a partitioned solve; `write_sif` calls `generate().write()` (`src/femforge/run/driver.py:665-691`). `Sim` takes no config object: its bodies come from the mesh groups, and it owns only its solver stack.
 
 ### Bodies, boundaries and components
 
@@ -273,11 +273,11 @@ A condition's `section` names the block it lands in, so `Sim` routes conditions 
 | A physics that needs a boundary condition to be well posed resolved one | warning | `src/femforge/elmer/sim.py:28-30`, `src/femforge/elmer/sim.py:202-216` |
 | A force Component has CalcFields with nodal forces on, and a SaveScalars to export it | warning | `src/femforge/elmer/sim.py:218-243` |
 
-The constructor raises earlier for an unknown physics and for a stack or condition that cannot solve the frame (`src/femforge/elmer/sim.py:100-118`). Before a partitioned solve, the driver also warns when a coil stack computes nodal forces, because the halo elements it then partitions with corrupt the Component force lumping (`src/femforge/run/driver.py:689-698`).
+The constructor raises earlier for an unknown physics and for a stack or condition that cannot solve the frame (`src/femforge/elmer/sim.py:100-118`). Before a partitioned solve, the driver also warns when a coil stack computes nodal forces, because the halo elements it then partitions with corrupt the Component force lumping (`src/femforge/run/driver.py:700-709`).
 
 ## The solver-log parser
 
-`SolverLogParser.feed` turns one ElmerSolver output line into a typed event, or None (`src/femforge/elmer/solver_log.py:429-495`):
+`SolverLogParser.feed` turns one ElmerSolver output line into a typed event, or None (`src/femforge/elmer/solver_log.py:432-498`):
 
 | Event | From | Where |
 |---|---|---|
@@ -288,9 +288,9 @@ The constructor raises earlier for an unknown physics and for a stack or conditi
 
 The convergence line's solver tag is the sif `Equation` name lowercased, and some Elmer builds omit it (`src/femforge/elmer/solver_log.py:18-20`), so both sides normalize names with `normalize_solver_key` (`src/femforge/elmer/solver_log.py:355-357`).
 
-[solve_case][femforge.elmer.solve_case] runs ElmerSolver through a backend and feeds every streamed line to the parser (`src/femforge/elmer/runtime/solve.py:57-163`). It writes each convergence sample to `convergence.jsonl` as one flushed line, logs it through a `ConvergenceRenderer` against the stack's targets, and logs each warning and error at its own level. It builds one renderer per solve, so one solve's progress baseline never leaks into the next (`src/femforge/elmer/runtime/solve.py:86-147`).
+[solve_case][femforge.elmer.solve_case] runs ElmerSolver through a backend and feeds every streamed line to the parser (`src/femforge/elmer/runtime/solve.py:57-170`). It writes each convergence sample to `convergence.jsonl` as one flushed line, logs it through a `ConvergenceRenderer` against the stack's targets, and logs each warning and error at its own level. It builds one renderer per solve, so one solve's progress baseline never leaks into the next (`src/femforge/elmer/runtime/solve.py:86-154`).
 
-The parser attributes each linear residual to a solver of the stack's `linear_targets`, listed in sif order: an NS line points at its own solver, because post-processing such as stress recovery follows it, and an SS line hands over to the next iterative solver (`src/femforge/elmer/solver_log.py:452-462`). `solve_case` feeds every residual to a `StallDetector` (`src/femforge/elmer/solver_log.py:243-352`). On a verdict it sets an event that the cancel token passed to the backend also reads, so the backend stops the solve the way it stops a cancelled one, and `SolveRun.stall` carries the verdict (`src/femforge/elmer/runtime/solve.py:45-54`, `src/femforge/elmer/runtime/solve.py:95-114`). Every ComputeChange line ends the current linear solve. The renderer's `heartbeat` turns the detector's `LinearProgress` into a line every 30 s of a solve, logged with its fields bound (`src/femforge/elmer/solver_log.py:408-422`). The driver copies the verdict onto the manifest and grades the run `stalled` (`src/femforge/run/driver.py:711-712`, `src/femforge/run/driver.py:321-322`). The driver writes the same targets to `convergence_targets.json` immediately before the solve (`src/femforge/run/driver.py:700-713`); [Telemetry](telemetry.md#convergence) covers how that file is read back.
+The parser attributes each linear residual to a solver of the stack's `linear_targets`, listed in sif order: an NS line points at its own solver, because post-processing such as stress recovery follows it, and an SS line hands over to the next iterative solver (`src/femforge/elmer/solver_log.py:455-465`). `solve_case` feeds every residual to a `StallDetector` (`src/femforge/elmer/solver_log.py:243-352`). On a verdict it sets an event that the cancel token passed to the backend also reads, so the backend stops the solve the way it stops a cancelled one, and `SolveRun.stall` carries the verdict (`src/femforge/elmer/runtime/solve.py:45-54`, `src/femforge/elmer/runtime/solve.py:99-121`). Every ComputeChange line ends the current linear solve. The renderer's `heartbeat` turns the detector's `LinearProgress` into a line every 30 s of a solve, logged with its fields bound (`src/femforge/elmer/solver_log.py:404-418`). The driver copies the verdict onto the manifest and grades the run `stalled` (`src/femforge/run/driver.py:722-723`, `src/femforge/run/driver.py:329-330`). The driver writes the same targets to `convergence_targets.json` immediately before the solve (`src/femforge/run/driver.py:711-724`); [Telemetry](telemetry.md#convergence) covers how that file is read back.
 
 After the solve, [parse_result][femforge.run.parse_result] reads the finished bundle into a [Result][femforge.run.Result] (`src/femforge/run/parse.py:184-242`):
 

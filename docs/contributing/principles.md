@@ -55,7 +55,7 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 
 **A physical field documents its glyph and unit, and its name carries no unit.** The docstring's first line reads `` `glyph` `[unit]`: meaning ``, with `[-]` for a dimensionless value. `tests/test_field_docstrings.py:43` enforces the format on the modules it lists and checks that pint parses the unit, as in `` `h` `[mm]`: Domain-wide target element size `` (`src/femforge/meshing/config.py:23`).
 
-**A docstring is one sentence, two at most.** Design rationale belongs in these pages. A public function or constructor with three or more parameters adds a Google `Args:` block with one line per parameter, which `tests/test_public_api.py:497` checks against the signature, as in `to_elmer` (`src/femforge/materials/properties.py:176-183`).
+**A docstring is one sentence, two at most.** Design rationale belongs in these pages. A public function or constructor with three or more parameters adds a Google `Args:` block with one line per parameter, which `tests/test_public_api.py:500` checks against the signature, as in `to_elmer` (`src/femforge/materials/properties.py:176-183`).
 
 **A comment states a constraint the code cannot show.** It never restates the code or narrates a change, as in the PATH note above `gmsh.initialize` (`src/femforge/meshing/mesher.py:149-150`).
 
@@ -64,7 +64,7 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 | Rule | Why | Example |
 | --- | --- | --- |
 | A blank line after every guard, `return` or `raise` | each exit stands out | `src/femforge/run/kinds.py:43-45` |
-| A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:428-433` |
+| A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:436-441` |
 | A named intermediate instead of a nested comprehension | the name says what the step yields | `tests/test_release.py:111-112` |
 | A single-use helper nested in its caller | its scope shows where it is used | `src/femforge/meshing/mesher.py:137-141` |
 
