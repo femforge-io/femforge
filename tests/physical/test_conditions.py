@@ -6,7 +6,7 @@ from typing import Annotated, Literal, cast
 import pytest
 from pydantic import TypeAdapter
 
-from femforge.frames import Axis, Axisymmetric, Cartesian2D, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, Frame, Solid
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.physics import Physics
 from femforge.elmer.sections import SifSection
@@ -281,7 +281,7 @@ def test_condition_list_round_trips_via_discriminator() -> None:
     assert third.to_elmer()["Temperature"] == pytest.approx(350.0)
     roller: Condition = restored[7]
     assert isinstance(roller, FixedDisplacement)
-    assert roller.to_elmer() == {"Displacement 1": 0.0, "Displacement 2": 0.0}
+    assert roller.on_boundary(BoundarySite(name="ROOT", measure=None, frame=Solid())) == {"Displacement 1": 0.0, "Displacement 2": 0.0}
 
 
 # --- linear elasticity -------------------------------------------------------
@@ -291,14 +291,13 @@ def test_a_fixed_displacement_clamps_every_direction_by_default() -> None:
     clamp = FixedDisplacement()
 
     assert clamp.physics is Physics.LINEAR_ELASTICITY and clamp.target is ConditionTarget.BOUNDARY
-    assert clamp.to_elmer() == {"Displacement 1": 0.0, "Displacement 2": 0.0, "Displacement 3": 0.0}
-    assert clamp.on_boundary(BoundarySite(name="ROOT", measure=None, frame=Solid())) == clamp.to_elmer()
+    assert clamp.on_boundary(BoundarySite(name="ROOT", measure=None, frame=Solid())) == {"Displacement 1": 0.0, "Displacement 2": 0.0, "Displacement 3": 0.0}
 
 
 def test_a_free_fixed_displacement_component_is_left_out() -> None:
     roller = FixedDisplacement(x=None, y=quantity(2.0, "mm"))
 
-    assert roller.to_elmer() == {"Displacement 2": pytest.approx(0.002), "Displacement 3": 0.0}
+    assert roller.on_boundary(BoundarySite(name="ROOT", measure=None, frame=Solid())) == {"Displacement 2": pytest.approx(0.002), "Displacement 3": 0.0}
 
 
 def test_a_fixed_displacement_rejects_a_nonzero_component_the_frame_cannot_express() -> None:
@@ -311,25 +310,110 @@ def test_a_fixed_displacement_rejects_a_nonzero_component_the_frame_cannot_expre
     with pytest.raises(ValueError, match="nonzero z, which has no form in the Cartesian 2D normal to Z frame; set z=None"):
         FixedDisplacement(z=quantity(1.0, "mm")).check_frame(planar)
 
-    with pytest.raises(ValueError, match="x=None"):
-        FixedDisplacement(x=quantity(1.0, "mm")).check_frame(Axisymmetric())
+    with pytest.raises(ValueError, match="y=None"):
+        FixedDisplacement(y=quantity(1.0, "mm")).check_frame(Axisymmetric())
 
 
-def test_a_fixed_displacement_rejects_a_component_the_frame_solves_as_another_coordinate() -> None:
-    flipped = Cartesian2D(normal=Axis(direction=Direction(0, 0, -1)), thickness=10 * U.mm)
-    sideways = Cartesian2D(normal=Axis.X, thickness=10 * U.mm)
+def test_a_fixed_displacement_emits_only_through_on_boundary() -> None:
+    with pytest.raises(ValueError, match="on_boundary"):
+        _ = FixedDisplacement().to_elmer()
 
-    FixedDisplacement().check_frame(flipped)
-    FixedDisplacement(y=None, z=None).check_frame(sideways)
 
-    with pytest.raises(ValueError, match="constrains y, which the Cartesian 2D normal to -Z frame solves as another coordinate"):
-        FixedDisplacement(y=quantity(1.0, "mm")).check_frame(flipped)
+_THICKNESS = 10 * U.mm
+_TILTED = Cartesian2D(x_dir=Direction(1, 1, 0), thickness=_THICKNESS)
+_OBLIQUE_NORMAL = Cartesian2D(normal=Axis(direction=Direction(1, 1, 0)), thickness=_THICKNESS)
 
-    with pytest.raises(ValueError, match="constrains y, which the Cartesian 2D normal to X frame solves as another coordinate"):
-        FixedDisplacement().check_frame(sideways)
 
-    with pytest.raises(ValueError, match="constrains z, which the axisymmetric about Z frame"):
-        FixedDisplacement().check_frame(Axisymmetric())
+def _axis(x: float, y: float, z: float) -> Axis:
+    return Axis(direction=Direction(x, y, z))
+
+
+def _mm(value: float | None) -> object:
+    return None if value is None else quantity(value, "mm")
+
+
+_FREE: dict[str, object] = {"x": None, "y": None, "z": None}
+
+
+@pytest.mark.parametrize(
+    ("frame", "kwargs", "expected"),
+    [
+        (Solid(), {}, {"Displacement 1": 0.0, "Displacement 2": 0.0, "Displacement 3": 0.0}),
+        (Solid(), {"y": None}, {"Displacement 1": 0.0, "Displacement 3": 0.0}),
+        (Solid(), {**_FREE, "x": 1.0}, {"Displacement 1": 0.001}),
+        (Cartesian2D(thickness=_THICKNESS), {}, {"Displacement 1": 0.0, "Displacement 2": 0.0}),
+        (Cartesian2D(thickness=_THICKNESS), {"y": None}, {"Displacement 1": 0.0}),
+        (Cartesian2D(normal=_axis(0, 0, -1), thickness=_THICKNESS), {**_FREE, "y": 1.0}, {"Displacement 2": -0.001}),
+        (Cartesian2D(normal=Axis.X, thickness=_THICKNESS), {}, {"Displacement 1": 0.0, "Displacement 2": 0.0}),
+        (Cartesian2D(normal=Axis.X, thickness=_THICKNESS), {"y": None}, {"Displacement 2": 0.0}),
+        (Cartesian2D(normal=Axis.X, thickness=_THICKNESS), {**_FREE, "y": 1.0}, {"Displacement 1": 0.001}),
+        (Cartesian2D(normal=Axis.X, thickness=_THICKNESS), {**_FREE, "z": 1.0}, {"Displacement 2": 0.001}),
+        (Cartesian2D(normal=_axis(-1, 0, 0), thickness=_THICKNESS), {**_FREE, "z": 1.0}, {"Displacement 2": -0.001}),
+        (Cartesian2D(normal=Axis.Y, thickness=_THICKNESS), {}, {"Displacement 1": 0.0, "Displacement 2": 0.0}),
+        (Cartesian2D(normal=Axis.Y, thickness=_THICKNESS), {**_FREE, "z": 1.0}, {"Displacement 2": -0.001}),
+        (Cartesian2D(normal=_axis(0, -1, 0), thickness=_THICKNESS), {**_FREE, "z": 1.0}, {"Displacement 2": 0.001}),
+        (Cartesian2D(normal=Axis.X, x_dir=Direction(0, 0, 1), thickness=_THICKNESS), {**_FREE, "y": 1.0}, {"Displacement 2": -0.001}),
+        (Cartesian2D(normal=Axis.X, x_dir=Direction(0, 0, 1), thickness=_THICKNESS), {**_FREE, "z": 1.0}, {"Displacement 1": 0.001}),
+        (_TILTED, {}, {"Displacement 1": 0.0, "Displacement 2": 0.0}),
+        (_TILTED, {"x": 1.0, "z": None}, {"Displacement 1": 7.0710678e-4, "Displacement 2": -7.0710678e-4}),
+        (_OBLIQUE_NORMAL, {}, {"Displacement 1": 0.0, "Displacement 2": 0.0}),
+        (_OBLIQUE_NORMAL, {**_FREE, "z": 1.0}, {"Displacement 1": 0.001}),
+        (Axisymmetric(), {}, {"Displacement 1": 0.0, "Displacement 2": 0.0}),
+        (Axisymmetric(), {**_FREE, "x": 1.0}, {"Displacement 1": 0.001}),
+        (Axisymmetric(), {**_FREE, "z": 1.0}, {"Displacement 2": 0.001}),
+        (Axisymmetric(), {"x": None, "z": None}, {}),
+        (Axisymmetric(axis=_axis(0, 0, -1)), {**_FREE, "z": 1.0}, {"Displacement 2": -0.001}),
+        (Axisymmetric(axis=Axis.X), {**_FREE, "x": 1.0}, {"Displacement 2": 0.001}),
+        (Axisymmetric(axis=Axis.X), {**_FREE, "y": 1.0}, {"Displacement 1": 0.001}),
+        (Axisymmetric(radial=Direction(0, 1, 0)), {**_FREE, "y": 1.0}, {"Displacement 1": 0.001}),
+    ],
+)
+def test_a_fixed_displacement_fixes_the_solve_coordinate_each_axis_runs_along(frame: Frame, kwargs: dict[str, float | None], expected: dict[str, float]) -> None:
+    condition = FixedDisplacement.model_validate({name: _mm(value) for name, value in kwargs.items()})
+
+    emitted = condition.on_boundary(BoundarySite(name="ROOT", measure=None, frame=frame))
+
+    condition.check_frame(frame)
+    assert emitted == {key: pytest.approx(value, rel=1e-8, abs=1e-12) for key, value in expected.items()}
+
+
+def test_a_flipped_normal_clamp_emits_a_positive_zero() -> None:
+    emitted = FixedDisplacement().on_boundary(BoundarySite(name="ROOT", measure=None, frame=Cartesian2D(normal=_axis(0, 0, -1), thickness=_THICKNESS)))
+
+    assert emitted == {"Displacement 1": 0.0, "Displacement 2": 0.0}
+    assert math.copysign(1.0, cast("float", emitted["Displacement 2"])) == 1.0
+
+
+_SHIPPED_FRAMES: list[Frame] = [
+    Solid(),
+    *(Cartesian2D(normal=_axis(*direction), thickness=_THICKNESS) for direction in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1), (1, 1, 0))),
+    *(Axisymmetric(axis=_axis(*direction)) for direction in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1), (1, 1, 0))),
+]
+
+
+@pytest.mark.parametrize("frame", _SHIPPED_FRAMES, ids=[frame.label for frame in _SHIPPED_FRAMES])
+def test_every_shipped_frame_clamps_fully_by_default(frame: Frame) -> None:
+    emitted = FixedDisplacement().on_boundary(BoundarySite(name="ROOT", measure=None, frame=frame))
+
+    assert emitted == {f"Displacement {index}": 0.0 for index in range(1, frame.model_dim + 1)}
+
+
+@pytest.mark.parametrize(
+    ("frame", "kwargs", "match"),
+    [
+        (Cartesian2D(thickness=_THICKNESS), {"z": 1.0}, "nonzero z, which has no form in the Cartesian 2D normal to Z frame; set z=None"),
+        (Cartesian2D(normal=Axis.X, thickness=_THICKNESS), {"x": 1.0}, "nonzero x"),
+        (Axisymmetric(), {"y": 1.0}, "nonzero y"),
+        (_TILTED, {"y": None}, "constrains x but leaves y free.*x_dir"),
+        (_TILTED, {**_FREE, "y": 1.0}, "constrains y but leaves x free"),
+        (_OBLIQUE_NORMAL, {"y": None}, "constrains x but leaves y free"),
+    ],
+)
+def test_a_fixed_displacement_raises_when_its_frame_cannot_pose_it(frame: Frame, kwargs: dict[str, float | None], match: str) -> None:
+    condition = FixedDisplacement.model_validate({name: _mm(value) for name, value in kwargs.items()})
+
+    with pytest.raises(ValueError, match=match):
+        condition.check_frame(frame)
 
 
 def test_a_fixed_displacement_drops_the_component_along_a_2d_normal() -> None:
@@ -365,6 +449,27 @@ def test_a_surface_force_checks_its_direction_against_the_frame() -> None:
 
     with pytest.raises(ValueError, match="no form"):
         SurfaceForce(force=quantity(Vec3(1, 0, 0), "N")).check_frame(Axisymmetric())
+
+
+@pytest.mark.parametrize(
+    ("frame", "force", "expected"),
+    [
+        (Axisymmetric(), Vec3(0, 0, 100), {"Force 1": 0.0, "Force 2": 159154.943}),
+        (Axisymmetric(), Vec3(0, 0, -100), {"Force 1": 0.0, "Force 2": -159154.943}),
+        (Axisymmetric(axis=Axis.X), Vec3(100, 0, 0), {"Force 1": 0.0, "Force 2": 159154.943}),
+        (Cartesian2D(normal=Axis.X, thickness=_THICKNESS), Vec3(0, 100, 0), {"Force 1": 1e8, "Force 2": 0.0}),
+        (Cartesian2D(normal=_axis(0, 0, -1), thickness=_THICKNESS), Vec3(0, 100, 0), {"Force 1": 0.0, "Force 2": -1e8}),
+        (_TILTED, Vec3(100, 0, 0), {"Force 1": 7.0710678e7, "Force 2": -7.0710678e7}),
+    ],
+)
+def test_a_surface_force_spreads_the_solve_share_of_its_solve_components(frame: Frame, force: Vec3, expected: dict[str, float]) -> None:
+    traction = SurfaceForce(force=quantity(force, "N")).on_boundary(BoundarySite(name="TIP", measure=1e-4, frame=frame))
+
+    assert traction == {key: pytest.approx(value, rel=1e-8, abs=1e-6) for key, value in expected.items()}
+
+
+def test_an_axial_surface_force_has_a_form_under_an_axisymmetric_frame() -> None:
+    SurfaceForce(force=quantity(Vec3(0, 0, 1), "N")).check_frame(Axisymmetric())
 
 
 def test_a_magnetization_without_a_direction_has_nothing_to_emit() -> None:
