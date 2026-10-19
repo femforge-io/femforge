@@ -51,7 +51,7 @@ class Shared(TypedDict, total=False):
     hidden: bool | react.Bind
     tabIndex: int
     ref: str
-    key: str
+    key: str | react.Bind
     connect_parent: bool
     on_click: react.Callback
     on_double_click: react.Callback
