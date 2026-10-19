@@ -66,9 +66,9 @@ class Solid(Frame):
         """``integrated`` itself: the solve domain is the whole model."""
         return integrated
 
-    def solve_share(self, total: Vec3) -> Vec3:
-        """``total`` itself: the solve domain is the whole model."""
-        return total
+    def solve_share(self, share_of: Vec3) -> Vec3:
+        """``share_of`` itself: the solve domain is the whole model."""
+        return share_of
 
     def along(self, vector: Vec3, axis: Axis | None) -> float:
         """The projection of ``vector`` onto ``axis``; None raises, since a solid has no axis of its own."""

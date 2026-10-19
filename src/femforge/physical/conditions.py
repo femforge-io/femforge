@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, cast, get_args
@@ -34,6 +35,7 @@ from femforge.physical.units import (
 
 if TYPE_CHECKING:
     from femforge.frames import Frame
+    from femforge.frames.base import SolvePlane
 
 
 __all__ = [
@@ -71,14 +73,6 @@ class ConditionTarget(StrEnum):
 def _si(quantity: Quantity, unit: Any) -> float:  # pyright: ignore[reportExplicitAny, reportAny]  # unit is any pint unit expression (registry under-typed)
     """Strip ``quantity`` to a bare SI float in ``unit`` (Elmer sif keywords are plain numbers)."""
     return float(quantity.to(unit).magnitude)  # pyright: ignore[reportAny]  # unit arg is Any (registry under-typed)
-
-
-def _solved(frame: Frame, direction: Vec3) -> tuple[float, ...] | None:
-    """The solve components of the authored ``direction`` in ``frame``, None when it has no form there."""
-    try:
-        return frame.solve_vector(direction)
-    except ValueError:
-        return None
 
 
 @dataclass(frozen=True)
@@ -490,52 +484,98 @@ class FixedDisplacement(Condition):
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
-    x: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 1", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
-    """`u_x` `[m]`: Prescribed x displacement; None leaves x free."""
+    x: Length | None = Field(default_factory=lambda: quantity(0.0, "m"))
+    """`u_x` `[m]`: Prescribed displacement along the authored X axis; None leaves it free."""
 
-    y: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 2", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
-    """`u_y` `[m]`: Prescribed y displacement; None leaves y free."""
+    y: Length | None = Field(default_factory=lambda: quantity(0.0, "m"))
+    """`u_y` `[m]`: Prescribed displacement along the authored Y axis; None leaves it free."""
 
-    z: Annotated[Length | None, ElmerKeyword(f"{ElmerVariable.DISPLACEMENT} 3", U.m)] = Field(default_factory=lambda: quantity(0.0, "m"))
-    """`u_z` `[m]`: Prescribed z displacement; None leaves z free."""
+    z: Length | None = Field(default_factory=lambda: quantity(0.0, "m"))
+    """`u_z` `[m]`: Prescribed displacement along the authored Z axis; None leaves it free."""
 
-    def _components(self) -> tuple[tuple[int, str, Length | None, Vec3], ...]:
+    def _constraints(self) -> tuple[tuple[str, Vec3, float | None], ...]:
+        """Each authored axis's name, unit direction and prescribed SI displacement, None when it is free."""
+        x: float | None = None if self.x is None else _si(self.x, U.m)
+        y: float | None = None if self.y is None else _si(self.y, U.m)
+        z: float | None = None if self.z is None else _si(self.z, U.m)
+
         return (
-            (0, "x", self.x, Vec3(1.0, 0.0, 0.0)),
-            (1, "y", self.y, Vec3(0.0, 1.0, 0.0)),
-            (2, "z", self.z, Vec3(0.0, 0.0, 1.0)),
+            ("x", Vec3(1.0, 0.0, 0.0), x),
+            ("y", Vec3(0.0, 1.0, 0.0), y),
+            ("z", Vec3(0.0, 0.0, 1.0), z),
         )
 
+    def _solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
+        """Each 1-based solve coordinate the constrained axes run along in ``frame``, with its signed prescribed value; raises when the mapping is ill posed."""
+
+        def snapped(cosine: float) -> float:
+            if abs(cosine) <= ALIGNMENT_TOLERANCE:
+                return 0.0
+
+            if abs(abs(cosine) - 1.0) <= ALIGNMENT_TOLERANCE:
+                return math.copysign(1.0, cosine)
+
+            return cosine
+
+        plane: SolvePlane | None = frame.plane
+        world: tuple[Vec3, ...] = (Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0), Vec3(0.0, 0.0, 1.0))
+        solve_axes: tuple[Vec3, ...] = world if plane is None else (plane.x_dir, plane.y_dir)
+        constraints: tuple[tuple[str, Vec3, float | None], ...] = self._constraints()
+
+        for name, axis, value in constraints:
+            if value is None or value == 0.0:
+                continue
+
+            in_plane: Vec3 = sum((solve_axis * axis.dot(solve_axis) for solve_axis in solve_axes), start=Vec3(0.0, 0.0, 0.0))
+
+            # A residual vector, not sqrt(1 - Σcos²): the 12-digit Direction rounding puts the latter right at the tolerance.
+            if (axis - in_plane).magnitude() > ALIGNMENT_TOLERANCE:
+                raise ValueError(f"FixedDisplacement prescribes a nonzero {name}, which has no form in the {frame.label} frame; set {name}=None.")
+
+        components: list[tuple[int, float]] = []
+
+        for index, solve_axis in enumerate(solve_axes, start=1):
+            held: list[tuple[str, float, float]] = []
+            free: list[str] = []
+
+            for name, axis, value in constraints:
+                cosine: float = snapped(axis.dot(solve_axis))
+
+                if cosine == 0.0:
+                    continue
+
+                if value is None:
+                    free.append(name)
+
+                    continue
+
+                held.append((name, cosine, value))
+
+            if held and free:
+                raise ValueError(
+                    f"FixedDisplacement constrains {held[0][0]} but leaves {free[0]} free, and the {frame.label} frame solves coordinate {index} as a mix of the two; "
+                    f"constrain {free[0]} too, or orient the frame so its x_dir runs along {held[0][0]}."
+                )
+
+            if held:
+                terms: list[float] = [cosine * value for _, cosine, value in held]
+                components.append((index, sum(terms, start=0.0)))
+
+        return tuple(components)
+
+    def to_elmer(self) -> dict[str, float | str]:
+        """Raise: the keywords depend on the frame, which only [`on_boundary`][femforge.physical.conditions.FixedDisplacement.on_boundary] knows."""
+        raise ValueError("FixedDisplacement maps its axes through the frame of the boundary it lands on; it emits through on_boundary only.")
+
     def on_boundary(self, site: BoundarySite) -> dict[str, float | str]:
-        """The ``Displacement i`` keywords of the components the frame of ``site`` solves; a zero component along a 2D normal is dropped."""
-        emitted: dict[str, float | str] = self.to_elmer()
+        """The ``Displacement i`` keywords of the solve coordinates the constrained axes run along in the frame of ``site``, signed by their alignment; an axis off the solve plane adds none."""
+        components: tuple[tuple[int, float], ...] = self._solve_components(site.frame)
 
-        for index, _, _, direction in self._components():
-            if _solved(site.frame, direction) is None:
-                _ = emitted.pop(f"{ElmerVariable.DISPLACEMENT} {index + 1}", None)
-
-        return emitted
+        return {f"{ElmerVariable.DISPLACEMENT} {index}": value for index, value in components}
 
     def check_frame(self, frame: Frame) -> None:
-        """Raise when a constrained component is a different solve coordinate in ``frame``, or a nonzero one has no solve coordinate there."""
-        for index, name, value, direction in self._components():
-            if value is None:
-                continue
-
-            nonzero: bool = _si(value, U.m) != 0.0
-            solved: tuple[float, ...] | None = _solved(frame, direction)
-
-            if solved is None:
-                if nonzero:
-                    raise ValueError(f"FixedDisplacement prescribes a nonzero {name}, which has no form in the {frame.label} frame; set {name}=None.")
-
-                continue
-
-            own: float = solved[index] if index < len(solved) else 0.0
-            lands_on_own_slot: bool = abs(abs(own) - 1.0) <= ALIGNMENT_TOLERANCE and (own > 0.0 or not nonzero)
-
-            if not lands_on_own_slot:
-                raise ValueError(f"FixedDisplacement constrains {name}, which the {frame.label} frame solves as another coordinate; set {name}=None or orient the frame so they agree.")
+        """Raise when a nonzero component leaves the solve plane or a constrained axis runs oblique to a free one in ``frame``."""
+        _ = self._solve_components(frame)
 
 
 class SurfaceForce(Condition):
@@ -559,9 +599,10 @@ class SurfaceForce(Condition):
     """`F⃗` `[N]`: Total force spread uniformly over the face, in the authored frame."""
 
     def _solve_force(self, frame: Frame) -> tuple[float, ...]:
-        total: Vec3 = self.force.to(U.N).magnitude
+        """The solve components of the solve domain's share of the force."""
+        share: Vec3 = frame.authored_share(self.force.to(U.N).magnitude)
 
-        return frame.solve_vector(frame.solve_share(total))
+        return share.to_tuple()[: frame.model_dim]
 
     def to_elmer(self) -> dict[str, float | str]:
         """Raise: the traction needs the face area, which only [`on_boundary`][femforge.physical.conditions.SurfaceForce.on_boundary] knows."""

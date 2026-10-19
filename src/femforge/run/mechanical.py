@@ -107,7 +107,7 @@ def clapeyron_energy(mesh: FieldMesh, boundary: Boundary | str, force: Vec3) -> 
     Args:
         mesh: The solved field mesh, its boundaries attached.
         boundary: The loaded face's boundary.
-        force: The total force on the face in N, in solve coordinates.
+        force: The solve domain's share of the face's force in N, in solve coordinates; [`Run.clapeyron_energy`][femforge.run.Run.clapeyron_energy] takes the authored force.
     """
     displacement = mesh.get(ElmerVariable.DISPLACEMENT).where_boundary(boundary).surface_mean()
     mean: list[float] = cast("list[float]", np.asarray(displacement, dtype=np.float64).tolist())

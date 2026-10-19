@@ -30,7 +30,6 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import U, quantity
 from femforge.run.driver import Driver
 from femforge.run.inspect import Run
-from femforge.run.mechanical import clapeyron_energy
 from femforge.run.retention import RetentionPolicy
 
 from tests.elmer.test_thermal_solve_integration import _gated_elmer, _native_backend
@@ -116,4 +115,4 @@ def test_a_tagged_cantilever_solves_through_the_driver_to_timoshenko(tmp_path: P
     deflection: float = LOAD * length**3 / (3 * YOUNGS * inertia) + LOAD * length / (SHEAR_COEFFICIENT * shear_modulus * area)
 
     assert tip_displacement[2] == pytest.approx(deflection, rel=0.05)
-    assert run.strain_energy("BEAM").m_as("J") == pytest.approx(clapeyron_energy(run.mesh(), tip, force), rel=0.03)
+    assert run.strain_energy("BEAM").m_as("J") == pytest.approx(run.clapeyron_energy("Tip", quantity(force, "N")).m_as("J"), rel=0.03)

@@ -1,5 +1,7 @@
 """The frame seam: axes, solve planes, the abstract base and the discriminated union."""
 
+import math
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
@@ -104,6 +106,26 @@ def test_the_solve_share_of_a_total_is_what_the_solve_integrated(frame: Frame) -
     share = frame.solve_share(frame.total(integrated))
 
     assert share.to_list() == pytest.approx(integrated.to_list())
+
+
+@pytest.mark.parametrize(
+    ("frame", "authored", "expected"),
+    [
+        (Solid(), Vec3(1, 2, 3), [1.0, 2.0, 3.0]),
+        (Axisymmetric(), Vec3(0, 0, 2 * math.pi), [0.0, 1.0, 0.0]),
+        (Cartesian2D(thickness=10 * U.mm), Vec3(100, 50, 0), [10000.0, 5000.0, 0.0]),
+    ],
+)
+def test_the_authored_share_is_the_solve_share_of_the_solve_vector(frame: Frame, authored: Vec3, expected: list[float]) -> None:
+    assert frame.authored_share(authored).to_list() == pytest.approx(expected)
+
+
+def test_an_authored_vector_with_no_form_in_the_frame_has_no_share() -> None:
+    with pytest.raises(ValueError, match="part along the plane normal"):
+        _ = Cartesian2D(thickness=10 * U.mm).authored_share(Vec3(0, 0, 1))
+
+    with pytest.raises(ValueError, match="not along the symmetry axis"):
+        _ = Axisymmetric().authored_share(Vec3(1, 0, 0))
 
 
 def test_only_the_axisymmetric_frame_revolves_and_only_the_cartesian_2d_frame_poses_a_plane_state() -> None:

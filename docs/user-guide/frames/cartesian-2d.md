@@ -83,7 +83,7 @@ The solved stack runs in the `Cartesian 2D` coordinate system. Authored `physics
 | [Magnetization][femforge.physical.Magnetization] | The direction must lie in the plane; it is emitted as its solve X and Y components. |
 | [CurrentDensity][femforge.physical.CurrentDensity] | A signed current density along the normal, the solve +Z. |
 | [CalculateMagneticForce][femforge.physical.CalculateMagneticForce] | Torque is rejected: drop `calculate_magnetic_torque`, `torque_origin` and `torque_axis`. |
-| [FixedDisplacement][femforge.physical.FixedDisplacement] | A component along the normal must be zero or None, and is dropped; a constrained in-plane component must be the same solve component, so it needs a normal along ±Z, and a nonzero one also the same sign. |
+| [FixedDisplacement][femforge.physical.FixedDisplacement] | Each constrained axis fixes the solve coordinate it runs along, with its sign, so `normal=-Z` sets `Displacement 2 = -y`. An axis along the normal is dropped and must be zero or None. An axis oblique to the solve axes needs every axis it mixes with constrained too, or an `x_dir` along it. |
 | [SurfaceForce][femforge.physical.SurfaceForce] | The total force on the whole face; femforge divides it by the thickness and the edge length into a traction. The force must lie in the plane. |
 
 ## Results
@@ -98,7 +98,7 @@ Results come back in the solve frame. Elmer integrates per metre of depth in `Ca
 | [FieldQuery.integrate][femforge.run.FieldQuery.integrate] | The plane integral ∫ value dA, per metre of depth. |
 | [FieldQuery.integrate_extruded][femforge.run.FieldQuery.integrate_extruded] | The prism integral ∫ value dA times a depth you pass, usually the thickness. |
 | [Run.strain_energy][femforge.run.Run.strain_energy], [strain_energy][femforge.run.strain_energy] | Per metre of depth: multiply by `thickness_m` for the whole prism. |
-| [clapeyron_energy][femforge.run.clapeyron_energy] | Per metre of depth when you pass the per-metre share of the force, `frame.solve_share(force)`, which balances the strain energy. |
+| [Run.clapeyron_energy][femforge.run.Run.clapeyron_energy] | Per metre of depth: pass the whole-face authored force, and it takes the per-metre share itself, which balances `Run.strain_energy`. |
 
 [Result.axial_force][femforge.run.Result.axial_force] projects a force onto an authored axis you pass; the frame has no axis of its own, so `axis=None` raises.
 

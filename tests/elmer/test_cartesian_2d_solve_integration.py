@@ -30,7 +30,8 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import U, quantity
 from femforge.run.driver import Driver
 from femforge.run.fields import FieldMesh
-from femforge.run.mechanical import clapeyron_energy, strain_energy
+from femforge.run.inspect import Run
+from femforge.run.mechanical import strain_energy
 from femforge.run.result import Result
 
 from tests.elmer.test_thermal_solve_integration import _find_elmer
@@ -82,6 +83,21 @@ class _Prism(Build123dGeometry):
         return TaggedCompound(children=[prism, left, right])
 
 
+class _Column(Build123dGeometry):
+    """The steel prism stood along y, its depth along x, with its -Y and +Y end faces named Left and Right."""
+
+    def model(self) -> TaggedCompound:
+        import build123d as b3d
+
+        box = b3d.Box(DEPTH, LENGTH, HEIGHT, align=(b3d.Align.MIN, b3d.Align.MIN, b3d.Align.MIN))
+        ends = box.faces().sort_by(b3d.Axis.Y)
+        column = TaggedPart([box], tags={TagKey.MATERIAL: "Steel316"}, name=BODY)
+        left = TaggedFace(ends[0], name="Left")
+        right = TaggedFace(ends[-1], name="Right")
+
+        return TaggedCompound(children=[column, left, right])
+
+
 def _planar(depth: float = DEPTH, state: PlaneState = PlaneState.STRESS) -> Cartesian2D:
     """The mid-depth section of the prism, so no named face meets the plane only along an edge."""
     return Cartesian2D(normal=Axis(origin=Vec3(0, 0, depth / 2), direction=Direction(0, 0, 1)), thickness=depth * U.mm, state=state)
@@ -95,7 +111,7 @@ def _solve(
     left: list[ConditionUnion],
     right: list[ConditionUnion],
     *,
-    geometry: _Prism | None = None,
+    geometry: Build123dGeometry | None = None,
     size: float = 1.0,
 ) -> tuple[Result, FieldMesh]:
     """Solve the prism under ``frame`` with quadratic elements and load its fields."""
@@ -133,10 +149,10 @@ def _tip(mesh: FieldMesh) -> list[float]:
     return cast("list[float]", np.asarray(values.mean(axis=0)).tolist())
 
 
-def _bar(tmp_path: Path, frame: Cartesian2D | Solid, force: Vec3, *, size: float = 1.0) -> list[float]:
+def _bar(tmp_path: Path, frame: Cartesian2D | Solid, force: Vec3, *, size: float = 1.0, geometry: Build123dGeometry | None = None) -> list[float]:
     """The tip displacement of the prism clamped at Left and loaded by ``force`` on Right."""
     load = SurfaceForce(force=quantity(force, "N"))
-    _, mesh = _solve(tmp_path, frame, Physics.LINEAR_ELASTICITY, [], [FixedDisplacement()], [load], size=size)
+    _, mesh = _solve(tmp_path, frame, Physics.LINEAR_ELASTICITY, [], [FixedDisplacement()], [load], geometry=geometry, size=size)
 
     return _tip(mesh)
 
@@ -156,12 +172,23 @@ def test_a_heated_slab_peaks_at_the_conduction_midpoint_whatever_its_depth(tmp_p
     assert result.temperature_max.m_as("kelvin") == pytest.approx(expected, rel=0.01)
 
 
-def test_a_plane_stress_bar_stretches_by_fl_over_ea(tmp_path: Path) -> None:
-    """Observed on Elmer 26.2: 2.5855e-6 m against 2.5907e-6 m."""
-    force = 1000.0
-    expected: float = force * LENGTH * 1e-3 / (YOUNGS * HEIGHT * DEPTH * 1e-6)
+@pytest.mark.parametrize(
+    ("frame", "geometry", "force"),
+    [
+        pytest.param(_planar(), _Prism(), Vec3(1000, 0, 0), id="normal_z"),
+        pytest.param(
+            Cartesian2D(normal=Axis(origin=Vec3(DEPTH / 2, 0, 0), direction=Direction(1, 0, 0)), thickness=DEPTH * U.mm),
+            _Column(),
+            Vec3(0, 1000, 0),
+            id="normal_x",
+        ),
+    ],
+)
+def test_a_plane_stress_bar_stretches_by_fl_over_ea(tmp_path: Path, frame: Cartesian2D, geometry: Build123dGeometry, force: Vec3) -> None:
+    """Observed on Elmer 26.2: 2.5855e-6 m for normal_z and 2.5855e-6 m for normal_x against 2.5907e-6 m."""
+    expected: float = force.magnitude() * LENGTH * 1e-3 / (YOUNGS * HEIGHT * DEPTH * 1e-6)
 
-    tip = _bar(tmp_path, _planar(), Vec3(force, 0, 0))
+    tip = _bar(tmp_path, frame, force, geometry=geometry)
 
     assert tip[0] == pytest.approx(expected, rel=0.03)
 
@@ -196,15 +223,15 @@ def test_a_tip_loaded_cantilever_matches_timoshenko(tmp_path: Path) -> None:
     assert tip[1] == pytest.approx(expected, rel=0.05)
 
 
-def test_the_planar_strain_energy_is_per_metre_and_balances_the_work_of_the_per_metre_share(tmp_path: Path) -> None:
+def test_the_planar_strain_energy_is_per_metre_and_balances_the_clapeyron_work_of_the_face_force(tmp_path: Path) -> None:
     """Observed on Elmer 26.2: 0.13297 J/m stored against 0.13308 J/m of work, 1.3297e-3 J over the prism against 1.3348e-3 J."""
     force = Vec3(0, 100, 0)
     frame: Cartesian2D = _planar()
     load = SurfaceForce(force=quantity(force, "N"))
-    _, mesh = _solve(tmp_path, frame, Physics.LINEAR_ELASTICITY, [], [FixedDisplacement()], [load])
+    result, mesh = _solve(tmp_path, frame, Physics.LINEAR_ELASTICITY, [], [FixedDisplacement()], [load])
 
     stored: float = strain_energy(mesh, BODY.upper())
-    work: float = clapeyron_energy(mesh, "RIGHT", frame.solve_share(force))
+    work: float = Run.from_result(result).clapeyron_energy("Right", quantity(force, "N")).m_as("J")
     length = LENGTH * 1e-3
     inertia = DEPTH * HEIGHT**3 * 1e-12 / 12
     shear_modulus = YOUNGS / (2 * (1 + POISSON))

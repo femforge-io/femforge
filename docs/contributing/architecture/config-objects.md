@@ -81,7 +81,7 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 | `label` | a short name for messages and the UI | condition errors, the workbench |
 | `model_dim` | the body dimension the mesher meshes | `Mesher.body_dim` (`src/femforge/meshing/mesher.py:93-95`), `mesh_spec`, the run index |
 | `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-35`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-82`) |
-| `plane` | the solve plane in the authored model, None for a whole-model solve; its `x_dir` and `y_dir` are the authored solve +X and +Y, and `normal` their cross product | `axisymmetric_cross_section`, `planar_cross_section`, the workbench's symmetry expansion |
+| `plane` | the solve plane in the authored model, None for a whole-model solve; its `x_dir` and `y_dir` are the authored solve +X and +Y, and `normal` their cross product | `axisymmetric_cross_section`, `planar_cross_section`, the workbench's symmetry expansion, `FixedDisplacement.on_boundary` and `check_frame` |
 | `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:70-91`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:96-99`) |
 | `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:102-118`) |
 | `solves` | the form a physics solves as, raising when it has none | `SimulationConfig.solved_physics`, `PhysicsSelection.check_frame`, `solved_stack`, `Sim` |
@@ -89,7 +89,8 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 | `lumps_torque` | whether Elmer's force lumping yields a torque | `CalculateMagneticForce.check_frame` |
 | `solve_vector` | an authored vector in solve coordinates | `Magnetization.to_elmer` and `check_frame` (`src/femforge/physical/conditions.py:164-184`) |
 | `total` | the whole-model total of a vector Elmer integrated over the solve domain | `parse_result` (`src/femforge/run/parse.py:213-216`) |
-| `solve_share` | the share of a whole-model total the solve domain carries, the inverse of `total` | `Condition.on_boundary` overrides that take a whole-model load |
+| `solve_share` | the share the solve domain carries of a whole-model solve-frame vector, the inverse of `total` | `authored_share` |
+| `authored_share` | an authored whole-model vector's solve-frame share, `solve_share` of `solve_vector`; concrete on the base | `SurfaceForce.on_boundary`, `Run.clapeyron_energy` |
 | `revolves` | whether the section stands for a model revolved about an axis; defaults to False | the mesher's `<BODY>__AXIS` groups, the field viewer's symmetry basis |
 | `plane_stress` | whether a 2D elasticity solve is plane stress or plane strain; defaults to None, no plane state, and `Cartesian2D` answers from its `state` | a solver's `fit_frame` |
 | `along` | a solve-frame vector's component along an authored axis | `Result.axial_force` (`src/femforge/run/result.py:105-109`) |

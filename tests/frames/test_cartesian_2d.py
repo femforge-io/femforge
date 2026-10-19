@@ -162,7 +162,7 @@ def test_the_total_scales_by_the_thickness_and_the_solve_share_divides_it_back()
 
     assert total.to_list() == pytest.approx([-0.12, 0.03, 0.0])
     assert frame.solve_share(total).to_list() == pytest.approx([-12.0, 3.0, 0.0])
-    assert _frame(normal=Axis.X).solve_vector(_frame(normal=Axis.X).solve_share(Vec3(0, 0.2, 0.1))) == pytest.approx((20.0, 10.0))
+    assert _frame(normal=Axis.X).authored_share(Vec3(0, 0.2, 0.1)).to_list() == pytest.approx([20.0, 10.0, 0.0])
 
 
 def test_along_projects_onto_an_authored_axis_and_none_raises() -> None:
