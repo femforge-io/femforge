@@ -233,6 +233,10 @@ def test_text_scales_with_the_window_pixels_per_css_pixel_in_both_modes(tmp_path
 
     assert mirrored.window_scale() == 2 and mirrored.plotter.theme.font.size == base * 2, "the mirror's window is in device pixels"
 
+    mirrored.on_client_size({"width": PANEL_SIZE[0], "height": PANEL_SIZE[1], "ratio": 1})
+
+    assert mirrored.window_scale() == 1 and mirrored.plotter.theme.font.size == base, "a new ratio at the same size rescales the text"
+
 
 def test_the_newest_panel_takes_the_mirror_and_the_older_ones_stream(tmp_path: Path) -> None:
     app = _shell("single", tmp_path)

@@ -886,12 +886,12 @@ class ScenePanel(PanelComponent):
         size = cast("Mapping[str, object]", payload)
         width = int(cast("float", size.get(SizeKey.WIDTH, 0)))
         height = int(cast("float", size.get(SizeKey.HEIGHT, 0)))
-        if width < 1 or height < 1 or (width, height) == self.canvas:
+        ratio = float(cast("float", size.get(SizeKey.RATIO, 1.0)))
+        rescaled = ratio != self.pixel_ratio
+        if width < 1 or height < 1 or ((width, height) == self.canvas and not rescaled):
             return
 
         self.canvas = (width, height)
-        ratio = float(cast("float", size.get(SizeKey.RATIO, 1.0)))
-        rescaled = ratio != self.pixel_ratio
         self.pixel_ratio = ratio
         self.match_canvas()
         log.bind(panel=self.id, width=width, height=height, ratio=self.pixel_ratio, framed=self.framed).info("Mirror canvas sized.")
