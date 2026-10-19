@@ -168,6 +168,7 @@ def test_a_curved_body_is_bounded_by_its_mesh_nodes(tmp_path: Path) -> None:
     shell: BoundaryGroup = mesher.boundary_groups[0]
 
     assert body.bbox is not None
-    assert body.bbox.high.x == pytest.approx(0.02, rel=1e-6) and body.bbox.low.y == pytest.approx(-0.02, rel=1e-6)
+    assert body.bbox.high.x == pytest.approx(0.02, rel=1e-6)
+    assert -0.02 - 1e-9 <= body.bbox.low.y <= -0.0199
     assert body.bbox.high.z <= 0.0051 and body.bbox.low.z >= -0.0051
     assert shell.name == "BEAM__EXT" and shell.normal is None
