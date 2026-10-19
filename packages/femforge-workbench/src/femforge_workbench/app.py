@@ -440,7 +440,7 @@ class Workbench(TrameApp):
 
         with html.Div(classes=str(Cls.TASK_STRIP)):
             toggle = html.Button(type="button", classes=str(Cls.TASK_TOGGLE), title="Show Every Task", on_click=react.Callback(self.toggle_tasks))
-            _ = aria(toggle, aria_expanded=react.Bind(StateVar.TASK_SHEET), aria_controls=TASK_SHEET_ID)
+            _ = aria(toggle, aria_expanded=react.Bind(StateVar.TASK_SHEET), aria_controls=TASK_SHEET_ID, aria_label=react.Bind(f"'Tasks, ' + {StateVar.TASK_SUMMARY}"))
             with toggle:
                 _ = aria(html.Span([react.Bind(f"{StateVar.TASK_SHEET} ? '▾' : '▴'")]), aria_hidden="true")
                 html.Span("Tasks", classes=str(Cls.TASK_NAME))
