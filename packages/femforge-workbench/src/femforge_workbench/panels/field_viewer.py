@@ -22,6 +22,7 @@ from femforge.artifacts.lock import LOCK_SUFFIX, DirLock
 from femforge.common.files import RunFile
 from femforge.common.log import TELEMETRY_ENV, log
 from femforge.common.utils import title
+from femforge.physical.conditions import ConditionGlyph
 from femforge.run.entities import Bodies
 from femforge.run.fields import GEOMETRY_IDS_ARRAY
 from femforge.run.inspect import Run
@@ -31,15 +32,17 @@ from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
 from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement
+from femforge.viz.glyphs import GlyphLayer, GlyphView, GroupScene, plain_spec
 from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES, ColormapType
 from femforge_workbench.feeds import Feed
 from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
-from femforge_workbench.panels.scene import ScenePanel, View, toolbar_id, view_id
+from femforge_workbench.panels.scene import ScenePanel, View, ViewMode, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
 from femforge_workbench.tasks import TaskPhase, TaskView
+from femforge_workbench.theme import hex_color
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.checkbox import Checkbox
@@ -242,6 +245,29 @@ class FieldVar(StrEnum):
 
     BODY_LEAD = "field_body_lead"
     COLORMAP_ITEMS = "field_colormap_items"
+    SETUP_SHOWN = "field_setup_shown"
+    """Whether the Setup tab is on screen, the only time the scene draws glyphs."""
+
+    GLYPHS = "field_glyphs"
+    """The Show Glyphs switch."""
+
+    GLYPH_KINDS_OFF = "field_glyph_kinds_off"
+    """The glyph kinds the legend switched off, as ``ConditionGlyph`` values."""
+
+    GLYPH_ROWS_OFF = "field_glyph_rows_off"
+    """The entity ids whose glyphs a row switched off."""
+
+    SELECTED_ENTITY = "field_selected_entity"
+    """The entity id highlighted in the accent; empty highlights nothing."""
+
+    PLAIN_BODIES = "field_plain_bodies"
+    """The Plain Bodies switch."""
+
+    SECTION_OUTLINE = "field_section_outline"
+    """The Section Outline switch of a 2D run."""
+
+    AUTHORED_GHOST = "field_authored_ghost"
+    """The Authored Body Ghost switch of a 2D run."""
 
 
 TOUR_STEPS: list[TourStep] = [
@@ -315,6 +341,18 @@ DISPLAY_KEYS: tuple[FieldVar, ...] = (
     FieldVar.BODY_COLORMAP,
 )
 """The state variables whose change redraws the scene."""
+
+GLYPH_KEYS: tuple[FieldVar, ...] = (
+    FieldVar.SETUP_SHOWN,
+    FieldVar.GLYPHS,
+    FieldVar.GLYPH_KINDS_OFF,
+    FieldVar.GLYPH_ROWS_OFF,
+    FieldVar.SELECTED_ENTITY,
+    FieldVar.PLAIN_BODIES,
+    FieldVar.SECTION_OUTLINE,
+    FieldVar.AUTHORED_GHOST,
+)
+"""The state variables the Setup tab writes, whose change redraws the glyph layer."""
 
 
 def names_of(value: object) -> list[str]:
@@ -683,6 +721,26 @@ def missing_fields(run: Run) -> str | None:
     return "The solve wrote no fields"
 
 
+def glyph_layer(run: Run, scene: FieldScene) -> GlyphLayer | None:
+    """The glyph layer of a run, None when its sidecars cannot be read, which leaves its bodies drawn."""
+    try:
+        return GlyphLayer.from_run(run, scene)
+    except Exception:  # noqa: BLE001 - a run whose glyphs fail still shows its fields
+        log.bind(run_id=run.path.name).opt(exception=True).warning("Glyph layer failed to load; the bodies are drawn without it.")
+
+        return None
+
+
+def group_scene(run: Run) -> GroupScene | None:
+    """The mesh-only scene of a run without fields, None when its mesh is gone or cannot be read."""
+    try:
+        return GroupScene.from_run(run)
+    except Exception:  # noqa: BLE001 - a run without a readable mesh still lists its conditions
+        log.bind(run_id=run.path.name).opt(exception=True).warning("Mesh groups failed to load; the run shows no scene.")
+
+        return None
+
+
 def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
     """What the empty view says while the open run is still solving: where its progress shows, the task strip when the workbench runs tasks."""
     where = "the task strip below" if tasks else "the solver's terminal"
@@ -819,6 +877,12 @@ class FieldViewerController(TrameComponent):
         """The field-line region the first run opens with, named once its bodies are known."""
         self.run: Run | None = None
         self.scene: FieldScene | None = None
+        self.groups: GroupScene | None = None
+        """The mesh-only scene of a run without fields, drawn while the glyphs are shown."""
+        self.glyph_view: GlyphView | None = None
+        """What the Setup tab asks the scene to draw; None while it is off screen."""
+        self.iso_pending = False
+        """Whether the next draw turns the camera to Iso, once the ghost was switched on."""
         self.model_dim = 3
         self.bodies: list[str] = []
         self.viewer: FieldViewerPanel | None = None
@@ -898,6 +962,14 @@ class FieldViewerController(TrameComponent):
                 FieldVar.BODY_COLORMAP_SHOWN: SAME_AS_FIELD,
                 FieldVar.BODY_LEAD: self.lead(colormap_gradient(display.colormap, reverse=display.invert)),
                 FieldVar.COLORMAP_ITEMS: colormap_items(),
+                FieldVar.SETUP_SHOWN: False,
+                FieldVar.GLYPHS: True,
+                FieldVar.GLYPH_KINDS_OFF: [],
+                FieldVar.GLYPH_ROWS_OFF: [],
+                FieldVar.SELECTED_ENTITY: "",
+                FieldVar.PLAIN_BODIES: False,
+                FieldVar.SECTION_OUTLINE: True,
+                FieldVar.AUTHORED_GHOST: False,
             }
         )
         _ = self.state.setdefault(Shared.SELECTED_RUN_ID, None)
@@ -1120,13 +1192,16 @@ class FieldViewerController(TrameComponent):
                     self.state[FieldVar.SOLVED_AS] = SOLVING_AS
 
                 self.wait_task = asyncio.create_task(self.await_fields(location, run.path, token))
+                await self.adopt_groups(run, token)
                 return
 
             if reason is not None:
                 self.clear(f"{run.path.name}: {reason}")
+                await self.adopt_groups(run, token)
                 return
 
             scene = await asyncio.to_thread(FieldScene.from_run, run)
+            scene.glyphs = await asyncio.to_thread(glyph_layer, run, scene)
             if token != self.generation:
                 return
 
@@ -1157,10 +1232,20 @@ class FieldViewerController(TrameComponent):
                 self.open(location)
                 return
 
+    async def adopt_groups(self, run: Run, token: int) -> None:
+        """Reads the mesh-only scene of a run without fields off the loop and draws it while the glyphs are shown, unless a newer open came first."""
+        groups = await asyncio.to_thread(group_scene, run)
+        if token != self.generation:
+            return
+
+        self.groups = groups
+        self.draw_groups()
+
     def clear(self, reason: str, *, status: str | None = None) -> None:
         """Empties both views and the run's controls, saying why over the view and in `status`, the reason itself when None, so nothing left on screen reads as the run asked for."""
         self.run = None
         self.scene = None
+        self.groups = None
         self.drawn = None
         self.bodies = []
         if self.viewer is not None:
@@ -1239,6 +1324,7 @@ class FieldViewerController(TrameComponent):
 
         self.run = run
         self.scene = scene
+        self.groups = None
         self.model_dim = scene.model_dim
         self.bodies = [str(key) for key in scene.blocks.keys()]
         if not offers(str(self.state[FieldVar.FIELD])):
@@ -1525,14 +1611,94 @@ class FieldViewerController(TrameComponent):
                 self.state[FieldVar.EXPANSION] = shown
 
     async def redraw(self, spec: DisplaySpec) -> None:
-        """Draws the spec into the view, then publishes the color range it produced."""
+        """Draws the spec into the view with the glyph layer the Setup tab asks for, then publishes the color range it produced."""
         scene = self.scene
         if scene is None:
             return
 
-        await self.draw_plotter(scene, spec)
+        view = self.scaled_glyphs()
+        scene.glyph_view = view
+        shown = plain_spec(spec, self.bodies) if view is not None and view.plain_bodies else spec
+        await self.draw_plotter(scene, shown)
         if scene is self.scene:
             self.publish_range(scene)
+            self.turn_iso()
+
+    def scaled_glyphs(self) -> GlyphView | None:
+        """The glyph view sized for the window pixels per CSS pixel of the view, in the palette accent; None while the Setup tab is off screen."""
+        view = self.glyph_view
+        if view is None or self.viewer is None:
+            return view
+
+        return view.model_copy(update={"scale": self.viewer.window_scale(), "accent": hex_color(self.app.palette.accent), "ink": hex_color(self.app.palette.text)})
+
+    def glyph_view_from_state(self) -> GlyphView | None:
+        """The glyph view the Setup tab state describes; None while the tab is off screen."""
+        state = self.state
+        if not bool(state[FieldVar.SETUP_SHOWN]):
+            return None
+
+        off = set(names_of(state[FieldVar.GLYPH_KINDS_OFF]))
+        kinds = frozenset(kind for kind in ConditionGlyph if kind.value not in off) if bool(state[FieldVar.GLYPHS]) else frozenset[ConditionGlyph]()
+        selected = str(state[FieldVar.SELECTED_ENTITY] or "")
+
+        return GlyphView(
+            kinds=kinds,
+            hidden=frozenset(names_of(state[FieldVar.GLYPH_ROWS_OFF])),
+            plain_bodies=bool(state[FieldVar.PLAIN_BODIES]),
+            selected=selected or None,
+            outline=bool(state[FieldVar.SECTION_OUTLINE]),
+            ghost=bool(state[FieldVar.AUTHORED_GHOST]),
+        )
+
+    def show_glyphs(self, view: GlyphView | None) -> None:
+        """Draws ``view`` over the shown run, or removes the glyph layer for None; switching the ghost on turns the camera to Iso once."""
+        ghosted = view is not None and view.ghost and (self.glyph_view is None or not self.glyph_view.ghost)
+        self.glyph_view = view
+        self.iso_pending = self.iso_pending or ghosted
+        if self.scene is not None:
+            self.request_redraw()
+            return
+
+        self.draw_groups()
+
+    def draw_groups(self) -> None:
+        """Draws the mesh-only scene of a run without fields while the glyphs are shown, and empties the view once they are not."""
+        viewer = self.viewer
+        groups = self.groups
+        if viewer is None or groups is None:
+            return
+
+        view = self.scaled_glyphs()
+        if view is None:
+            if viewer.renderable is groups:
+                viewer.clear()
+
+            return
+
+        fresh = viewer.renderable is not groups
+        groups.glyph_view = view
+        viewer.render(groups, keep_camera=not fresh)
+        if fresh:
+            viewer.look(View.TOP if groups.frame.model_dim == 2 else View.ISO)
+
+        self.turn_iso()
+
+    def turn_iso(self) -> None:
+        """Turns the camera to Iso once after the ghost was switched on."""
+        if not self.iso_pending or self.viewer is None:
+            return
+
+        self.iso_pending = False
+        self.viewer.look(View.ISO)
+
+    def rescaled(self) -> None:
+        """Redraws the glyph layer and the color bars for a new window scale."""
+        if self.scene is not None:
+            self.request_redraw()
+            return
+
+        self.draw_groups()
 
     async def draw_plotter(self, scene: FieldScene, spec: DisplaySpec) -> None:
         """Draws or recolors the scene in the plotter, keeping the camera across runs that still frame it; new field lines are integrated off the loop."""
@@ -1729,6 +1895,11 @@ class FieldViewerController(TrameComponent):
         if str(self.state[FieldVar.MODE]) not in {str(mode) for mode in info.modes}:
             self.state[FieldVar.MODE] = str(info.modes[0])
 
+    @change(*GLYPH_KEYS)
+    def on_glyphs(self, **_: object) -> None:
+        """Redraws the glyph layer after the Setup tab changed what it asks for."""
+        self.show_glyphs(self.glyph_view_from_state())
+
     @change(FieldVar.SEED_PLACEMENT)
     def on_placement(self, **_: object) -> None:
         """Keeps the count the last placement had and hands the new one its own, within its own range."""
@@ -1805,6 +1976,18 @@ class FieldViewerPanel(ScenePanel):
         self.plotter.clear()
         self.renderable = None
         self.push()
+
+    def rescale(self) -> None:
+        """Sizes the text for the new window scale and has the controller redraw, so the glyph layer takes the scale too."""
+        self.scale_fonts(self.window_scale())
+        self.controller.rescaled()
+
+    def switch(self, mode: ViewMode, *, persist: bool) -> None:
+        """Switches the transport, then redraws the glyph layer for the other window scale."""
+        changed = mode is not self.mode
+        super().switch(mode, persist=persist)
+        if changed:
+            self.controller.rescaled()
 
     def on_visible(self, visible: bool) -> None:
         """Tells the scene and the controller whether the view is on screen."""

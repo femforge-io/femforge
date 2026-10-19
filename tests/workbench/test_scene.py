@@ -216,6 +216,28 @@ def test_the_first_size_the_stream_reports_frames_the_scene_too(tmp_path: Path) 
     assert panel.plotter.camera.parallel_scale == framed, "a later resize keeps the camera"
 
 
+def test_text_scales_with_the_window_pixels_per_css_pixel_in_both_modes(tmp_path: Path) -> None:
+    app = _shell("dense", tmp_path)
+    base = pv.global_theme.font.size
+    streamed = ScenePanel(app, "streamed", "Streamed", renderable=Volume(), mode=ViewMode.SERVER)
+    assert streamed.handler is not None
+
+    streamed.handler.update_size("client", {"w": PANEL_SIZE[0] // 4, "h": PANEL_SIZE[1] // 4, "p": 2})
+
+    assert streamed.window_scale() == 4 and streamed.stream_ratio == 2
+    assert streamed.plotter.theme.font.size == base * 4, "a 2x display doubles the still, so its text doubles too"
+    assert tuple(streamed.window().GetSize()) == PANEL_SIZE
+
+    mirrored = ScenePanel(app, "mirrored", "Mirrored", renderable=Volume())
+    mirrored.on_client_size({"width": PANEL_SIZE[0], "height": PANEL_SIZE[1], "ratio": 2})
+
+    assert mirrored.window_scale() == 2 and mirrored.plotter.theme.font.size == base * 2, "the mirror's window is in device pixels"
+
+    mirrored.on_client_size({"width": PANEL_SIZE[0], "height": PANEL_SIZE[1], "ratio": 1})
+
+    assert mirrored.window_scale() == 1 and mirrored.plotter.theme.font.size == base, "a new ratio at the same size rescales the text"
+
+
 def test_the_newest_panel_takes_the_mirror_and_the_older_ones_stream(tmp_path: Path) -> None:
     app = _shell("single", tmp_path)
 
