@@ -10,7 +10,7 @@ from femforge_docs.conditions import block_table, condition_details, solves_tabl
 print(solves_table(Physics.LINEAR_ELASTICITY))
 ```
 
-`LINEAR_ELASTICITY` reads `Youngs Modulus` and `Poisson Ratio` from every body, so leave air bodies out of an elasticity model. The run writes the displacement, the stress and strain components, the von Mises stress and the principal stresses; `Run.strain_energy()` integrates the strain energy femforge derives from the stress and strain. See [Results](../results.md).
+`LINEAR_ELASTICITY` reads `Youngs Modulus` and `Poisson Ratio` from every body, so leave air bodies out of an elasticity model. The run writes the displacement, the stress and strain components, the von Mises stress and the principal stresses; `Run.strain_energy()` integrates the strain energy femforge derives from the stress and strain, and `Run.clapeyron_energy(face, force)` gives the work of a face's force to balance it against. See [Results](../results.md).
 
 ## Clamp one end and load the other
 
@@ -45,7 +45,7 @@ print(block_table(Physics.LINEAR_ELASTICITY, SifSection.BOUNDARY_CONDITION))
 print(condition_details(FixedDisplacement))
 ```
 
-Set a component to None to leave it free, as in `FixedDisplacement(z=None)` for a roller. A frame rejects a nonzero component along a direction it has no solve coordinate for, and a Cartesian 2D frame drops a zero one along its normal.
+Set a component to None to leave it free, as in `FixedDisplacement(z=None)` for a roller. Each component is a displacement along an authored axis, which the frame maps onto the solve coordinate that axis runs along. A zero component off the solve plane is dropped; a nonzero one there, or an axis oblique to a free one, raises.
 
 ### SurfaceForce
 
