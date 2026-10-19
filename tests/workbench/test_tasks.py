@@ -230,7 +230,7 @@ def test_a_claim_wait_and_a_stall_move_the_row() -> None:
 
     assert (waiting.phase, waiting.state, waiting.glyph, waiting.active) == (TaskPhase.WAITING, "Waiting · Another Process Is Solving It", "◐", True)
     assert observe(waiting, _record(run_id="r1", run_dir="runs/r1")).phase is TaskPhase.STARTING, "a claim taken after the wait starts the run"
-    assert flat.stall == "Residual Flat at 3.14e-08 by It 1339" and slow.stall == "Residual Not Improving"
+    assert flat.stall == "residual flat at 3.14e-08 since it 1339" and slow.stall == "residual not improving", "a reason is data, not a label"
     assert observe(solving, _record(stall="not a reason")) is solving
 
 
@@ -299,8 +299,8 @@ def test_the_strip_copy_names_the_queue_place_the_runs_and_the_failure() -> None
     assert TaskRow(label="a", title="A", phase=TaskPhase.GEOMETRY).state == "Preparing Geometry"
     assert [ordinal(number) for number in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23)] == ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd"]
     assert [clock(seconds) for seconds in (None, 0.3, 9.94, 9.96, 12.0, 72.0, 2463.0, 3720.0)] == ["—", "0.3s", "9.9s", "10s", "12s", "1m 12s", "41m 03s", "1h 02m"]
-    stalled = TaskRow(label="a", title="A", phase=TaskPhase.STALLED, stall="Residual Flat at 3.14e-08 by It 1339")
-    assert (stalled.state, stalled.glyph, stalled.failed, stalled.stalled, stalled.retryable) == ("Stalled · Residual Flat at 3.14e-08 by It 1339", "⧖", True, True, True)
+    stalled = TaskRow(label="a", title="A", phase=TaskPhase.STALLED, stall="residual flat at 3.14e-08 since it 1339")
+    assert (stalled.state, stalled.glyph, stalled.failed, stalled.stalled, stalled.retryable) == ("Stalled · residual flat at 3.14e-08 since it 1339", "⧖", True, True, True)
     cancelling = TaskRow(label="a", title="A", phase=TaskPhase.SOLVING, solver="linear elasticity", stopping=True)
     assert (cancelling.state, cancelling.cancellable, cancelling.active) == ("Cancelling", False, True), "a confirmed Cancel shows at once and cannot be pressed twice"
 
@@ -361,6 +361,27 @@ def test_a_failed_task_never_stops_the_queue(tmp_path: Path) -> None:
     assert board.by_label["a"].error == "RuntimeError: boom" and board.by_label["a"].traceback is not None
     assert host.views[-1].summary == "3 Tasks · 2 Done · 1 Failed" and host.views[-1].failed == 1
     assert host.views[-1].focus is not None and host.views[-1].focus.label == "a", "the last failure leads an idle strip"
+
+
+def test_the_summary_names_every_ending_once_and_a_busy_one_its_failures() -> None:
+    board = TaskBoard(Host(), "main:tasks", _plan("a", "b", "c", "d"), path=None, roots=[])
+    started = board.view().submitted
+    board.queue = []
+    for label, phase in zip("abcd", (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STOPPED), strict=True):
+        board.by_label[label] = board.by_label[label].model_copy(update={TaskField.PHASE: phase})
+
+    idle = board.view()
+    board.retry("d")
+    busy = board.view()
+    board.by_label["c"] = board.by_label["c"].model_copy(update={TaskField.PHASE: TaskPhase.STALLED})
+    stalled = board.view()
+    board.submit(_plan("a", "b", "c", "d"))
+
+    assert idle.summary == "4 Tasks · 1 Done · 1 Reused · 1 Failed · 1 Cancelled" and not idle.busy
+    assert (idle.reused, idle.failed, idle.stalled) == (1, 1, 0)
+    assert busy.summary == "2 of 4 Done · 1 Failed" and busy.busy, "a failure during a busy run reaches the summary the live region reads"
+    assert stalled.summary == "2 of 4 Done · 1 Stalled"
+    assert started.startswith("Submitted at ") and board.view().submitted.startswith("Reloaded at "), "a save reloads the plan"
 
 
 def test_a_child_that_dies_without_an_outcome_shows_its_exit_code_and_last_lines(tmp_path: Path) -> None:
@@ -469,7 +490,7 @@ def test_a_stalled_run_ends_its_task_stalled_with_its_log_and_the_summary_counts
     stalled = board.by_label["stalls"]
 
     assert [row.phase for row in board.by_label.values()] == [TaskPhase.STALLED, TaskPhase.STALLED, TaskPhase.REUSED, TaskPhase.DONE, TaskPhase.FAILED]
-    assert stalled.state == "Stalled · Residual Flat at 3.14e-08 by It 1339" and stalled.error is None
+    assert stalled.state == "Stalled · residual flat at 3.14e-08 since it 1339" and stalled.error is None
     assert stalled.traceback == "m\nm", "a stalled row shows the child's last log messages"
     assert view.summary == "5 Tasks · 1 Done · 1 Reused · 1 Failed · 2 Stalled" and (view.reused, view.failed, view.stalled) == (1, 1, 2)
     assert view.focus is not None and view.focus.label == "fails"

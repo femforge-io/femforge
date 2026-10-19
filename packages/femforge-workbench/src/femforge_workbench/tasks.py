@@ -588,14 +588,14 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
     if isinstance(stall, str) and stall in tuple(StallReason):
         match StallReason(stall):
             case StallReason.REPEATED:
-                what = "Residual Flat"
+                what = "residual flat"
             case StallReason.NO_PROGRESS:
-                what = "Residual Not Improving"
+                what = "residual not improving"
 
         residual = extra.get(LogKey.RESIDUAL)
         at = f" at {residual:.2e}" if isinstance(residual, float) else ""
-        by = f" by It {iteration}" if isinstance(iteration, int) else ""
-        update[TaskField.STALL] = f"{what}{at}{by}"
+        since = f" since it {iteration}" if isinstance(iteration, int) else ""
+        update[TaskField.STALL] = f"{what}{at}{since}"
 
     return row.model_copy(update=update) if update else row
 
@@ -815,6 +815,9 @@ class TaskView(BaseModel):
     focus: TaskRow | None
     """The row the collapsed strip leads with: the most telling active one, else the last failure, else none."""
 
+    busy: bool
+    """Whether a task runs or waits in the queue."""
+
     reused: int
     """How many tasks ended their last run on finished bundles alone."""
 
@@ -827,8 +830,8 @@ class TaskView(BaseModel):
     error: str | None
     """Why the script's last save listed no tasks; the rows then stay as they were."""
 
-    reloaded: str
-    """When the plan was last submitted, as `HH:MM:SS`."""
+    submitted: str
+    """When the plan was last submitted, `Submitted at HH:MM:SS` at startup and `Reloaded at HH:MM:SS` after a save."""
 
 
 class TaskHost(Protocol):
@@ -890,7 +893,7 @@ class TaskBoard:
         self.last_runs: dict[str, str] = {}
         """The run each label last ended on, which a newer run of the same label takes over in the viewer."""
         self.error: str | None = None
-        self.reloaded = ""
+        self.submitted = ""
         self.reloader: Reloader[object] | None = None
         self.wake: asyncio.Event | None = None
         self.jobs: set[asyncio.Task[None]] = set()
@@ -943,7 +946,8 @@ class TaskBoard:
     def submit(self, plan: Sequence[Task]) -> None:
         """Queues every task of the plan in order; a running task finishes on its old code and runs once more, and a dropped one leaves once it ends."""
         self.plan = tuple(plan)
-        self.reloaded = datetime.now().strftime("%H:%M:%S")
+        how = "Reloaded" if self.submitted else "Submitted"
+        self.submitted = f"{how} at {datetime.now():%H:%M:%S}"
         running = self.running.label if self.running is not None else None
 
         rows: dict[str, TaskRow] = {}
@@ -1012,13 +1016,15 @@ class TaskBoard:
         """The rows, the summary and the focus row as the strip shows them."""
         rows = self.rows()
         shown = [row for row in rows if not row.removed]
-        counts = {phase: sum(row.phase is phase for row in shown) for phase in (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STALLED)}
+        endings = (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STALLED, TaskPhase.STOPPED)
+        counts = {phase: sum(row.phase is phase for row in shown) for phase in endings}
         done = counts[TaskPhase.DONE] + counts[TaskPhase.REUSED]
         busy = any(row.phase.active or row.phase is TaskPhase.QUEUED for row in rows)
 
         tasks = "Task" if len(shown) == 1 else "Tasks"
         ended = [f"{count} {phase.word}" for phase, count in counts.items() if count] or [f"0 {TaskPhase.DONE.word}"]
-        summary = f"{done} of {len(shown)} Done" if busy else " · ".join([f"{len(shown)} {tasks}", *ended])
+        troubles = [f"{counts[phase]} {phase.word}" for phase in (TaskPhase.FAILED, TaskPhase.STALLED) if counts[phase]]
+        summary = " · ".join([f"{done} of {len(shown)} Done", *troubles] if busy else [f"{len(shown)} {tasks}", *ended])
 
         ranked = [row for phase in FOCUS_ORDER for row in rows if row.phase is phase]
         failures = [row for row in rows if row.failed]
@@ -1029,11 +1035,12 @@ class TaskBoard:
             summary=summary,
             count=f"{done}/{len(shown)}",
             focus=focus,
+            busy=busy,
             reused=counts[TaskPhase.REUSED],
             failed=counts[TaskPhase.FAILED],
             stalled=counts[TaskPhase.STALLED],
             error=self.error,
-            reloaded=self.reloaded,
+            submitted=self.submitted,
         )
 
     def publish(self, *, now: bool = False) -> None:

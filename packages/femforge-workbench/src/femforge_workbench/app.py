@@ -69,8 +69,8 @@ REPLAY_STEP: TourStep = {"target": f"#{HELP_ID}", "title": "Replay This Tour", "
 TASK_SHEET_ID = "task-sheet"
 TASK_TOGGLE_ID = "task-toggle"
 TASK_ROW = "task"
-CONFIRM_S = 3.0
-"""`t_confirm` `[s]`: How long a pressed Cancel waits for the second press before it reverts."""
+CONFIRM_S = 3
+"""`t_confirm` `[s]`: How long a pressed Cancel waits for the second press before it reverts, counted down a second at a time."""
 
 COPIED_MS = 2000
 """`t_copied` `[ms]`: How long a Copy button reads Copied after it copied."""
@@ -123,11 +123,11 @@ class Cls(StrEnum):
     TASK_WIDE = "font-medium max-[800px]:hidden"
     TASK_SUMMARY = "max-[800px]:sr-only"
     TASK_NARROW = "hidden tabular-nums max-[800px]:inline"
-    TASK_SUMMARY_LINE = "flex min-w-0 cursor-pointer items-center gap-1.5"
+    TASK_SUMMARY_LINE = "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 hover:bg-accent"
     TASK_FOCUS_STATE = "truncate text-muted-foreground max-[800px]:hidden"
     TASK_FOCUS_FAILED = "truncate text-destructive max-[800px]:hidden"
     TASK_FOCUS_BAR = "h-1.5 w-16 shrink-0 max-[800px]:hidden"
-    TASK_FOCUS_PULSE = "h-1.5 w-16 shrink-0 animate-pulse rounded-full bg-primary/30 max-[800px]:hidden"
+    TASK_FOCUS_PULSE = "relative h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-primary/20 max-[800px]:hidden"
     TASK_ITERATIONS = "shrink-0 tabular-nums text-muted-foreground"
     TASK_SEP = "h-3.5 w-px shrink-0 bg-border"
     TASK_FOCUS = "flex min-w-0 items-center gap-1.5"
@@ -137,27 +137,34 @@ class Cls(StrEnum):
     TASK_NUMBER = "shrink-0 tabular-nums"
     TASK_CLOCK = "shrink-0 tabular-nums text-muted-foreground max-[800px]:hidden"
     TASK_BAR = "h-1.5 w-16 shrink-0"
-    TASK_PULSE = "h-1.5 w-16 shrink-0 animate-pulse rounded-full bg-primary/30"
+    TASK_PULSE = "relative h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-primary/20"
+    TASK_SLIDE = "absolute inset-y-0 w-1/3 rounded-full bg-primary animate-[ff-slide_1.4s_ease-in-out_infinite] motion-reduce:animate-none"
     TASK_END = "ml-auto flex min-w-0 shrink-0 items-center gap-2"
     TASK_ALERT = "max-w-96 truncate text-destructive"
     TASK_COUNT = "shrink-0 text-destructive"
     TASK_REUSED = "flex shrink-0 items-center gap-2 text-muted-foreground max-[800px]:hidden"
     TASK_SHEET = "absolute inset-x-0 bottom-full z-40 flex max-h-[40vh] flex-col border-t border-border bg-background shadow-lg"
     TASK_HEADER = "flex h-7 shrink-0 items-center gap-2 border-b border-border px-2 text-label"
+    TASK_SCRIPT_ERROR = "shrink-0 border-b border-border px-2 py-1 text-label break-words text-destructive"
     TASK_MUTED = "text-muted-foreground"
     TASK_GROW = "grow"
     TASK_BODY = "min-h-0 overflow-auto"
-    TASK_TABLE = "w-full border-collapse text-label"
+    TASK_TABLE = "w-full table-fixed border-collapse text-label"
     TASK_HEAD = "px-2 py-1 text-left font-medium text-muted-foreground"
+    TASK_HEAD_GLYPH = "w-7 px-2 py-1"
+    TASK_HEAD_TASK = "w-40 px-2 py-1 text-left font-medium text-muted-foreground max-[800px]:w-28"
+    TASK_HEAD_ELAPSED = "w-20 px-2 py-1 text-right font-medium text-muted-foreground"
+    TASK_HEAD_RUN = "w-48 px-2 py-1 text-left font-medium text-muted-foreground max-[800px]:w-28"
+    TASK_HEAD_ACTIONS = "w-52 px-2 py-1"
     TASK_ROW = "border-t border-border"
     TASK_GLYPH = "w-6 px-2 py-1 align-top"
-    TASK_CELL = "px-2 py-1 align-top"
-    TASK_STATE_CELL = "max-w-[32rem] px-2 py-1 align-top"
+    TASK_CELL = "px-2 py-1 align-top break-words"
+    TASK_STATE_CELL = "px-2 py-1 align-top"
     TASK_STATE_LINE = "flex min-w-0 items-center gap-1.5"
     TASK_ELAPSED = "px-2 py-1 text-right tabular-nums align-top"
-    TASK_RUN = "px-2 py-1 font-mono align-top"
-    TASK_ACTIONS = "flex justify-end gap-1 px-2 py-0.5"
-    TASK_DETAIL = "mx-2 mb-1 max-h-48 overflow-auto whitespace-pre rounded-md border border-border bg-muted/40 p-2 font-mono text-label"
+    TASK_RUN = "truncate px-2 py-1 font-mono align-top"
+    TASK_ACTIONS = "flex flex-wrap justify-end gap-1 px-2 py-0.5"
+    TASK_DETAIL = "mx-2 mb-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-2 font-mono text-label"
 
 
 class Window(StrEnum):
@@ -197,9 +204,11 @@ class StateVar(StrEnum):
     TASK_STALLED = "wb_task_stalled"
     TASK_REUSED = "wb_task_reused"
     TASK_ERROR = "wb_task_error"
-    TASK_RELOADED = "wb_task_reloaded"
+    TASK_BUSY = "wb_task_busy"
+    TASK_SUBMITTED = "wb_task_submitted"
     TASK_SHEET = "wb_task_sheet"
     TASK_CONFIRM = "wb_task_confirm"
+    TASK_CONFIRM_LEFT = "wb_task_confirm_left"
     TASK_DETAILS = "wb_task_details"
     TASK_COPIED = "wb_task_copied"
 
@@ -353,6 +362,8 @@ class Workbench(TrameApp):
         """The tour's stops in order, before the shell's own closing one; panels add theirs through `add_tour_steps`."""
         self.dock: Dock | None = None
         self.board: TaskBoard | None = None
+        self.armed = 0
+        """How many times a Cancel was armed, so the countdown of one disarmed and armed again stops."""
         """The background tasks the script passed to show; None without tasks, and then no task strip shows."""
         self.header = DivLayout(self.server, template_name=str(Template.HEADER), classes=str(Cls.HEADER_SLOT))
         """The header's slot for a workbench's own controls: build widgets inside `with app.header:` and flush_content() after a later change."""
@@ -375,9 +386,11 @@ class Workbench(TrameApp):
                 StateVar.TASK_STALLED: 0,
                 StateVar.TASK_REUSED: 0,
                 StateVar.TASK_ERROR: None,
-                StateVar.TASK_RELOADED: "",
+                StateVar.TASK_BUSY: False,
+                StateVar.TASK_SUBMITTED: "",
                 StateVar.TASK_SHEET: bool((self.persist.load(self.scope, StateKey.TASK_SHEET) or {}).get(TaskSheetKey.OPEN)),
                 StateVar.TASK_CONFIRM: "",
+                StateVar.TASK_CONFIRM_LEFT: 0,
                 StateVar.TASK_DETAILS: "",
                 StateVar.TASK_COPIED: "",
                 TITLE_VAR: title,
@@ -400,7 +413,10 @@ class Workbench(TrameApp):
 
     def build_ui(self) -> DivLayout:
         """The theme switch, the header and the dock, whose panel bodies are the server templates the placements name."""
+        close = f"trame.state.set({json.dumps(str(StateVar.TASK_SHEET))}, false), document.getElementById({json.dumps(TASK_TOGGLE_ID)}).focus()"
+        escape = f"{EVENT}.key === 'Escape' && {StateVar.TASKS}.length && {StateVar.TASK_SHEET} && ({close})"
         with DivLayout(self.server, classes=str(Cls.ROOT)) as layout:
+            layout.root.on_key_down = react.Callback(escape)
             _ = self.theme()
             if os.environ.get(DEV_ENV):
                 client.Script(reload_script())
@@ -450,9 +466,7 @@ class Workbench(TrameApp):
                     on_panel_removed=react.Callback(self.on_panel_removed, args="[$event]"),
                 )
 
-            close = f"trame.state.set({json.dumps(str(StateVar.TASK_SHEET))}, false), document.getElementById({json.dumps(TASK_TOGGLE_ID)}).focus()"
-            escape = f"{EVENT}.key === 'Escape' && {StateVar.TASK_SHEET} && ({close})"
-            with react.If(f"{StateVar.TASKS}.length"), html.Div(classes=str(Cls.TASKS), on_key_down=react.Callback(escape)):
+            with react.If(f"{StateVar.TASKS}.length"), html.Div(classes=str(Cls.TASKS)):
                 with react.If(StateVar.TASK_SHEET):
                     self.build_task_sheet()
 
@@ -466,7 +480,7 @@ class Workbench(TrameApp):
         def focus(name: TaskField) -> str:
             return f"{StateVar.TASK_FOCUS}.{name}"
 
-        every = react.Bind(f"{StateVar.TASK_SHEET} ? 'Hide Every Task' : 'Show Every Task'")
+        every = react.Bind(f"{StateVar.TASK_SHEET} ? 'Hide Task List' : 'Show Task List'")
         with html.Div(classes=str(Cls.TASK_STRIP)):
             toggle = html.Button(id=TASK_TOGGLE_ID, type="button", classes=str(Cls.TASK_TOGGLE), title=every, on_click=react.Callback(self.toggle_tasks))
             _ = aria(toggle, aria_expanded=react.Bind(StateVar.TASK_SHEET), aria_controls=TASK_SHEET_ID, aria_label=react.Bind(f"'Tasks, ' + {StateVar.TASK_SUMMARY}"))
@@ -476,7 +490,7 @@ class Workbench(TrameApp):
                 _ = aria(html.Span([react.Bind(StateVar.TASK_SUMMARY)], classes=str(Cls.TASK_SUMMARY)), role="status", aria_live="polite")
                 _ = aria(html.Span([react.Bind(StateVar.TASK_COUNT)], classes=str(Cls.TASK_NARROW)), aria_hidden="true")
 
-            with react.If(StateVar.TASK_REUSED), html.Div(classes=str(Cls.TASK_REUSED)):
+            with react.If(f"{StateVar.TASK_BUSY} && {StateVar.TASK_REUSED}"), html.Div(classes=str(Cls.TASK_REUSED)):
                 _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
                 html.Span(["↺ ", react.Bind(StateVar.TASK_REUSED), " Reused"], title="Tasks That Reused a Finished Run")
 
@@ -484,7 +498,8 @@ class Workbench(TrameApp):
                 _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
                 with html.Div(classes=str(Cls.TASK_FOCUS)):
                     with html.Div(classes=str(Cls.TASK_SUMMARY_LINE), title=every, on_click=react.Callback(self.toggle_tasks)):
-                        _ = aria(html.Span([react.Bind(focus(TaskField.GLYPH))], classes=react.Bind(f"{focus(TaskField.FAILED)} ? 'text-destructive' : ''")), aria_hidden="true")
+                        tone = f"({focus(TaskField.FAILED)} ? 'text-destructive ' : '') + ({focus(TaskField.PERCENT)} ? '' : 'max-[800px]:hidden')"
+                        _ = aria(html.Span([react.Bind(focus(TaskField.GLYPH))], classes=react.Bind(tone)), aria_hidden="true")
                         html.Span([react.Bind(focus(TaskField.TITLE))], classes=str(Cls.TASK_LABEL))
                         html.Span(
                             [react.Bind(focus(TaskField.STATE))],
@@ -496,7 +511,9 @@ class Workbench(TrameApp):
                             Progress(value=react.Bind(f"{focus(TaskField.PROGRESS)} * 100"), max_=100, classes=str(Cls.TASK_FOCUS_BAR))
 
                         with react.If(focus(TaskField.BUSY)):
-                            _ = aria(html.Div(classes=str(Cls.TASK_FOCUS_PULSE)), role="progressbar", aria_label=react.Bind(focus(TaskField.STATE)))
+                            pulse = aria(html.Div(classes=str(Cls.TASK_FOCUS_PULSE)), role="progressbar", aria_label=react.Bind(focus(TaskField.STATE)))
+                            with pulse:
+                                html.Div(classes=str(Cls.TASK_SLIDE))
 
                         with react.If(f"{focus(TaskField.ELAPSED)} !== null"):
                             html.Span([react.Bind(focus(TaskField.CLOCK))], classes=str(Cls.TASK_CLOCK))
@@ -508,12 +525,14 @@ class Workbench(TrameApp):
                             variant="ghost",
                             classes=str(Cls.TASK_WIDE),
                             title="Open This Run in the Viewer",
+                            aria_label=react.Bind(f"'Open run for ' + {focus(TaskField.TITLE)}"),
                             on_click=react.Callback(self.open_task_run, args=f"[{focus(TaskField.RUN_ID)}]"),
                         )
 
             with html.Div(classes=str(Cls.TASK_END)):
                 with react.If(StateVar.TASK_ERROR):
-                    html.Span(["Script Error · ", react.Bind(StateVar.TASK_ERROR)], classes=str(Cls.TASK_ALERT), title=react.Bind(StateVar.TASK_ERROR))
+                    alert = html.Span(["Script Error · ", react.Bind(StateVar.TASK_ERROR)], classes=str(Cls.TASK_ALERT), title=react.Bind(StateVar.TASK_ERROR))
+                    _ = aria(alert, role="status", aria_live="polite")
 
                 with react.If(StateVar.TASK_FAILED):
                     html.Span(["⊘ ", react.Bind(StateVar.TASK_FAILED)], classes=str(Cls.TASK_COUNT), title="Tasks That Failed Their Last Run")
@@ -531,16 +550,24 @@ class Workbench(TrameApp):
             with html.Div(classes=str(Cls.TASK_HEADER)):
                 html.Span("Tasks", classes=str(Cls.TASK_NAME))
                 html.Span([react.Bind(StateVar.TASK_SUMMARY)], classes=str(Cls.TASK_MUTED))
-                with react.If(StateVar.TASK_RELOADED):
-                    html.Span(["· Reloaded ", react.Bind(StateVar.TASK_RELOADED)], classes=str(Cls.TASK_MUTED))
+                with react.If(StateVar.TASK_SUBMITTED):
+                    html.Span(["· ", react.Bind(StateVar.TASK_SUBMITTED)], classes=str(Cls.TASK_MUTED))
 
                 html.Span(classes=str(Cls.TASK_GROW))
                 Button("Collapse ▾", size="xs", variant="ghost", on_click=react.Callback(self.toggle_tasks))
 
+            with react.If(StateVar.TASK_ERROR):
+                html.Div(["Script Error · ", react.Bind(StateVar.TASK_ERROR)], classes=str(Cls.TASK_SCRIPT_ERROR))
+
             with html.Div(classes=str(Cls.TASK_BODY)), html.Table(classes=str(Cls.TASK_TABLE)):
                 with html.Thead(), html.Tr():
-                    for heading in ("", "Task", "State", "Elapsed", "Run", ""):
-                        html.Th(heading, scope="col", classes=str(Cls.TASK_HEAD))
+                    html.Th(scope="col", classes=str(Cls.TASK_HEAD_GLYPH))
+                    html.Th("Task", scope="col", classes=str(Cls.TASK_HEAD_TASK))
+                    html.Th("State", scope="col", classes=str(Cls.TASK_HEAD))
+                    html.Th("Elapsed", scope="col", classes=str(Cls.TASK_HEAD_ELAPSED))
+                    html.Th("Run", scope="col", classes=str(Cls.TASK_HEAD_RUN))
+                    with html.Th(scope="col", classes=str(Cls.TASK_HEAD_ACTIONS)):
+                        html.Span("Actions", classes="sr-only")
 
                 with html.Tbody(), react.For(items=StateVar.TASKS, name=TASK_ROW):
                     with html.Tr(classes=str(Cls.TASK_ROW)):
@@ -561,13 +588,15 @@ class Workbench(TrameApp):
                                 Progress(value=react.Bind(f"{row(TaskField.PROGRESS)} * 100"), max_=100, classes=str(Cls.TASK_BAR))
 
                             with react.If(row(TaskField.BUSY)):
-                                _ = aria(html.Div(classes=str(Cls.TASK_PULSE)), role="progressbar", aria_label=react.Bind(row(TaskField.STATE)))
+                                pulse = aria(html.Div(classes=str(Cls.TASK_PULSE)), role="progressbar", aria_label=react.Bind(row(TaskField.STATE)))
+                                with pulse:
+                                    html.Div(classes=str(Cls.TASK_SLIDE))
 
                             with react.If(row(TaskField.ITERATIONS)):
                                 html.Span([react.Bind(row(TaskField.ITERATIONS))], classes=str(Cls.TASK_ITERATIONS))
 
                         html.Td([react.Bind(row(TaskField.CLOCK))], classes=str(Cls.TASK_ELAPSED))
-                        html.Td([react.Bind(f"{row(TaskField.RUN_ID)} || '—'")], classes=str(Cls.TASK_RUN))
+                        html.Td([react.Bind(f"{row(TaskField.RUN_ID)} || '—'")], classes=str(Cls.TASK_RUN), title=react.Bind(row(TaskField.RUN_ID)))
                         with html.Td(), html.Div(classes=str(Cls.TASK_ACTIONS)):
                             with react.If(row(TaskField.RUN_ID)):
                                 Button(
@@ -591,7 +620,7 @@ class Workbench(TrameApp):
 
                             with react.If(row(TaskField.CANCELLABLE)):
                                 Button(
-                                    [react.Bind(f"{StateVar.TASK_CONFIRM} === {row(TaskField.LABEL)} ? 'Confirm Cancel' : 'Cancel'")],
+                                    [react.Bind(f"{StateVar.TASK_CONFIRM} === {row(TaskField.LABEL)} ? 'Confirm Cancel · ' + {StateVar.TASK_CONFIRM_LEFT} + 's' : 'Cancel'")],
                                     size="xs",
                                     variant=react.Bind(f"{StateVar.TASK_CONFIRM} === {row(TaskField.LABEL)} ? 'destructive' : 'ghost'"),
                                     aria_label=react.Bind(f"({StateVar.TASK_CONFIRM} === {row(TaskField.LABEL)} ? 'Press again to cancel ' : 'Cancel ') + {row(TaskField.TITLE)}"),
@@ -632,9 +661,10 @@ class Workbench(TrameApp):
             self.state[StateVar.TASK_FOCUS] = focus
             self.state[StateVar.TASK_FAILED] = view.failed
             self.state[StateVar.TASK_STALLED] = view.stalled
+            self.state[StateVar.TASK_BUSY] = view.busy
             self.state[StateVar.TASK_REUSED] = view.reused
             self.state[StateVar.TASK_ERROR] = view.error
-            self.state[StateVar.TASK_RELOADED] = view.reloaded
+            self.state[StateVar.TASK_SUBMITTED] = view.submitted
 
         hook = self.ctrl[Hook.FIELD_TASKS]
         if hook.exists():
@@ -680,11 +710,13 @@ class Workbench(TrameApp):
             return
 
         if self.state[StateVar.TASK_CONFIRM] != label:
+            self.armed += 1
             with self.state:
                 self.state[StateVar.TASK_CONFIRM] = label
+                self.state[StateVar.TASK_CONFIRM_LEFT] = CONFIRM_S
 
             if self.loop is not None:
-                _ = self.loop.call_later(CONFIRM_S, self.disarm_cancel, label)
+                _ = self.loop.call_later(1.0, self.count_down, label, self.armed, CONFIRM_S - 1)
 
             return
 
@@ -693,11 +725,18 @@ class Workbench(TrameApp):
 
         self.board.cancel(label)
 
-    def disarm_cancel(self, label: str) -> None:
-        """Reverts an armed Cancel the user left alone."""
-        if self.state[StateVar.TASK_CONFIRM] == label:
-            with self.state:
+    def count_down(self, label: str, armed: int, left: int) -> None:
+        """Shows the seconds `left` on an armed Cancel the user left alone, and reverts it when none is left."""
+        if armed != self.armed or self.state[StateVar.TASK_CONFIRM] != label:
+            return
+
+        with self.state:
+            self.state[StateVar.TASK_CONFIRM_LEFT] = left
+            if left <= 0:
                 self.state[StateVar.TASK_CONFIRM] = ""
+
+        if left > 0 and self.loop is not None:
+            _ = self.loop.call_later(1.0, self.count_down, label, armed, left - 1)
 
     @guard
     def retry_task(self, label: str) -> None:
