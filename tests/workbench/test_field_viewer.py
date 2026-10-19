@@ -148,7 +148,7 @@ def _manifested(root: Path, grid: pv.UnstructuredGrid, physics: Physics = Physic
     bundle = _bundle(root, grid)
     loads = [EntityTag(selector={TagKey.NAME: "TIP"}, conditions=[SurfaceForce(force=quantity(force, "N"))])] if force is not None else []
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), domain=DomainConfig(tags=loads), physics=PhysicsSelection(selected=physics))
-    _ = write_manifest(bundle, RunManifest.build(config, status="ok", run_id=root.name))
+    _ = write_manifest(bundle, RunManifest.build(config, status=RunStatus.OK, run_id=root.name))
 
     return bundle
 

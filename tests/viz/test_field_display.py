@@ -24,6 +24,7 @@ from femforge.run.manifest import RunManifest
 from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
 from femforge.run.inspect import Run
 from femforge.run.mechanical import VOIGT_COMPONENTS, derived_arrays
+from femforge.run.result import RunStatus
 from femforge.viz.field_display import (
     SCALARS_ARRAY,
     Association,
@@ -1280,7 +1281,7 @@ def _config(physics: Physics = Physics.MAGNETOSTATICS, frame: Solid | Cartesian2
 
 
 def _manifested(root: Path, config: SimulationConfig) -> Run:
-    manifest = RunManifest.build(config, status="ok", run_id=root.name)
+    manifest = RunManifest.build(config, status=RunStatus.OK, run_id=root.name)
     _ = write_manifest(root, manifest)
 
     return Run(root)
@@ -1320,7 +1321,7 @@ def test_default_display_falls_back_without_a_manifest_or_a_primary(tmp_path: Pa
     bare = tmp_path / "bare"
     bare.mkdir()
     config = _config()
-    manifest = RunManifest.build(config, status="ok", run_id="unnamed")
+    manifest = RunManifest.build(config, status=RunStatus.OK, run_id="unnamed")
     unnamed = manifest.model_copy(update={"physics_config": manifest.physics_config.model_copy(update={"solvers": [ResultOutputSolver()]})})
     _ = write_manifest(tmp_path / "unnamed", unnamed)
 
