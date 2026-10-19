@@ -22,7 +22,7 @@ print(result.axial_force("mover", ff.Axis.Z))
 
 | Field | Unit | Holds |
 |---|---|---|
-| `status` | | `ok`, `diverged` or `error`. |
+| `status` | | `ok`, `diverged`, `stalled` or `error`. |
 | `run_id` | | The run's identity, equal to the bundle directory name; None for a bare parse. |
 | `run_dir` | | The bundle directory; never serialized, and None once retention removed the directory. |
 | `frame` | | The run's solve frame. |
@@ -32,14 +32,14 @@ print(result.axial_force("mover", ff.Axis.Z))
 | `component_torques` | N·m | Lumped magnetic torque per sif Component name. |
 | `flux_density_max` | T | Peak flux density magnitude. |
 | `temperature_max` | K | Peak temperature, from a thermal or joule-heating solve. |
-| `residual` | | The last relative change the solver reported. |
+| `residual` | | How far the last nonlinear solver stopped from converging: its final relative change, or its last linear residual when its loop took one step. |
 | `wall_time` | s | Solver wall-clock time. |
 | `elmer_version` | | The ElmerSolver version from the log. |
 | `raw` | as printed | Every exported scalar column by name, including the ones `Result` does not type. |
 
 A field stays None when the solve exported nothing for it, for example `force` on a thermal run.
 
-The status comes from `elmersolver.log`: `error` when a line contains `ERROR` or the log never reaches `ALL DONE`, `diverged` on a non-convergence marker such as `FAILED to converge` or `NaN`, and `ok` otherwise.
+The status comes from `elmersolver.log`: `error` when a line contains `ERROR` or the log never reaches `ALL DONE`, `diverged` on a non-convergence marker such as `FAILED to converge` or `NaN`, and `ok` otherwise. The driver sets `stalled` when its watchdog stopped a linear solve; see [Stalled solves](driver.md#stalled-solves).
 
 ## Forces
 
@@ -53,7 +53,7 @@ The numbers come from SaveScalars, which writes `scalars.dat` and its `scalars.d
 
 A partitioned solve writes one `.dat.<rank>` file per rank instead. Elmer reduces the exported values globally, so every rank writes the same row, and femforge reads rank 0 alone, never a sum. When the ranks disagree, it logs a warning and still uses rank 0: a SaveScalars operator without a global reduction is partition-local.
 
-The solver log supplies the rest: the residual is the last relative change on a `RELC` line, and the wall time is the real time on the `SOLVER TOTAL TIME(CPU,REAL)` line.
+The solver log supplies the rest. The residual comes from the last NS step of the stack's last nonlinear solver, so a field calculator such as `mgdyncalc` never sets it: the step's relative change when the loop took more than one step, else the last linear residual before it, and None after a one-step direct solve. The wall time is the real time on the `SOLVER TOTAL TIME(CPU,REAL)` line.
 
 For a conduction solve, `Run.electrode_currents` gives the terminal current per named electrode boundary and `Run.phase_currents` the current per phase.
 

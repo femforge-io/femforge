@@ -20,6 +20,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - `Run.clapeyron_energy(face, force)` balances the strain energy against the work of a face's authored force and takes the solve frame's share itself, which `Frame.authored_share` gives.
 - The field viewer's Deformation section draws the bodies displaced by the solved displacement, at a scale that starts where the largest displacement moves a tenth of the model's size. `DisplaySpec.warp` and `DisplaySpec.warp_scale` hold the choice.
 - `default_display(run)` picks the display a run opens on: its solver stack's primary field (`PhysicsConfig.primary_variable`), the component its surface forces share, and field lines with opacity mapping only for a flux, field or current (`ElmerVariable.lines_by_default`).
+- The driver stops a linear solve whose residual stops improving, marks the run `stalled`, and records the reason and the last residuals in the manifest; a linear solve logs a progress line every 30 s.
 
 ### Changed
 
@@ -35,12 +36,14 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - `FixedDisplacement` maps each authored axis onto the solve coordinate it runs along, signed. A Cartesian 2D section normal to X or Y and an axisymmetric section now take clamps and rollers, an axis off the plane is dropped, and an axis oblique to a free one raises. `FixedDisplacement.to_elmer()` raises, since its keywords depend on the frame. `Frame.solve_share` names its argument `share_of`.
 - The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.
 - Cached sections and the runs built on them are rebuilt on first use.
+- `RunStatus` is a `StrEnum` with `STALLED`; the manifest's `running` and `abandoned` are `LifecycleStatus`.
 
 ### Fixed
 
 - `SurfaceForce` takes the solve share of its solve components, so an axial load under an axisymmetric frame no longer raises.
 - The field viewer recolors the bodies when another field is picked. It used to keep drawing the values of the field it opened on, so a switch from the displacement to Von Mises left the bodies at the bottom of the colormap.
 - Exporting an authored STEP again keeps its run identity, so the driver reuses the run. The digest now hashes the names, tags, colors, sizes, mass properties, faces and vertices of its bodies, `TaggedCompound.fingerprint`, instead of the bytes, which changed on every export; runs on an authored STEP are solved once more on first use.
+- `Result.residual` reports how far the last nonlinear solver stopped from converging, instead of 2.0 for elasticity and 0.0 for magnetostatics; one-value linear residual lines and `ComputeChange` lines without their prefix are parsed.
 
 ## [0.1.0] - 2026-10-17
 

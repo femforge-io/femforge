@@ -241,7 +241,7 @@ keyword_table(GenericSolver)
 2. **`generate()` builds the sif graph** from the possibly edited stack: the simulation and constants blocks, then solvers, equations, materials, bodies and boundaries in dependency order, then `validate()` (`src/femforge/elmer/sim.py:125-146`).
 3. **`write(dir)`** writes the start-info file, the sif and the two id maps, and requires `generate()` first (`src/femforge/elmer/sim.py:526-543`).
 
-The driver's `build_sim` stage constructs `Sim` from the resolved stack and applies `prepare_for_mpi` for a partitioned solve; `write_sif` calls `generate().write()` (`src/femforge/run/driver.py:636-662`). `Sim` takes no config object: its bodies come from the mesh groups, and it owns only its solver stack.
+The driver's `build_sim` stage constructs `Sim` from the resolved stack and applies `prepare_for_mpi` for a partitioned solve; `write_sif` calls `generate().write()` (`src/femforge/run/driver.py:638-664`). `Sim` takes no config object: its bodies come from the mesh groups, and it owns only its solver stack.
 
 ### Bodies, boundaries and components
 
@@ -273,29 +273,31 @@ A condition's `section` names the block it lands in, so `Sim` routes conditions 
 | A physics that needs a boundary condition to be well posed resolved one | warning | `src/femforge/elmer/sim.py:28-30`, `src/femforge/elmer/sim.py:202-216` |
 | A force Component has CalcFields with nodal forces on, and a SaveScalars to export it | warning | `src/femforge/elmer/sim.py:218-243` |
 
-The constructor raises earlier for an unknown physics and for a stack or condition that cannot solve the frame (`src/femforge/elmer/sim.py:100-118`). Before a partitioned solve, the driver also warns when a coil stack computes nodal forces, because the halo elements it then partitions with corrupt the Component force lumping (`src/femforge/run/driver.py:671-680`).
+The constructor raises earlier for an unknown physics and for a stack or condition that cannot solve the frame (`src/femforge/elmer/sim.py:100-118`). Before a partitioned solve, the driver also warns when a coil stack computes nodal forces, because the halo elements it then partitions with corrupt the Component force lumping (`src/femforge/run/driver.py:673-682`).
 
 ## The solver-log parser
 
-`SolverLogParser.feed` turns one ElmerSolver output line into a typed event, or None (`src/femforge/elmer/solver_log.py:156-188`):
+`SolverLogParser.feed` turns one ElmerSolver output line into a typed event, or None (`src/femforge/elmer/solver_log.py:429-495`):
 
 | Event | From | Where |
 |---|---|---|
-| `ConvergenceSample` | a `ComputeChange` line: solver, loop, iteration, norm, relative change | `src/femforge/elmer/solver_log.py:26-46` |
-| `LinearResidual` | a linear iteration line, only when the parser was built with `capture_linear=True` | `src/femforge/elmer/solver_log.py:49-60` |
-| `SolverMessage` | a `WARNING` or `ERROR` line | `src/femforge/elmer/solver_log.py:63-68` |
-| `SolveFinished` | the `SOLVER TOTAL TIME` line | `src/femforge/elmer/solver_log.py:71-79` |
+| `ConvergenceSample` | a `ComputeChange` line: solver, loop, iteration, norm, relative change | `src/femforge/elmer/solver_log.py:52-72` |
+| `LinearResidual` | a linear iteration line with one or two residuals, only when the parser was built with `capture_linear=True`; stamped with the solver its `linear_targets` point at | `src/femforge/elmer/solver_log.py:75-89` |
+| `SolverMessage` | a `WARNING` or `ERROR` line | `src/femforge/elmer/solver_log.py:92-97` |
+| `SolveFinished` | the `SOLVER TOTAL TIME` line | `src/femforge/elmer/solver_log.py:100-108` |
 
-The convergence line's solver tag is the sif `Equation` name lowercased, and some Elmer builds omit it (`src/femforge/elmer/solver_log.py:15-16`), so both sides normalize names with `normalize_solver_key` (`src/femforge/elmer/solver_log.py:100-102`).
+The convergence line's solver tag is the sif `Equation` name lowercased, and some Elmer builds omit it (`src/femforge/elmer/solver_log.py:18-20`), so both sides normalize names with `normalize_solver_key` (`src/femforge/elmer/solver_log.py:355-357`).
 
-[solve_case][femforge.elmer.solve_case] runs ElmerSolver through a backend and feeds every streamed line to the parser (`src/femforge/elmer/runtime/solve.py:30-108`). It writes each convergence sample to `convergence.jsonl` as one flushed line, logs it through a `ConvergenceRenderer` against the stack's targets, and logs each warning and error at its own level. It builds one renderer per solve, so one solve's progress baseline never leaks into the next (`src/femforge/elmer/runtime/solve.py:57-94`). The driver writes the same targets to `convergence_targets.json` immediately before the solve (`src/femforge/run/driver.py:682-692`); [Telemetry](telemetry.md#convergence) covers how that file is read back.
+[solve_case][femforge.elmer.solve_case] runs ElmerSolver through a backend and feeds every streamed line to the parser (`src/femforge/elmer/runtime/solve.py:57-163`). It writes each convergence sample to `convergence.jsonl` as one flushed line, logs it through a `ConvergenceRenderer` against the stack's targets, and logs each warning and error at its own level. It builds one renderer per solve, so one solve's progress baseline never leaks into the next (`src/femforge/elmer/runtime/solve.py:86-147`).
 
-After the solve, [parse_result][femforge.run.parse_result] reads the finished bundle into a [Result][femforge.run.Result] (`src/femforge/run/parse.py:177-232`):
+The parser attributes each linear residual to a solver of the stack's `linear_targets`, listed in sif order: an NS line points at its own solver, because post-processing such as stress recovery follows it, and an SS line hands over to the next iterative solver (`src/femforge/elmer/solver_log.py:452-462`). `solve_case` feeds every residual to a `StallDetector` (`src/femforge/elmer/solver_log.py:243-352`). On a verdict it sets an event that the cancel token passed to the backend also reads, so the backend stops the solve the way it stops a cancelled one, and `SolveRun.stall` carries the verdict (`src/femforge/elmer/runtime/solve.py:45-54`, `src/femforge/elmer/runtime/solve.py:95-114`). Every ComputeChange line ends the current linear solve. The renderer's `heartbeat` turns the detector's `LinearProgress` into a line every 30 s of a solve, logged with its fields bound (`src/femforge/elmer/solver_log.py:408-422`). The driver copies the verdict onto the manifest and grades the run `stalled` (`src/femforge/run/driver.py:695-696`, `src/femforge/run/driver.py:320-321`). The driver writes the same targets to `convergence_targets.json` immediately before the solve (`src/femforge/run/driver.py:684-697`); [Telemetry](telemetry.md#convergence) covers how that file is read back.
 
-- **Status** comes from `elmersolver.log`: `error` when the log is missing, any line holds `ERROR` or the run never printed `ALL DONE`; `diverged` on a non-convergence marker or a NaN; `ok` otherwise (`src/femforge/run/parse.py:126-174`).
-- **Scalars** come from each `.dat` and its `.dat.names` sidecar, reading the last row, because a sweep or a transient run appends rows (`src/femforge/run/parse.py:43-70`).
-- **A partitioned solve takes rank 0.** It writes per-rank `.dat.<rank>` files, and the exported values are already globally reduced, so rank 0 stands in for the whole and the parser never sums. Disagreeing ranks log a warning, because they mean a reduction without a global operator (`src/femforge/run/parse.py:90-123`).
-- **Forces** read only the global CalcFields sums, so per-Component triples never fold into the total. The per-Component values join `components.yml`, and the frame's `total` turns every force and torque into its whole-model total, the full revolution under `Axisymmetric` (`src/femforge/run/parse.py:186-216`).
+After the solve, [parse_result][femforge.run.parse_result] reads the finished bundle into a [Result][femforge.run.Result] (`src/femforge/run/parse.py:184-242`):
+
+- **Status** comes from `elmersolver.log`: `error` when the log is missing, any line holds `ERROR` or the run never printed `ALL DONE`; `diverged` on a non-convergence marker or a NaN; `ok` otherwise. Only the driver grades a run `stalled`, so a bare parse of a stalled bundle reads `error` (`src/femforge/run/parse.py:122-181`).
+- **Scalars** come from each `.dat` and its `.dat.names` sidecar, reading the last row, because a sweep or a transient run appends rows (`src/femforge/run/parse.py:39-66`).
+- **A partitioned solve takes rank 0.** It writes per-rank `.dat.<rank>` files, and the exported values are already globally reduced, so rank 0 stands in for the whole and the parser never sums. Disagreeing ranks log a warning, because they mean a reduction without a global operator (`src/femforge/run/parse.py:86-119`).
+- **Forces** read only the global CalcFields sums, so per-Component triples never fold into the total. The per-Component values join `components.yml`, and the frame's `total` turns every force and torque into its whole-model total, the full revolution under `Axisymmetric` (`src/femforge/run/parse.py:198-227`).
 
 [Results](../../user-guide/results.md#scalars) covers the user side.
 

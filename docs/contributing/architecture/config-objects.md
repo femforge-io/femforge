@@ -88,12 +88,12 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 | `supports` | whether `solves` has a form; concrete on the base | `CurrentDensity.check_frame` |
 | `lumps_torque` | whether Elmer's force lumping yields a torque | `CalculateMagneticForce.check_frame` |
 | `solve_vector` | an authored vector in solve coordinates | `Magnetization.to_elmer` and `check_frame` (`src/femforge/physical/conditions.py:164-184`) |
-| `total` | the whole-model total of a vector Elmer integrated over the solve domain | `parse_result` (`src/femforge/run/parse.py:213-216`) |
+| `total` | the whole-model total of a vector Elmer integrated over the solve domain | `parse_result` (`src/femforge/run/parse.py:224-227`) |
 | `solve_share` | the share the solve domain carries of a whole-model solve-frame vector, the inverse of `total` | `authored_share` |
 | `authored_share` | an authored whole-model vector's solve-frame share, `solve_share` of `solve_vector`; concrete on the base | `SurfaceForce.on_boundary`, `Run.clapeyron_energy` |
 | `revolves` | whether the section stands for a model revolved about an axis; defaults to False | the mesher's `<BODY>__AXIS` groups, the field viewer's symmetry basis |
 | `plane_stress` | whether a 2D elasticity solve is plane stress or plane strain; defaults to None, no plane state, and `Cartesian2D` answers from its `state` | a solver's `fit_frame` |
-| `along` | a solve-frame vector's component along an authored axis | `Result.axial_force` (`src/femforge/run/result.py:105-109`) |
+| `along` | a solve-frame vector's component along an authored axis | `Result.axial_force` (`src/femforge/run/result.py:127-131`) |
 
 The config checks the frame on construction and on assignment through `SimulationConfig`'s three validators, each condition's `check_frame` and `PhysicsSelection.check_frame`, and `Sim` repeats the condition check, over the tags of the body groups and the boundary groups, for conditions edited in place after the config validated them (`src/femforge/elmer/sim.py:110-118`). `PhysicsSelection.selected` rejects `MAGNETOSTATICS_2D` as an authored choice and leaves it out of the JSON schema enum, because it is the form `MAGNETOSTATICS` solves as under a 2D frame (`src/femforge/elmer/config/common/selection.py:18-38`).
 
@@ -160,7 +160,7 @@ stack.solver(MagnetoDynamicsSolver).linear_system_max_iterations = 2000
 assert ff.run.cache_key(config) != before
 ```
 
-An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:651-655`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
+An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:653-657`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
 
 ## The JSON schema export
 
@@ -192,4 +192,4 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 | Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:165`, `src/femforge/meshing/gmsh_options.py:58` |
 | The geometry interface names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
 | `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
-| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:365-374`, `src/femforge/common/log.py:206-211` |
+| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:367-376`, `src/femforge/common/log.py:206-211` |
