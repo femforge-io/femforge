@@ -138,7 +138,7 @@ The `browsers` and `monitors` cards read the telemetry root; the [Telemetry](tel
 
 ## The field viewer
 
-The field viewer puts its controls beside one view, which draws every run, flat or solid. The app bar holds the run picker, which lists the 200 newest indexed runs that have fields, are still solving or failed, newest first, and shows the open run's bundle path beside it. Each run reads as its description, with its run id muted beside it. A run that is still solving reads Solving and opens once its solve ends; one whose solve failed reads Failed. The list follows the run index every second and holds still while its dropdown is open, so a run that lands never moves the row under the pointer and never replaces the open run. With no run given, the viewer opens the newest run with fields as soon as one lands, else the newest one still solving, else the newest failed one. The camera stays put when the next run frames alike.
+The field viewer puts its controls and the Setup tab beside one view, which draws every run, flat or solid. The app bar holds the run picker, which lists the 200 newest indexed runs that have fields, are still solving or failed, newest first, and shows the open run's bundle path beside it. Each run reads as its description, with its run id muted beside it. A run that is still solving reads Solving and opens once its solve ends; one whose solve failed reads Failed. The list follows the run index every second and holds still while its dropdown is open, so a run that lands never moves the row under the pointer and never replaces the open run. With no run given, the viewer opens the newest run with fields as soon as one lands, else the newest one still solving, else the newest failed one. The camera stays put when the next run frames alike.
 
 **Each run opens on its own field.** A run colors the primary field of its solver stack: the flux density of a magnetostatics run, the temperature of a thermal or Joule heating run, the displacement of an elasticity run. A displacement opens on the component its surface forces share, such as Y under a pull along Y, and on Magnitude when they point several ways. Show Field Lines and Opacity Mapping start on for a flux density, a field strength, an electric field or a current, and off otherwise. A Quantity, Mode, Show Field Lines or Opacity Mapping choice you make carries over to the next run that has the quantity shown, and a run without it opens on its own field. The other controls carry over from the run before. A `DisplaySpec` that names a `field` opens each run on that field, mode, field lines and opacity mapping instead. The workbench keeps the panel layout, the open cards and each view's mode between sessions, never the field display.
 
@@ -183,6 +183,23 @@ Each body's color comes from one of three sources, its [BodyPaint][femforge.viz.
 **The automatic color range spans every body.** With Auto range on, the range is the union of each body's own range, over every body whether it is shown, hidden or painted another way, so hiding a body never rescales the rest. Each body is clamped to its 2nd to 98th percentile, so a small body keeps its range beside a large one. Log scale keeps only the positive values and starts at their 1st percentile. Turn Auto range off to pin the range with the slider.
 
 Field lines follow the shown vector field. While a scalar or a principal value is shown, they follow the magnetic flux density, else the first vector field, such as the displacement of an elasticity run. The switch stays off for a run without a vector field. They start on, from 18 × 18 seeds on the center plane. Seeds sit on a grid in the domain's bounding box: a volume, the center plane or a line along X through the center. A run shown flat moves volume seeds to the center plane. Length is the fraction of the domain diagonal a line may run, and each line ends at its first sharp reversal. Integrate Within limits the lines to one body.
+
+### The Setup tab
+
+**Setup shows what the solver received.** The second tab beside the controls lists every body and boundary group with its material or measure and each condition in the solve frame, such as `Traction 500 kPa` for a 100 N pull on a 20 mm × 10 mm face; a component the frame drops reads `–`. The values come from the run's `conditions.json`, the record of what each sif block got, so a condition the frame mapped differently from how it was authored reads as solved. A run from before that record lists its groups without conditions and says so.
+
+| Section | Shows |
+|---|---|
+| Frame | The solve frame, where its plane sits and how its axes run in the authored model, the thickness and plane state of a Cartesian 2D run, how a revolved section is shown, and the geometry check. A 2D run adds the Section Outline and Authored Body Ghost switches. |
+| Bodies | One row per body, under a row for a material several bodies share, with its material and its conditions. |
+| Boundaries | One row per boundary group, named faces first, with its measure and its conditions. With Conditions lists only the groups that received one, the default above 12 groups. |
+| Glyphs | One row per glyph kind the run draws, with how many groups draw it and a switch for the kind. |
+
+- **Glyphs show only while the tab does.** The scene then draws each condition as a shape on a neutral fill with its value, and Show Glyphs turns them all off. A row's icon toggles its own glyph.
+- **Plain Bodies** paints every body grey while it is on, so the glyphs read clearly.
+- **Select a row to highlight its group** in the accent. Click it again or press `Esc` to clear the selection, and double-click it or press `F` to fit the camera to it. A row whose group has no cells to draw is dimmed.
+- **Search** matches names, Elmer group names, materials and condition kinds. Press `/` to reach it from the tab, and `Esc` to clear it.
+- **A run without fields** opens on the Setup tab: one still solving or one that failed after meshing draws its glyphs on the mesh, and one that failed before meshing lists its authored tags. A run whose mesh was purged lists its rows without glyphs.
 
 ## Runs and figures
 
@@ -269,4 +286,5 @@ A target is the function itself or its `pkg.module:attr` name, and its module is
 - The terminal panel is interactive on Windows with the `pty` extra. Elsewhere it shows the live log stream, read-only.
 - A `Split` passed to `show` is served as built. Pass the function that builds it to rebuild on save.
 - The `browsers` and `monitors` cards need a telemetry root.
+- Scene picking does not select a Setup row yet.
 - Ctrl+C or closing the window stops the running task and waits up to 10 s for it to release its run. A task stuck in a long CAD or meshing call past that is killed, and its claim on the run is broken so the next start need not wait.
