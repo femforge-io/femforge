@@ -13,7 +13,7 @@ import pytest
 
 from femforge_workbench.registry import DEMO, LAUNCHER, OutputKind, OutputSpec, WorkbenchKind, panel, script
 from femforge_workbench.process_tree import CREATION_FLAGS, NEW_SESSION, ProcessTree
-from femforge_workbench.runner import ScriptRunner, Task, TaskField, TaskStatus
+from femforge_workbench.runner import ScriptRunner, ScriptRun, ScriptField, ScriptStatus
 from tests.workbench.tree import find, prop, texts
 
 
@@ -57,9 +57,9 @@ def _shell(name: str, root: Path, server: str | None = None) -> Workbench:
 
 def test_the_runner_streams_lines_in_order_and_records_the_exit_code() -> None:
     lines: list[str] = []
-    changes: list[TaskStatus] = []
+    changes: list[ScriptStatus] = []
 
-    async def run() -> Task:
+    async def run() -> ScriptRun:
         runner = ScriptRunner(lambda _, line: lines.append(line), lambda task: changes.append(task.status))
 
         return await runner.run("count", [sys.executable, "-c", COUNTING])
@@ -67,13 +67,13 @@ def test_the_runner_streams_lines_in_order_and_records_the_exit_code() -> None:
     task = asyncio.run(run())
 
     assert lines == [str(i) for i in range(50)]
-    assert task.status is TaskStatus.FAILED and task.returncode == 3
-    assert changes == [TaskStatus.RUNNING, TaskStatus.FAILED]
-    assert task.row()[TaskField.STATUS] == str(TaskStatus.FAILED) and task.row()[TaskField.PID] == task.pid
+    assert task.status is ScriptStatus.FAILED and task.returncode == 3
+    assert changes == [ScriptStatus.RUNNING, ScriptStatus.FAILED]
+    assert task.row()[ScriptField.STATUS] == str(ScriptStatus.FAILED) and task.row()[ScriptField.PID] == task.pid
 
 
 def test_stop_kills_the_sleeping_child_tree_and_ends_the_run_as_stopped() -> None:
-    async def run() -> tuple[Task, int, int, bool]:
+    async def run() -> tuple[ScriptRun, int, int, bool]:
         got_pid = asyncio.Event()
         pids: list[int] = []
 
@@ -94,13 +94,13 @@ def test_stop_kills_the_sleeping_child_tree_and_ends_the_run_as_stopped() -> Non
 
     task, parent, child, running = asyncio.run(run())
 
-    assert task.status is TaskStatus.STOPPED and not running
+    assert task.status is ScriptStatus.STOPPED and not running
     assert not psutil.pid_exists(child)
     assert not psutil.pid_exists(parent)
 
 
 def test_stop_kills_a_tree_that_keeps_spawning() -> None:
-    async def run() -> tuple[Task, list[int]]:
+    async def run() -> tuple[ScriptRun, list[int]]:
         got_pid = asyncio.Event()
         pids: list[int] = []
 
@@ -118,7 +118,7 @@ def test_stop_kills_a_tree_that_keeps_spawning() -> None:
 
     task, pids = asyncio.run(run())
 
-    assert task.status is TaskStatus.STOPPED and pids
+    assert task.status is ScriptStatus.STOPPED and pids
     assert not any(psutil.pid_exists(pid) for pid in pids)
 
 
@@ -132,7 +132,7 @@ def test_killing_an_exited_tree_signals_nothing() -> None:
 
 
 def test_a_finished_script_leaves_no_process_behind() -> None:
-    async def run() -> tuple[Task, int]:
+    async def run() -> tuple[ScriptRun, int]:
         pids: list[int] = []
         runner = ScriptRunner(lambda _, line: pids.append(int(line)), lambda _: None)
         task = await runner.run("leaver", [sys.executable, "-c", LEAVING_TREE])
@@ -144,7 +144,7 @@ def test_a_finished_script_leaves_no_process_behind() -> None:
     while psutil.pid_exists(child) and time.monotonic() < deadline:
         time.sleep(0.05)
 
-    assert task.status is TaskStatus.DONE and not psutil.pid_exists(child)
+    assert task.status is ScriptStatus.DONE and not psutil.pid_exists(child)
 
 
 def test_the_outputs_panel_maps_each_kind_and_reports_missing_files(tmp_path: Path) -> None:

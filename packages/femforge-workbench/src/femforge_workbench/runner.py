@@ -19,7 +19,7 @@ STREAM_ENV = {"PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "COLUMNS": "
 """Makes the child flush every line as it is written, in UTF-8 whatever the console code page, laid out for a wide terminal."""
 
 
-class TaskStatus(StrEnum):
+class ScriptStatus(StrEnum):
     """Where a script run stands."""
 
     RUNNING = "running"
@@ -28,7 +28,7 @@ class TaskStatus(StrEnum):
     STOPPED = "stopped"
 
 
-class TaskField(StrEnum):
+class ScriptField(StrEnum):
     """The keys of a task row in the client state."""
 
     NAME = "name"
@@ -41,19 +41,19 @@ class TaskField(StrEnum):
 type LineHandler = Callable[[str, str], None]
 """Receives the task name and one output line without its newline."""
 
-type TaskHandler = Callable[["Task"], None]
+type ScriptHandler = Callable[["ScriptRun"], None]
 """Receives the task after it started and again after it exited."""
 
 
 @dataclass
-class Task:
+class ScriptRun:
     """One script run: its process, when it started and how it ended."""
 
     name: str
     process: asyncio.subprocess.Process
     tree: ProcessTree
     started: datetime = field(default_factory=datetime.now)
-    status: TaskStatus = TaskStatus.RUNNING
+    status: ScriptStatus = ScriptStatus.RUNNING
     returncode: int | None = None
     stopping: bool = False
 
@@ -65,34 +65,34 @@ class Task:
     def row(self) -> dict[str, object]:
         """The task as a row of the client state."""
         return {
-            TaskField.NAME: self.name,
-            TaskField.PID: self.pid,
-            TaskField.STARTED: self.started.isoformat(timespec="seconds"),
-            TaskField.STATUS: str(self.status),
-            TaskField.RETURNCODE: self.returncode,
+            ScriptField.NAME: self.name,
+            ScriptField.PID: self.pid,
+            ScriptField.STARTED: self.started.isoformat(timespec="seconds"),
+            ScriptField.STATUS: str(self.status),
+            ScriptField.RETURNCODE: self.returncode,
         }
 
 
 class ScriptRunner:
     """Starts named commands, streaming their output lines and reporting each status change."""
 
-    def __init__(self, on_line: LineHandler, on_change: TaskHandler) -> None:
+    def __init__(self, on_line: LineHandler, on_change: ScriptHandler) -> None:
         """Takes the handlers every task's lines and status changes go to."""
         self.on_line = on_line
         self.on_change = on_change
-        self.tasks: dict[str, Task] = {}
+        self.tasks: dict[str, ScriptRun] = {}
 
     def running(self, name: str) -> bool:
         """Whether the named task runs."""
         task = self.tasks.get(name)
 
-        return task is not None and task.status is TaskStatus.RUNNING
+        return task is not None and task.status is ScriptStatus.RUNNING
 
     def rows(self) -> list[dict[str, object]]:
         """Every task as a row of the client state."""
         return [task.row() for task in self.tasks.values()]
 
-    async def run(self, name: str, command: Sequence[str], *, cwd: Path | None = None) -> Task:
+    async def run(self, name: str, command: Sequence[str], *, cwd: Path | None = None) -> ScriptRun:
         """Runs the command to completion, streaming its lines; a name still running is an error.
 
         Args:
@@ -114,7 +114,7 @@ class ScriptRunner:
             start_new_session=NEW_SESSION,
         )
         tree = ProcessTree.adopt(process.pid)
-        task = Task(name, process, tree)
+        task = ScriptRun(name, process, tree)
         self.tasks[name] = task
         log.bind(task=name, pid=task.pid, command=list(command)).info("Script started.")
         self.on_change(task)
@@ -132,9 +132,9 @@ class ScriptRunner:
             tree.close()
 
         if task.stopping:
-            task.status = TaskStatus.STOPPED
+            task.status = ScriptStatus.STOPPED
         else:
-            task.status = TaskStatus.DONE if task.returncode == 0 else TaskStatus.FAILED
+            task.status = ScriptStatus.DONE if task.returncode == 0 else ScriptStatus.FAILED
 
         log.bind(task=name, returncode=task.returncode, status=str(task.status)).info("Script exited.")
         self.on_change(task)
@@ -144,7 +144,7 @@ class ScriptRunner:
     async def stop(self, name: str) -> None:
         """Kills the task's process tree; its run then ends as stopped."""
         task = self.tasks.get(name)
-        if task is None or task.status is not TaskStatus.RUNNING:
+        if task is None or task.status is not ScriptStatus.RUNNING:
             return
 
         task.stopping = True

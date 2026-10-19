@@ -14,7 +14,7 @@ from femforge_workbench.panels.log import LogPanel
 from femforge_workbench.panels.outputs import WorkbenchOutputsPanel
 from femforge_workbench.panels.scene import SceneViewerPanel
 from femforge_workbench.registry import WorkbenchKind, WorkbenchSpec
-from femforge_workbench.runner import ScriptRunner, Task, TaskStatus
+from femforge_workbench.runner import ScriptRun, ScriptRunner, ScriptStatus
 from femforge_workbench.widgets.badge import Badge
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.card import Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle
@@ -89,7 +89,7 @@ class LauncherPanel(PanelComponent):
             title: The panel's tab title.
         """
         self.runner = ScriptRunner(self.on_line, self.on_task)
-        self.jobs: dict[str, asyncio.Task[Task]] = {}
+        self.jobs: dict[str, asyncio.Task[ScriptRun]] = {}
         self.stops: set[asyncio.Task[None]] = set()
 
         super().__init__(app, id, title)
@@ -116,7 +116,7 @@ class LauncherPanel(PanelComponent):
         is_script = f"{field(CardField.KIND)} === {json.dumps(WorkbenchKind.SCRIPT)}"
         is_renderable = f"{field(CardField.KIND)} === {json.dumps(WorkbenchKind.RENDERABLE)}"
         is_open = f"{AppVar.OPENED}.includes({field(CardField.NAME)})"
-        failed = f"{field(CardField.STATUS)} === {json.dumps(TaskStatus.FAILED)}"
+        failed = f"{field(CardField.STATUS)} === {json.dumps(ScriptStatus.FAILED)}"
         status_variant = f"{field(CardField.RUNNING)} ? 'default' : ({failed} ? 'destructive' : 'secondary')"
 
         with html.Div(classes=str(Cls.TOOLBAR)):
@@ -201,7 +201,7 @@ class LauncherPanel(PanelComponent):
             CardField.KIND: str(spec.kind),
             CardField.LAST_RUN: last.strftime(LAST_RUN_FORMAT) if last is not None else "",
             CardField.OUTPUTS: len(spec.outputs),
-            CardField.RUNNING: task is not None and task.status is TaskStatus.RUNNING,
+            CardField.RUNNING: task is not None and task.status is ScriptStatus.RUNNING,
             CardField.STATUS: str(task.status) if task is not None else "",
             CardField.PID: task.pid if task is not None else None,
         }
@@ -215,7 +215,7 @@ class LauncherPanel(PanelComponent):
 
     def caption(self) -> str:
         """The toolbar caption: how many workbenches there are and how many scripts run."""
-        running = sum(1 for task in self.runner.tasks.values() if task.status is TaskStatus.RUNNING)
+        running = sum(1 for task in self.runner.tasks.values() if task.status is ScriptStatus.RUNNING)
         suffix = f", {running} running" if running else ""
 
         return f"{len(self.specs())} workbenches{suffix}"
@@ -263,7 +263,7 @@ class LauncherPanel(PanelComponent):
         self.jobs[spec.name] = job
         self.activate(LauncherPanelId.LOG)
 
-    def on_job_done(self, job: asyncio.Task[Task]) -> None:
+    def on_job_done(self, job: asyncio.Task[ScriptRun]) -> None:
         """Reports a run that failed to start or stream, which no task row would show."""
         error = job.exception()
         if error is None:
@@ -319,9 +319,9 @@ class LauncherPanel(PanelComponent):
         """Writes a script's output line to the log panel."""
         self.log.write(line)
 
-    def on_task(self, task: Task) -> None:
+    def on_task(self, task: ScriptRun) -> None:
         """A run started or ended: the log gets a marker line, the cards and rows follow, the outputs shown refresh."""
-        if task.status is TaskStatus.RUNNING:
+        if task.status is ScriptStatus.RUNNING:
             self.log.write(f"{ANSI_BOLD}>>> {task.name} (pid {task.pid}){ANSI_RESET}")
         else:
             self.log.write(f"{ANSI_BOLD}<<< {task.name} {task.status} (exit {task.returncode}){ANSI_RESET}")
