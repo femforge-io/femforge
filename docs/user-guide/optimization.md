@@ -80,16 +80,16 @@ Write your own knob as a `Knob` subclass with a `kind` literal and an `apply` th
 from typing import Literal
 
 import femforge as ff
-from femforge.optimize.max_current import scale_fixed_potentials
+from femforge.optimize.max_current import scale_fixed_voltages
 
 
 class DriveScale(ff.optimize.Knob):
-    """Multiplies every FixedPotential drive by the knob value."""
+    """Multiplies every FixedVoltage drive by the knob value."""
 
     kind: Literal["drive_scale"] = "drive_scale"
 
     def apply(self, config: ff.SimulationConfig, value: float) -> ff.SimulationConfig:
-        return scale_fixed_potentials(config, value)
+        return scale_fixed_voltages(config, value)
 
 
 knob = DriveScale(name="drive", low=0.5, high=2.0)
@@ -227,7 +227,7 @@ A drive realizes each target current:
 | Drive | Excitation | Solves per step |
 |---|---|---|
 | `DirectDrive(configure)` | `configure(config, current)` rebuilds the config for a prescribed current. | One. |
-| `VoltageDrive(current_of, reference_current)` | Scales every `FixedPotential` by the iteration `V ← V·I_target/I_measured` until the measured current lands within `current_rtol`, starting from the amps-per-scale gain of the last step that reached its target. | One or more, at most `max_inner`. |
+| `VoltageDrive(current_of, reference_current)` | Scales every `FixedVoltage` by the iteration `V ← V·I_target/I_measured` until the measured current lands within `current_rtol`, starting from the amps-per-scale gain of the last step that reached its target. | One or more, at most `max_inner`. |
 
 A diverged solve marks a runaway: no steady state exists at that current. So does a voltage drive whose current falls short of the target on every inner solve. Any other failed solve raises `SolveFailedError`, since a tool error says nothing about the physics.
 

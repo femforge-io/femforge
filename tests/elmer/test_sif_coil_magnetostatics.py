@@ -15,7 +15,7 @@ from femforge.elmer.physics import Physics, condition_physics
 from femforge.elmer.variables import ElmerVariable, elemental
 from femforge.elmer.sim import SolverConfigWarning
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import CoilDrive, CoilTerminal, FixedPotential
+from femforge.physical.conditions import CoilDrive, CoilTerminal, FixedVoltage
 from femforge.physical.domain import EntityTag
 from femforge.materials.air import Air
 from femforge.materials.copper import Copper
@@ -182,14 +182,14 @@ def test_far_field_pins_av_on_every_external_shell() -> None:
     assert all("AV {e} = Real 0" in blocks[name] for name in external)
 
 
-def test_fixed_potential_electrodes_are_inert_under_the_coil_solve() -> None:
+def test_fixed_voltage_electrodes_are_inert_under_the_coil_solve() -> None:
     # No Potential variable exists in this stack (the source stage is CoilSolver, not StatCurrent), so a shared
     # config's CURRENT_CONDUCTION electrode tags must not emit.
     assert condition_physics(Physics.COIL_MAGNETOSTATICS) == frozenset({Physics.COIL_MAGNETOSTATICS, Physics.MAGNETOSTATICS})
     groups = _coil_groups()
-    groups[1].tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedPotential(value=1 * U.V)]))
+    groups[1].tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedVoltage(value=1 * U.V)]))
     sif = _write_sif(physics=Physics.COIL_MAGNETOSTATICS, groups=groups, boundary_groups=_coil_boundary_groups())
-    assert "fixed_potential" not in sif
+    assert "fixed_voltage" not in sif
     assert "Save Scalars" not in sif
 
 

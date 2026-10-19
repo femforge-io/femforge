@@ -12,16 +12,16 @@ from femforge.elmer.physics import Physics
 from femforge.materials.copper import Copper
 from femforge.materials.properties import ElmerMaterialKeyword
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import FixedPotential
+from femforge.physical.conditions import FixedVoltage
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import U
 from tests.elmer.test_sif_smoke import FakeBoundaryGroup, FakePhysicalGroup, _boundary_blocks, _write_sif
 
 
 def _current_groups() -> list[PhysicalGroup]:
-    """A copper bar between two copper terminal pads, one FixedPotential electrode each (the dedicated-pad approach)."""
-    entry = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedPotential(value=0.001 * U.V)])
-    exit_ = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedPotential(value=0 * U.V)])
+    """A copper bar between two copper terminal pads, one FixedVoltage electrode each (the dedicated-pad approach)."""
+    entry = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedVoltage(value=0.001 * U.V)])
+    exit_ = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedVoltage(value=0 * U.V)])
     return [
         FakePhysicalGroup(1, "COPPER_ENTRY", Copper(), [entry]),
         FakePhysicalGroup(2, "COPPER_BAR", Copper(), []),
@@ -61,25 +61,25 @@ def test_save_scalars_solver_measures_potential_flux() -> None:
     assert "Coefficient 1 = Electric Conductivity" in sif
 
 
-def test_fixed_potential_reaches_every_pad_surface_and_nothing_else() -> None:
+def test_fixed_voltage_reaches_every_pad_surface_and_nothing_else() -> None:
     sif = _current_sif()
     blocks = _boundary_blocks(sif)
     # Each pad's potential lands on its shell and its bar interface; the bar's own shell is a natural (insulated) boundary.
     assert set(blocks) == {
-        "COPPER_ENTRY__EXT_fixed_potential",
-        "COPPER_BAR__COPPER_ENTRY_fixed_potential",
-        "COPPER_BAR__COPPER_EXIT_fixed_potential",
-        "COPPER_EXIT__EXT_fixed_potential",
+        "COPPER_ENTRY__EXT_fixed_voltage",
+        "COPPER_BAR__COPPER_ENTRY_fixed_voltage",
+        "COPPER_BAR__COPPER_EXIT_fixed_voltage",
+        "COPPER_EXIT__EXT_fixed_voltage",
     }
 
-    entry = blocks["COPPER_ENTRY__EXT_fixed_potential"]
+    entry = blocks["COPPER_ENTRY__EXT_fixed_voltage"]
     assert "Target Boundaries(1) = 11" in entry
     m = re.search(r"Potential = ([-0-9.eE+]+)", entry)
     assert m and float(m.group(1)) == pytest.approx(1e-3)
     # Every electrode is flagged for the SaveScalars boundary integral (the current measurement).
     assert all("Save Scalars = Logical True" in block for block in blocks.values())
 
-    exit_ = blocks["COPPER_EXIT__EXT_fixed_potential"]
+    exit_ = blocks["COPPER_EXIT__EXT_fixed_voltage"]
     m = re.search(r"Potential = ([-0-9.eE+]+)", exit_)
     assert m and float(m.group(1)) == pytest.approx(0.0)
 

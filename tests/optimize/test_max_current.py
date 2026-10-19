@@ -15,11 +15,11 @@ from femforge.optimize.max_current import (
     VoltageDrive,
     find_max_current,
     linear_max_current_seed,
-    scale_fixed_potentials,
+    scale_fixed_voltages,
     seed_from_result,
 )
 from femforge.common.tags import CurrentDir, TagKey
-from femforge.physical.conditions import Convection, FixedPotential
+from femforge.physical.conditions import Convection, FixedVoltage
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import Quantity, U, quantity
 from femforge.run.result import Result, RunStatus
@@ -73,8 +73,8 @@ _V_REF = 1.0
 def _drive_config(entry_volts: float = _V_REF) -> SimulationConfig:
     """A minimal driven config: an Entry/Exit electrode pair plus a condition-less tag that must pass through untouched."""
     config = SimulationConfig()
-    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedPotential(value=entry_volts * U.V)]))
-    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedPotential(value=0 * U.V)]))
+    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedVoltage(value=entry_volts * U.V)]))
+    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedVoltage(value=0 * U.V)]))
     config.domain.tags.append(EntityTag(selector={TagKey.PHASE: "0"}))
     return config
 
@@ -83,7 +83,7 @@ def _entry_volts(config: SimulationConfig) -> float:
     """The (scaled) nonzero electrode potential — the drive a fake solver runs at."""
     for tag in config.domain.tags:
         for condition in tag.conditions:
-            if isinstance(condition, FixedPotential):
+            if isinstance(condition, FixedVoltage):
                 volts = float(condition.value.to(U.V).magnitude)
                 if volts != 0:
                     return volts
@@ -565,37 +565,37 @@ def test_voltage_drive_rejects_degenerate_arguments() -> None:
         _ = VoltageDrive(current_of=_current_of, reference_current=0 * U.A)
 
 
-# --- scale_fixed_potentials ---------------------------------------------------
+# --- scale_fixed_voltages ---------------------------------------------------
 
 
-def test_scale_fixed_potentials_scales_electrodes_only_and_copies() -> None:
+def test_scale_fixed_voltages_scales_electrodes_only_and_copies() -> None:
     convection = Convection(coefficient=quantity(10.0, "watt / meter**2 / kelvin"), ext_temperature=300 * U.K)
     config = SimulationConfig()
-    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedPotential(value=2 * U.V), convection]))
-    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedPotential(value=0 * U.V)]))
+    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedVoltage(value=2 * U.V), convection]))
+    config.domain.tags.append(EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedVoltage(value=0 * U.V)]))
     config.domain.tags.append(EntityTag(selector={TagKey.PHASE: "0"}))
 
-    scaled = scale_fixed_potentials(config, 3.0)
+    scaled = scale_fixed_voltages(config, 3.0)
 
     entry, exit_, bare = scaled.domain.tags
-    assert isinstance(entry.conditions[0], FixedPotential)
+    assert isinstance(entry.conditions[0], FixedVoltage)
     assert entry.conditions[0].value.to(U.V).magnitude == pytest.approx(6.0)
     # Non-electrode conditions and condition-less tags ride through as the same objects.
     assert entry.conditions[1] is convection
     assert bare is config.domain.tags[2]
     # A grounded exit stays grounded.
-    assert isinstance(exit_.conditions[0], FixedPotential)
+    assert isinstance(exit_.conditions[0], FixedVoltage)
     assert exit_.conditions[0].value.to(U.V).magnitude == 0.0
     # The original config is untouched.
     original = config.domain.tags[0].conditions[0]
-    assert isinstance(original, FixedPotential)
+    assert isinstance(original, FixedVoltage)
     assert original.value.to(U.V).magnitude == pytest.approx(2.0)
 
 
-def test_scale_fixed_potentials_rejects_bad_scale_and_driveless_config() -> None:
+def test_scale_fixed_voltages_rejects_bad_scale_and_driveless_config() -> None:
     config = _drive_config()
     for bad in (0.0, -1.0, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="positive finite"):
-            _ = scale_fixed_potentials(config, bad)
-    with pytest.raises(ValueError, match="no FixedPotential"):
-        _ = scale_fixed_potentials(SimulationConfig(), 2.0)
+            _ = scale_fixed_voltages(config, bad)
+    with pytest.raises(ValueError, match="no FixedVoltage"):
+        _ = scale_fixed_voltages(SimulationConfig(), 2.0)

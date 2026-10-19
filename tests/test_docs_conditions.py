@@ -223,7 +223,7 @@ def test_electrostatics_reads_no_condition_and_has_no_axisymmetric_form() -> Non
 def test_joule_heating_reads_its_constituents_conditions() -> None:
     read = [reading.condition.__name__ for reading in read_by(Physics.JOULE_HEATING)]
 
-    assert read == ["FixedTemperature", "HeatFlux", "Convection", "HeatSource", "FixedPotential", "JouleHeat"]
+    assert read == ["FixedTemperature", "HeatFlux", "Convection", "HeatSource", "FixedVoltage", "JouleHeat"]
     assert blocks(Physics.JOULE_HEATING) == [SifSection.BOUNDARY_CONDITION, SifSection.BODY_FORCE]
 
 

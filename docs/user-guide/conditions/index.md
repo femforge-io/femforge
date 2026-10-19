@@ -112,7 +112,7 @@ A coupled physics also reads the conditions of the physics it couples, so the sa
 print(reads_table())
 ```
 
-`COIL_MAGNETOSTATICS` leaves `FixedPotential` inert: it sources the coil from `CoilDrive` and `CoilTerminal`.
+`COIL_MAGNETOSTATICS` leaves `FixedVoltage` inert: it sources the coil from `CoilDrive` and `CoilTerminal`.
 
 ## Checks before the solve
 

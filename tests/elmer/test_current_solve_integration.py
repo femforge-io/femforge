@@ -9,7 +9,7 @@ import pytest
 
 from femforge.elmer.runtime.native import NativeElmer
 from femforge.elmer.runtime.solve import solve_case
-from femforge.physical.conditions import ConditionUnion, FixedPotential
+from femforge.physical.conditions import ConditionUnion, FixedVoltage
 from femforge.physical.domain import EntityTag
 from femforge.materials.copper import Copper
 from femforge.materials.properties import MaterialProperties
@@ -33,7 +33,7 @@ _PAD = 0.02
 _SIGMA = 5.96e7  # the copper 20 degC reference; the material is pinned to it below so the analytic check is exact
 _VOLTS = 1e-3
 
-# FixedPotential clamps each pad's whole surface (equipotential electrode), so only the bar contributes resistance.
+# FixedVoltage clamps each pad's whole surface (equipotential electrode), so only the bar contributes resistance.
 R_ANALYTIC = _L / (_SIGMA * _A_SIDE * _A_SIDE)  # rho * L / A ~ 1.678e-6 ohm
 
 
@@ -47,8 +47,8 @@ def _static_copper() -> MaterialProperties:
 
 
 def _regions() -> list[_Region]:
-    entry: list[ConditionUnion] = [FixedPotential(value=_VOLTS * U.V)]
-    exit_: list[ConditionUnion] = [FixedPotential(value=0 * U.V)]
+    entry: list[ConditionUnion] = [FixedVoltage(value=_VOLTS * U.V)]
+    exit_: list[ConditionUnion] = [FixedVoltage(value=0 * U.V)]
     copper = _static_copper()
     return [
         _Region("PAD_A", copper, (-_PAD, 0, 0, _PAD, _A_SIDE, _A_SIDE), entry),

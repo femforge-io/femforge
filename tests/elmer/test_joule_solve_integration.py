@@ -8,7 +8,7 @@ import pytest
 
 from femforge.materials.copper import Copper
 from femforge.materials.properties import MaterialProperties
-from femforge.physical.conditions import ConditionUnion, Convection, FixedPotential, JouleHeat
+from femforge.physical.conditions import ConditionUnion, Convection, FixedVoltage, JouleHeat
 from femforge.physical.units import U
 from femforge.run.parse import _parse_scalars
 from tests.elmer.test_current_solve_integration import _A_SIDE, _L, _PAD, R_ANALYTIC, _Region, _solve_current, _static_copper
@@ -24,8 +24,8 @@ _ALPHA = 3.93e-3
 
 
 def _regions(material: MaterialProperties) -> list[_Region]:
-    entry: list[ConditionUnion] = [FixedPotential(value=_VOLTS * U.V)]
-    exit_: list[ConditionUnion] = [FixedPotential(value=0 * U.V)]
+    entry: list[ConditionUnion] = [FixedVoltage(value=_VOLTS * U.V)]
+    exit_: list[ConditionUnion] = [FixedVoltage(value=0 * U.V)]
     bar: list[ConditionUnion] = [JouleHeat(), Convection(coefficient=_H * U.W / (U.m**2 * U.K), ext_temperature=_T_AMB * U.K)]
     return [
         _Region("PAD_A", material, (-_PAD, 0, 0, _PAD, _A_SIDE, _A_SIDE), entry),

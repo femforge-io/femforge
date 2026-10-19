@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal, Protocol
 
 from femforge.config import SimulationConfig
-from femforge.physical.conditions import FixedPotential
+from femforge.physical.conditions import FixedVoltage
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import Quantity, U, quantity
 from femforge.run.convergence import EvaluateFn, QuantityOf
@@ -87,9 +87,9 @@ def _classify_failed(result: Result, target_current: float) -> None:
         )
 
 
-def scale_fixed_potentials(config: SimulationConfig, scale: float) -> SimulationConfig:
+def scale_fixed_voltages(config: SimulationConfig, scale: float) -> SimulationConfig:
     """
-    A copy of ``config`` with every [`FixedPotential`][femforge.physical.conditions.FixedPotential] value multiplied by ``scale``.
+    A copy of ``config`` with every [`FixedVoltage`][femforge.physical.conditions.FixedVoltage] value multiplied by ``scale``.
 
     Never mutates ``config``; grounded exits stay at 0 V, so every phase's ΔV scales by the same factor.
     """
@@ -100,15 +100,15 @@ def scale_fixed_potentials(config: SimulationConfig, scale: float) -> Simulation
     tags: list[EntityTag] = []
 
     for tag in config.domain.tags:
-        if not any(isinstance(condition, FixedPotential) for condition in tag.conditions):
+        if not any(isinstance(condition, FixedVoltage) for condition in tag.conditions):
             tags.append(tag)
             continue
         found = True
-        conditions = [condition.model_copy(update={"value": condition.value * scale}) if isinstance(condition, FixedPotential) else condition for condition in tag.conditions]
+        conditions = [condition.model_copy(update={"value": condition.value * scale}) if isinstance(condition, FixedVoltage) else condition for condition in tag.conditions]
         tags.append(tag.model_copy(update={"conditions": conditions}))
 
     if not found:
-        raise ValueError("config carries no FixedPotential condition; there is no electrical drive to scale.")
+        raise ValueError("config carries no FixedVoltage condition; there is no electrical drive to scale.")
 
     domain = config.domain.model_copy(update={"tags": tags})
     return config.model_copy(update={"domain": domain})
@@ -253,7 +253,7 @@ class VoltageDrive:
 
         while True:
             evaluations += 1
-            scaled_config: SimulationConfig = scale_fixed_potentials(base_config, scale)
+            scaled_config: SimulationConfig = scale_fixed_voltages(base_config, scale)
             result: Result = evaluate(scaled_config)
 
             if result.status is not RunStatus.OK:

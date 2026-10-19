@@ -42,4 +42,4 @@ print(block_table(Physics.COIL_MAGNETOSTATICS, SifSection.COMPONENT))
 print(condition_details(CoilDrive))
 ```
 
-Bodies that share one `CoilDrive` instance form one coil. Reverse a coil by swapping its terminal roles, and keep `current` positive. Without a `CoilDrive`, the sif writer warns that the coil has no source. `COIL_MAGNETOSTATICS` leaves `FixedPotential` inert.
+Bodies that share one `CoilDrive` instance form one coil. Reverse a coil by swapping its terminal roles, and keep `current` positive. Without a `CoilDrive`, the sif writer warns that the coil has no source. `COIL_MAGNETOSTATICS` leaves `FixedVoltage` inert.

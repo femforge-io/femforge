@@ -2,6 +2,7 @@
 
 import pytest
 
+from femforge.common.utils import title
 from femforge.elmer.physics import Physics
 from femforge.elmer.variables import ElmerVariable, elemental, variable_of, variable_unit
 
@@ -55,3 +56,16 @@ def test_flows_draw_field_lines_by_default() -> None:
         ElmerVariable.VOLUME_CURRENT,
         ElmerVariable.ELECTRIC_FIELD,
     }
+
+
+@pytest.mark.parametrize("member", list(ElmerVariable))
+def test_every_variable_names_itself_for_a_viewer(member: ElmerVariable) -> None:
+    expected: str = "Voltage Potential" if member is ElmerVariable.POTENTIAL else title(member.value)
+
+    assert member.display_name == expected
+
+
+def test_display_names_split_the_elmer_spellings() -> None:
+    assert ElmerVariable.POTENTIAL.display_name == "Voltage Potential"
+    assert ElmerVariable.VON_MISES.display_name == "Von Mises"
+    assert ElmerVariable.MAGNETIC_FLUX_DENSITY.display_name == "Magnetic Flux Density"
