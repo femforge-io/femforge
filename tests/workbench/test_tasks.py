@@ -31,6 +31,7 @@ from femforge_workbench.tasks import (
     observe,
     ordinal,
     plan_of,
+    shown_label,
 )
 
 
@@ -158,6 +159,7 @@ def test_a_plan_labels_named_functions_and_refuses_duplicate_empty_or_unnamed_en
     plan = plan_of([Task("Export", solve_all), solve_all])
 
     assert [task.label for task in plan] == ["Export", "Solve All"]
+    assert [shown_label(label) for label in ("Gap 0.5 mm", "shell comparison")] == ["Gap 0.5 mm", "Shell Comparison"], "a label with a capital is shown as written"
     with pytest.raises(ValueError, match="'Export'"):
         _ = plan_of([Task("Export", solve_all), Task("Export", solve_all)])
     with pytest.raises(ValueError, match="no task"):

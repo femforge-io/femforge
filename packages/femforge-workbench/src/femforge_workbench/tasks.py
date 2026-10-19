@@ -62,6 +62,14 @@ type TaskFactory = Callable[[], Sequence[TaskEntry]]
 """A module-level function listing a script's tasks; called again after every save and in every task's child process."""
 
 
+def shown_label(label: str) -> str:
+    """A label as the strip shows it: as written when it has a capital, else in Title Case."""
+    if any(char.isupper() for char in label):
+        return label
+
+    return title(label)
+
+
 def plan_of(tasks: object) -> tuple[Task, ...]:
     """The tasks a factory listed, each named function labelled by its name; TypeError for anything but a list of tasks, ValueError for an empty plan or a label used twice."""
     if isinstance(tasks, str) or not isinstance(tasks, Sequence):
@@ -724,7 +732,7 @@ class TaskBoard:
 
         rows: dict[str, TaskRow] = {}
         for task in self.plan:
-            row = self.rows.get(task.label) or TaskRow(label=task.label, title=title(task.label))
+            row = self.rows.get(task.label) or TaskRow(label=task.label, title=shown_label(task.label))
             if task.label == running:
                 rows[task.label] = row.model_copy(update={"again": True, "removed": False})
             else:
@@ -883,7 +891,13 @@ class TaskBoard:
         self.settle(running, code, outcome, tail)
 
     def relay(self, running: Running, line: str, tail: deque[str]) -> None:
-        """Moves the row by one output line of its child and logs the line here, for the terminal only: the child stored its own records."""
+        """Moves the row by one output line of its child and logs the line here, for the terminal only: the child stored its own records.
+
+        Args:
+            running: The task whose child printed the line.
+            line: The output line.
+            tail: The child's last plain lines, which a failure without an outcome shows.
+        """
         text = line.rstrip("\r\n")
         if not text.strip():
             return
@@ -906,7 +920,14 @@ class TaskBoard:
         emit_relayed(record, **bound)
 
     def settle(self, running: Running, code: int, outcome: TaskDone | TaskFailed | None, tail: Sequence[str]) -> None:
-        """Ends the row by how the child exited: stopped, done, reused, failed with its error, or failed without an outcome."""
+        """Ends the row by how the child exited: stopped, done, reused, failed with its error, or failed without an outcome.
+
+        Args:
+            running: The task whose child exited.
+            code: The child's exit code.
+            outcome: The outcome file the child wrote; None when it wrote none.
+            tail: The child's last plain lines.
+        """
         label = running.label
         row = self.rows.get(label)
         if row is None:
@@ -929,7 +950,14 @@ class TaskBoard:
             self.rows[label] = self.rows[label].model_copy(update={"elapsed": time.monotonic() - running.started})
 
     def end(self, label: str, *, phase: TaskPhase, error: str | None = None, traceback: str | None = None) -> None:
-        """Sets a row's final phase, follows its newer run into the viewer, and drops a row a save removed."""
+        """Sets a row's final phase, follows its newer run into the viewer, and drops a row a save removed.
+
+        Args:
+            label: The task whose run ended.
+            phase: How it ended.
+            error: The failure's one-line summary.
+            traceback: The failure's traceback or last output lines.
+        """
         row = self.rows.get(label)
         if row is None:
             return
