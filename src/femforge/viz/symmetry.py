@@ -411,6 +411,55 @@ def swept(points: FloatArray, polygons: Polygons, basis: Basis, *, segments: int
     )
 
 
+def swept_lines(points: FloatArray, lines: IntArray, basis: Basis, *, segments: int = 72, sweep: float = 360.0) -> Surface:
+    """The quads a section's line cells sweep ``sweep`` degrees about the axis, ``segments`` steps per turn, uncapped.
+
+    Args:
+        points: The ``(N, 3)`` section points, X = r and Y = z.
+        lines: The ``(E, 2)`` point ids of each line cell.
+        basis: Where the section sits in the authored frame.
+        segments: The ring count per full turn.
+        sweep: The swept angle in degrees, in ``(0, 360]``.
+    """
+    if segments < 3:
+        raise ValueError(f"A revolve needs at least 3 segments per turn, not {segments}.")
+
+    if not 0.0 < sweep <= 360.0:
+        raise ValueError(f"The sweep must lie in (0, 360] degrees, not {sweep:g}.")
+
+    if not len(lines):
+        return Surface.empty(basis)
+
+    full: bool = sweep >= 360.0
+    steps: int = segments if full else max(1, round(segments * sweep / 360.0))
+    rings: int = steps if full else steps + 1
+    step: float = math.radians(sweep) / steps
+    angles: FloatArray = step * np.arange(rings, dtype=np.float64)
+
+    used: IntArray = np.unique(lines)
+    per_ring: int = len(used)
+    slot: IntArray = np.zeros(len(points), dtype=np.int64)
+    slot[used] = np.arange(per_ring)
+
+    segment: IntArray = np.arange(steps, dtype=np.int64)
+    following: IntArray = (segment + 1) % rings
+    start: IntArray = slot[lines[:, 0]][:, np.newaxis]
+    end: IntArray = slot[lines[:, 1]][:, np.newaxis]
+    quads: IntArray = np.stack([start + per_ring * segment, start + per_ring * following, end + per_ring * following, end + per_ring * segment], axis=2).reshape(-1, 4)
+    sizes: IntArray = np.full(len(quads), 4, dtype=np.int64)
+
+    return Surface(
+        points=basis.place(np.tile(points[used], (rings, 1)), np.repeat(angles, per_ring)),
+        faces=np.column_stack([sizes, quads]).reshape(-1),
+        corners=sizes,
+        point_source=np.tile(used, rings),
+        point_theta=np.repeat(angles, per_ring),
+        cell_source=np.repeat(np.arange(len(lines), dtype=np.int64), steps),
+        cell_theta=np.tile(angles[segment] + step / 2.0, len(lines)),
+        basis=basis,
+    )
+
+
 def _section(dataset: pv.DataSet) -> tuple[pv.UnstructuredGrid, FloatArray, Polygons]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
     """A dataset as an unstructured grid, with its points and its 2D cells."""
     import pyvista as pv

@@ -10,7 +10,7 @@ import pytest
 
 from femforge.frames import Axis, Axisymmetric
 from femforge.common.vector import Direction, Vec3
-from femforge.viz.symmetry import Basis, Block, Expansion, Polygons, Surface, VtkCell, mirrored, swept
+from femforge.viz.symmetry import Basis, Block, Expansion, Polygons, Surface, VtkCell, mirrored, swept, swept_lines
 
 
 if TYPE_CHECKING:
@@ -269,6 +269,35 @@ def test_swept_cells_carry_their_owner_and_rotated_vectors() -> None:
 def test_swept_rejects_too_few_segments_and_a_bad_sweep(segments: int, sweep: float) -> None:
     with pytest.raises(ValueError, match="segments|sweep"):
         _ = swept(SQUARE, _polygons([[0, 1, 2, 3]]), Basis.DEFAULT, segments=segments, sweep=sweep)
+
+
+def test_one_line_swept_a_full_turn_makes_one_closed_ring_of_quads() -> None:
+    points = np.array([[1.0, 0.0, 0.0], [1.0, 2.0, 0.0]])
+    surface = swept_lines(points, np.array([[0, 1]]), Basis.DEFAULT)
+
+    assert len(surface.corners) == 72 and set(cast("list[int]", surface.corners.tolist())) == {4}
+    assert len(surface.points) == 2 * 72, "a full turn shares its first ring"
+    assert np.allclose(np.hypot(surface.points[:, 0], surface.points[:, 1]), 1.0)
+    assert surface.cell_source.tolist() == [0] * 72
+
+
+def test_a_partial_line_sweep_keeps_one_more_ring_and_no_caps() -> None:
+    points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0]])
+    surface = swept_lines(points, np.array([[0, 1], [1, 2]]), Basis.DEFAULT, segments=8, sweep=90.0)
+
+    assert len(surface.corners) == 2 * 2
+    assert len(surface.points) == 3 * 3
+    assert surface.cell_theta.tolist() == pytest.approx([math.pi / 8, 3 * math.pi / 8] * 2)
+
+
+def test_no_lines_sweep_to_nothing_and_a_bad_sweep_raises() -> None:
+    assert not swept_lines(SQUARE, np.zeros((0, 2), dtype=np.int64), Basis.DEFAULT).corners.size
+
+    with pytest.raises(ValueError, match="segments"):
+        _ = swept_lines(SQUARE, np.array([[0, 1]]), Basis.DEFAULT, segments=2)
+
+    with pytest.raises(ValueError, match="sweep"):
+        _ = swept_lines(SQUARE, np.array([[0, 1]]), Basis.DEFAULT, sweep=0.0)
 
 
 # --- mirror / revolve (gated: needs pyvista) -------------------------------------------
