@@ -726,7 +726,13 @@ class Workbench(TrameApp):
         self.board.cancel(label)
 
     def count_down(self, label: str, armed: int, left: int) -> None:
-        """Shows the seconds `left` on an armed Cancel the user left alone, and reverts it when none is left."""
+        """Shows the seconds left on an armed Cancel the user left alone, and reverts it when none is left.
+
+        Args:
+            label: The task whose Cancel is armed.
+            armed: The arming this countdown belongs to; a later arming stops it.
+            left: The seconds to show.
+        """
         if armed != self.armed or self.state[StateVar.TASK_CONFIRM] != label:
             return
 
