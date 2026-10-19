@@ -24,6 +24,7 @@ from .frames import (
     Axisymmetric as Axisymmetric,
     Cartesian2D as Cartesian2D,
     Frame as Frame,
+    FrameFact as FrameFact,
     FrameGeometryError as FrameGeometryError,
     PlaneState as PlaneState,
     Solid as Solid,
@@ -47,6 +48,7 @@ from .physical.conditions import (
     HeatSource as HeatSource,
     JouleHeat as JouleHeat,
     Magnetization as Magnetization,
+    SummaryPart as SummaryPart,
     SurfaceForce as SurfaceForce,
 )
 from .physical.domain import DomainConfig as DomainConfig, EntityTag as EntityTag

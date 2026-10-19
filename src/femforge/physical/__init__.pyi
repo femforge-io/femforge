@@ -16,6 +16,7 @@ from .conditions import (
     HeatSource as HeatSource,
     JouleHeat as JouleHeat,
     Magnetization as Magnetization,
+    SummaryPart as SummaryPart,
     SurfaceForce as SurfaceForce,
     shipped_conditions as shipped_conditions,
 )

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import math
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, cast, get_args
@@ -11,11 +13,14 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, cast
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
+from femforge.common.introspect import FIELD_DOCSTRING
+from femforge.common.utils import title
 from femforge.common.vector import DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
 from femforge.elmer.sections import SifSection
 from femforge.elmer.variables import ElmerVariable
 from femforge.frames.base import ALIGNMENT_TOLERANCE
+from femforge.physical.readout import along, readout, vector_readout
 from femforge.physical.units import (
     Current,
     CurrentDensity as CurrentDensityQuantity,
@@ -42,6 +47,9 @@ __all__ = [
     "ConditionTarget",
     "ConditionGlyph",
     "BoundarySite",
+    "Component",
+    "SummaryPart",
+    "SummaryLine",
     "Condition",
     "Magnetization",
     "CurrentDensity",
@@ -149,6 +157,54 @@ class BoundarySite:
     """The solve frame the group's model maps onto."""
 
 
+type Component = Literal["x", "y", "z"]
+"""An authored axis, named as the ``FixedDisplacement`` field that holds it."""
+
+
+@dataclass(frozen=True)
+class SummaryPart:
+    """One value of a condition as the Setup tab reads it, with the glyph or word read before it."""
+
+    value: str
+    """The value as read, such as ``100 N Along (1, 0, 0)``."""
+
+    label: str = ""
+    """The glyph or word read before the value, such as ``h`` or ``Traction``; empty for none."""
+
+    component: Component | None = None
+    """The authored axis the part reads, so the Setup tab can mark an axis the frame drops; None for any other part."""
+
+
+type SummaryLine = tuple[SummaryPart, ...]
+"""One line of a condition's summary, its parts in reading order."""
+
+
+def _glyph_of(field: FieldInfo) -> str:
+    """The glyph of a field's docstring without its subscript, such as ``T`` for ``T_amb``; empty when the docstring names none."""
+    match: re.Match[str] | None = FIELD_DOCSTRING.match(field.description or "")
+    symbol: str | None = match.group("symbol") if match is not None else None
+
+    return symbol.split("_")[0] if symbol else ""
+
+
+def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[float]:
+    """The numeric values of the ``stem 1`` to ``stem 3`` keywords in ``emitted``, in index order, skipping any that are absent or not numbers."""
+    if emitted is None:
+        return []
+
+    found: list[float] = []
+
+    for index in range(1, 4):
+        value: float | str | None = emitted.get(f"{stem} {index}")
+
+        try:
+            found.append(float(value))  # pyright: ignore[reportArgumentType]  # a None or non-numeric value raises, which skips it
+        except (TypeError, ValueError):
+            continue
+
+    return found
+
+
 class Condition(BaseModel):
     """A source or constraint of one physics on the bodies or boundaries a tag selects; each subclass is one shipped condition."""
 
@@ -201,6 +257,25 @@ class Condition(BaseModel):
     def dropped_fields(self, frame: Frame) -> tuple[str, ...]:
         """The authored fields ``frame`` has no solve coordinate for; the default drops none."""
         return ()
+
+    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
+        """How the Setup tab reads this condition: one line of its sif-keyword fields, each after its glyph when there are several; the default ignores ``emitted``.
+
+        Args:
+            emitted: The keywords the condition's sif block received, by name.
+        """
+        values: list[tuple[FieldInfo, Quantity]] = []
+
+        for name, field in type(self).model_fields.items():
+            value: Quantity | None = getattr(self, name) if _elmer_keyword(field) is not None else None
+
+            if value is not None:
+                values.append((field, value))
+
+        labelled: bool = len(values) > 1
+        parts: SummaryLine = tuple(SummaryPart(readout(value), label=_glyph_of(field) if labelled else "") for field, value in values)
+
+        return (parts,)
 
 
 class Magnetization(Condition):
@@ -255,6 +330,25 @@ class Magnetization(Condition):
         components: tuple[float, ...] = frame.solve_vector(self.direction)
 
         return tuple(enumerate(components, start=1))
+
+    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
+        """The authored direction, then the remanence ``Br = μ₀·|M|`` of the emitted ``Magnetization i`` components.
+
+        Args:
+            emitted: The keywords the magnet's Material block received, by name.
+        """
+        if self.direction is None:
+            return ((SummaryPart("No Direction"),),)
+
+        direction = SummaryPart(f"Along {along(self.direction)}")
+        components: list[float] = _numbers(emitted, "Magnetization")
+
+        if not components:
+            return ((direction,),)
+
+        remanence: Quantity = (quantity(math.hypot(*components), "A/m") * U.mu_0).to(U.T)
+
+        return ((direction, SummaryPart(readout(remanence), label="Br")),)
 
 
 class CurrentDensity(Condition):
@@ -503,6 +597,14 @@ class CoilTerminal(Condition):
         """The ``Coil Start`` or ``Coil End`` flag for this ``role``."""
         return {"Coil Start" if self.role == "start" else "Coil End": "Logical True"}
 
+    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
+        """The ``role``, ``Start`` or ``End``; ``emitted`` is ignored.
+
+        Args:
+            emitted: The keywords the electrode's sif block received, by name.
+        """
+        return ((SummaryPart(title(self.role)),),)
+
 
 class CalculateMagneticForce(Condition):
     """Lumps the magnetic force, and optionally the torque, over the bodies its tag matches into one Elmer ``Component``."""
@@ -554,6 +656,14 @@ class CalculateMagneticForce(Condition):
 
         if torque and not frame.lumps_torque:
             raise ValueError(f"CalculateMagneticForce torque has no form in the {frame.label} frame; drop calculate_magnetic_torque, torque_origin and torque_axis.")
+
+    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
+        """That the condition is an output the scene draws no glyph for; ``emitted`` is ignored.
+
+        Args:
+            emitted: The keywords the force Component received, by name.
+        """
+        return ((SummaryPart("(Output, No Glyph)"),),)
 
 
 class FixedDisplacement(Condition):
@@ -667,6 +777,23 @@ class FixedDisplacement(Condition):
 
         return tuple(dropped)
 
+    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
+        """``X 0 · Y 0 · Z 0``: each authored axis at its prescribed displacement, or ``Free``; ``emitted`` is ignored.
+
+        Args:
+            emitted: The keywords the boundary's sif block received, by name.
+        """
+
+        def part(component: Component, value: Length | None) -> SummaryPart:
+            if value is None:
+                return SummaryPart("Free", label=component.upper(), component=component)
+
+            text: str = "0" if value.m_as("m") == 0.0 else readout(value)
+
+            return SummaryPart(text, label=component.upper(), component=component)
+
+        return ((part("x", self.x), part("y", self.y), part("z", self.z)),)
+
 
 class SurfaceForce(Condition):
     """A total force spread uniformly over a named face as a traction.
@@ -723,6 +850,22 @@ class SurfaceForce(Condition):
         components: tuple[float, ...] = self._solve_force(frame)
 
         return tuple(enumerate(components, start=1))
+
+    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
+        """The authored total and its direction, then the traction the emitted ``Force i`` components hold on the face.
+
+        Args:
+            emitted: The keywords the face's sif block received, by name.
+        """
+        total: SummaryLine = (SummaryPart(vector_readout(self.force)),)
+        components: list[float] = _numbers(emitted, "Force")
+
+        if not components:
+            return (total,)
+
+        traction: Quantity = quantity(math.hypot(*components), "Pa")
+
+        return (total, (SummaryPart(readout(traction), label="Traction"),))
 
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.

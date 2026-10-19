@@ -12,7 +12,9 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import Axis, Frame, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
+from femforge.frames.base import Axis, Frame, FrameFact, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
+from femforge.physical.readout import readout
+from femforge.physical.units import quantity
 
 
 if TYPE_CHECKING:
@@ -83,6 +85,17 @@ class Axisymmetric(Frame):
     def revolves(self) -> bool:
         """True: the section stands for the model revolved about ``axis``."""
         return True
+
+    def face_measure(self, length: float, centroid: Vec3) -> FrameFact:
+        """The surface a section line of ``length`` metres sweeps about the axis, ``2π·r̄·L`` with ``r̄`` the radius of ``centroid``.
+
+        Args:
+            length: `L` `[m]`: The group's length in the solve plane.
+            centroid: `[m]`: The group's centroid in the solve frame, X radial.
+        """
+        area = quantity(math.tau * centroid.x * length, "m**2")
+
+        return FrameFact(label="Revolved Area", value=f"2π·r̄·L = {readout(area)}")
 
     def measure_geometry(self, compound: TaggedCompound) -> GeometryCheck:
         """How far every body and named face of ``compound`` changes when turned about ``axis``."""

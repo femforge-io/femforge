@@ -5,7 +5,7 @@ from typing import Annotated, cast, get_args
 from pydantic import Field, ValidationError
 
 from femforge.frames.axisymmetric import Axisymmetric
-from femforge.frames.base import Axis, BodyMismatch, Frame, FrameCheck, FrameGeometryError, GeometryCheck, SolvePlane
+from femforge.frames.base import Axis, BodyMismatch, Frame, FrameCheck, FrameFact, FrameGeometryError, GeometryCheck, SolvePlane
 from femforge.frames.cartesian_2d import Cartesian2D, PlaneState
 from femforge.frames.solid import Solid
 
@@ -42,6 +42,7 @@ __all__ = [
     "Cartesian2D",
     "Frame",
     "FrameCheck",
+    "FrameFact",
     "FrameGeometryError",
     "FrameUnion",
     "GeometryCheck",

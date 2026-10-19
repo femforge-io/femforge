@@ -12,8 +12,9 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import ALIGNMENT_TOLERANCE, Axis, Frame, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
-from femforge.physical.units import Length
+from femforge.frames.base import ALIGNMENT_TOLERANCE, Axis, Frame, FrameFact, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
+from femforge.physical.readout import readout
+from femforge.physical.units import Length, quantity
 
 
 if TYPE_CHECKING:
@@ -115,6 +116,23 @@ class Cartesian2D(Frame):
     def thickness_m(self) -> float:
         """`t` `[m]`: The thickness in metres, the factor between a per-metre result and its whole-model total."""
         return self.thickness.m_as("m")
+
+    def facts(self) -> tuple[FrameFact, ...]:
+        """The plane's origin and axes, the thickness, then the plane state."""
+        *placed, state = super().facts()
+
+        return (*placed, FrameFact(label="Thickness", value=readout(self.thickness)), state)
+
+    def face_measure(self, length: float, centroid: Vec3) -> FrameFact:
+        """The face a section line of ``length`` metres stands for: its length times the thickness; ``centroid`` is ignored.
+
+        Args:
+            length: `L` `[m]`: The group's length in the solve plane.
+            centroid: `[m]`: The group's centroid in the solve frame.
+        """
+        area = quantity(length * self.thickness_m, "m**2")
+
+        return FrameFact(label="Face Area", value=f"{readout(area)} at {readout(self.thickness)} Thickness")
 
     def measure_geometry(self, compound: TaggedCompound) -> GeometryCheck:
         """How far every body and named face of ``compound`` is from a prism through ``thickness`` along the normal."""
