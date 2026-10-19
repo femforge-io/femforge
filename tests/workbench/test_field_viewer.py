@@ -893,7 +893,7 @@ def test_a_display_that_names_a_field_opens_each_run_on_it(tmp_path: Path, monke
     assert asyncio.run(run()) == [("joule heating", False, True), ("joule heating", False, True)]
 
 
-def test_the_ui_store_never_holds_the_field_display(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_ui_store_never_holds_the_field_display_or_the_glyph_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
         app = _shell("stored", tmp_path, monkeypatch)
         controller = _controller(app)
@@ -906,6 +906,10 @@ def test_the_ui_store_never_holds_the_field_display(tmp_path: Path, monkeypatch:
             app.state[FieldVar.FIELD] = "joule heating"
             app.state[FieldVar.MODE] = str(DisplayMode.ABSVALUE)
             app.state[FieldVar.OPACITY_MAPPING] = False
+            app.state[FieldVar.SETUP_SHOWN] = True
+            app.state[FieldVar.GLYPH_KINDS_OFF] = ["thermal"]
+            app.state[FieldVar.SELECTED_ENTITY] = "body:MAGNET"
+            app.state[FieldVar.AUTHORED_GHOST] = True
 
         await controller.settle()
         await app.server.stop()
@@ -2046,7 +2050,7 @@ def _arrow_bounds(viewer: FieldViewerPanel) -> tuple[float, ...]:
     return tuple(actor.GetBounds())
 
 
-def test_the_glyph_keys_default_to_a_hidden_layer_and_none_persists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_glyph_keys_default_to_a_hidden_layer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _shell("glyph-defaults", tmp_path, monkeypatch)
     controller = _controller(app)
 

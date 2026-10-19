@@ -91,7 +91,7 @@ TICK_SPACING: float = 0.02
 TICK_LENGTH: float = 0.012
 """`[-]`: The length of a clamp tick, as a share of the scene diagonal."""
 
-PIN_COUNT = 16
+PIN_COUNT: int = 16
 """The most support pins a held 3D face draws."""
 
 PIN_LENGTH: float = 0.03
@@ -127,10 +127,10 @@ PLANE_OPACITY: float = 0.1
 REVOLVE_STEP: float = 45.0
 """`[deg]`: The turn between the repeated magnet arrows of a revolved display."""
 
-REVOLVE_COPIES = 8
+REVOLVE_COPIES: int = 8
 """The most magnet arrows a revolved display repeats."""
 
-HULL_SEGMENTS = 24
+HULL_SEGMENTS: int = 24
 """The steps per turn of the revolved outline an axisymmetric ghost is checked against."""
 
 MAGNET_SHARE: float = 0.5
@@ -145,8 +145,8 @@ TRIAD_SHARE: float = 0.12
 DASH_SHARE: float = 0.01
 """`[-]`: The length of a dash of the prism hull, as a share of the scene diagonal."""
 
-LABEL_FONT_PX = 14
-"""The label font size in CSS pixels, scaled by the window pixels per CSS pixel."""
+LABEL_FONT_PX: float = 14.0
+"""`[px]`: The label font size in CSS pixels, scaled by the window pixels per CSS pixel."""
 
 TINT_LINE_PX: float = 4.0
 """`[px]`: The width of a 2D face tint in CSS pixels."""
@@ -166,7 +166,7 @@ OUTLINE_LINE_PX: float = 2.0
 LABEL_OPACITY: float = 0.8
 """`[-]`: The opacity of a label chip's dark box."""
 
-CIRCLE_SIDES = 24
+CIRCLE_SIDES: int = 24
 """The sides of the polygon a roller or a current marker is drawn as."""
 
 GLYPH_FILL = "#e6e6e6"
@@ -362,7 +362,8 @@ def glyph_label(condition: ConditionUnion, *, revolved: bool, dropped: Sequence[
 
             return f"{text} Total" if revolved else text
         case FixedDisplacement():
-            axes: tuple[tuple[str, Quantity | None], ...] = (("x", condition.x), ("y", condition.y), ("z", condition.z))
+            authored: tuple[tuple[str, Quantity | None], ...] = (("x", condition.x), ("y", condition.y), ("z", condition.z))
+            axes: list[tuple[str, Quantity | None]] = [(name, value) for name, value in authored if name not in dropped]
             moved: list[float] = [value.m_as("m") for _, value in axes if value is not None]
 
             if any(moved):
@@ -371,7 +372,7 @@ def glyph_label(condition: ConditionUnion, *, revolved: bool, dropped: Sequence[
             if all(value is not None for _, value in axes):
                 return None
 
-            held: list[str] = [name.upper() for name, value in axes if value is not None and name not in dropped]
+            held: list[str] = [name.upper() for name, value in axes if value is not None]
 
             return f"{', '.join(held)} Fixed" if held else None
         case CurrentDensity():
@@ -770,8 +771,10 @@ class GlyphDraw:
 
 
 def _segments(dataset: pv.DataSet) -> FloatArray:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-    """The ``(m, 2, 3)`` edges of ``dataset``'s cells."""
-    edges = cast("pv.PolyData", dataset.extract_all_edges())
+    """The ``(m, 2, 3)`` straight edges of ``dataset``'s lines and surface cells, a quadratic edge split at its mid node."""
+    # Edge extraction yields nothing for 1D quadratic cells; the surface filter first turns them into polylines.
+    surface = cast("pv.PolyData", dataset.extract_surface(algorithm=None))
+    edges = cast("pv.PolyData", surface.extract_all_edges())
     lines: IntArray = np.asarray(edges.lines, dtype=np.int64).reshape(-1, 3)[:, 1:]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista types the cell array loosely
 
     return np.asarray(edges.points, dtype=np.float64)[lines]
@@ -1146,7 +1149,8 @@ class GlyphLayer:
 
             return cast("Bounds", (low[0], high[0], low[1], high[1], low[2], high[2]))
 
-        entity: Body | Boundary | None = next((candidate for candidate in (*self.bodies, *self.boundaries) if candidate.name == ref.name), None)
+        candidates: Sequence[Body | Boundary] = self.bodies if ref.kind is EntityKind.BODY else self.boundaries
+        entity: Body | Boundary | None = next((candidate for candidate in candidates if candidate.name == ref.name), None)
 
         if entity is None or entity.bbox is None:
             return None
@@ -1179,7 +1183,8 @@ class GlyphLayer:
         if view is None:
             return
 
-        draws: list[GlyphDraw] = [*self.glyph_draws(host, view), *self.decorations(host, view)]
+        built: list[GlyphDraw] = [*self.glyph_draws(host, view), *self.decorations(host, view)]
+        draws: list[GlyphDraw] = [draw for draw in built if draw.mesh.n_points]
         labelled: list[GlyphDraw] = [draw for draw in draws if draw.labels]
         merged: list[GlyphDraw] = [draw for draw in draws if not draw.labels]
 
@@ -1265,13 +1270,16 @@ class GlyphLayer:
         if ref is not None and ref.kind is EntityKind.BODY and ref.name in host.blocks.keys():
             block = cast("pv.DataSet", host.blocks[ref.name])
             edges: pv.PolyData | None = feature_outline(pv.MultiBlock([block]))
+            raise_by: FloatArray = 2.0 * lift if placement.flat and not placement.revolved else np.zeros(3)
 
             if edges is not None:
+                edges.points = np.asarray(edges.points, dtype=np.float64) + raise_by
                 draws.append(GlyphDraw(GlyphActor.SELECTION, edges, color=view.accent, line_width=SILHOUETTE_LINE_PX * view.scale))
 
             if ref.name not in host.spec.hidden_bodies:
                 fill: pv.PolyData = cast("pv.PolyData", block.extract_surface(algorithm=None))
                 fill.clear_data()
+                fill.points = np.asarray(fill.points, dtype=np.float64) + raise_by
                 draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, fill, color=view.accent, opacity=SELECTION_TINT))
         elif ref is not None and ref.kind is EntityKind.BOUNDARY:
             cells: pv.DataSet | None = self.group_cells(ref, host)
@@ -1300,8 +1308,10 @@ class GlyphLayer:
                 draws.append(GlyphDraw(GlyphActor.OUTLINE, segments_mesh(_segments(loops) + lift), color=view.ink, line_width=OUTLINE_LINE_PX * view.scale))
 
             bounds: Sequence[float] = tuple(host.section_blocks.bounds)
-            corner: FloatArray = np.array([bounds[0], bounds[2], 0.0]) - TRIAD_SHARE * diagonal * np.array([0.5, 0.5, 0.0])
             reach: float = TRIAD_SHARE * diagonal
+            gap: float = reach / 2.0
+            # Labels run right from their point, so the triad sits wholly below the section to keep its Y label off the body.
+            corner: FloatArray = np.array([bounds[0] - gap, bounds[2] - gap - reach, 0.0])
             axes: FloatArray = np.array([[corner, corner + [reach, 0.0, 0.0]], [corner, corner + [0.0, reach, 0.0]]])
             draws.append(GlyphDraw(GlyphActor.TRIAD, _polylines(np.concatenate(placement.copies(axes.reshape(-1, 3))[:1]).reshape(-1, 2, 3)), color=view.ink, line_width=OUTLINE_LINE_PX * view.scale))
 

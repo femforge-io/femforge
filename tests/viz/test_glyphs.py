@@ -35,6 +35,7 @@ from femforge.physical.conditions import (
 from femforge.physical.units import U, quantity
 from femforge.run.conditions import ConditionRecord, ConditionsFile, GroupConditions, SifKeyword, SolveComponent
 from femforge.run.entities import Body, Boundary, BoundaryKind
+from femforge.run.fields import BC_ID_OFFSET
 from femforge.viz.field_display import DisplaySpec, BodyPaint, BodyStyle
 from femforge.viz.glyphs import (
     ARROW_FLOOR,
@@ -166,6 +167,7 @@ def test_a_revolved_load_reads_as_a_total_and_a_held_face_names_only_its_solved_
     assert glyph_label(FixedDisplacement(y=None), revolved=False) == "X, Z Fixed"
     assert glyph_label(FixedDisplacement(x=None, y=None, z=None), revolved=False) is None
     assert glyph_label(FixedDisplacement(x=None, y=None), revolved=False, dropped=["z"]) is None
+    assert glyph_label(FixedDisplacement(z=None), revolved=False, dropped=["z"]) is None, "every solved axis held reads as a plain clamp"
     assert glyph_label(FixedDisplacement(x=quantity(1e-4, "m"), z=None), revolved=False) == "0.1 mm"
 
 
@@ -349,19 +351,46 @@ def test_a_layer_without_a_frame_takes_the_solid_one() -> None:
     assert GlyphLayer([]).frame.model_dim == 3
 
 
+def test_a_body_and_a_boundary_that_share_a_name_keep_their_own_measured_boxes() -> None:
+    body = Body(name="SHARED", mesh_id=1, bbox=Bounds(low=Vec3(0, 0, 0), high=Vec3(1, 1, 1)))
+    face = Boundary(name="SHARED", mesh_id=2, bodies=("SHARED",), kind=BoundaryKind.NAMED, bbox=Bounds(low=Vec3(1, 0, 0), high=Vec3(1, 1, 1)))
+    layer = GlyphLayer([], bodies=[body], boundaries=[face])
+
+    assert layer.bounds_of(EntityRef(EntityKind.BODY, "SHARED")) == (0, 1, 0, 1, 0, 1)
+    assert layer.bounds_of(EntityRef(EntityKind.BOUNDARY, "SHARED")) == (1, 1, 0, 1, 0, 1)
+
+
 # --- pyvista-gated: layers over synthetic scenes --------------------------------------
 
 
-def _flexure_grid() -> pv.UnstructuredGrid:  # pragma: no cover - helper for the pyvista-gated tests below
+def _flexure_grid(order: int = 1) -> pv.UnstructuredGrid:  # pragma: no cover - helper for the pyvista-gated tests below
     import pyvista as pv
 
     columns, rows = 4, 2
-    points = np.array([(0.1 * column / columns, 0.02 * row / rows, 0.0) for row in range(rows + 1) for column in range(columns + 1)], dtype=np.float64)
-    quads = [[row * (columns + 1) + column + offset for offset in (0, 1, columns + 2, columns + 1)] for row in range(rows) for column in range(columns)]
-    left = [[0, 5], [5, 10]]
-    right = [[4, 9], [9, 14]]
-    cells = np.concatenate([np.array([[4, *quad] for quad in quads]).ravel(), np.array([[2, *line] for line in left + right]).ravel()])
-    types = np.array([pv.CellType.QUAD] * len(quads) + [pv.CellType.LINE] * 4)
+    across, up = order * columns, order * rows
+    points = np.array([(0.1 * column / across, 0.02 * row / up, 0.0) for row in range(up + 1) for column in range(across + 1)], dtype=np.float64)
+
+    def at(column: int, row: int) -> int:
+        return row * (across + 1) + column
+
+    def quad(column: int, row: int) -> list[int]:
+        x, y = order * column, order * row
+        corners = [at(x, y), at(x + order, y), at(x + order, y + order), at(x, y + order)]
+        sides = [at(x + 1, y), at(x + 2, y + 1), at(x + 1, y + 2), at(x, y + 1)] if order == 2 else []
+
+        return corners + sides
+
+    def edge(column: int, row: int) -> list[int]:
+        y = order * row
+        ends = [at(column, y), at(column, y + order)]
+
+        return ends + [at(column, y + 1)] if order == 2 else ends
+
+    quads = [quad(column, row) for row in range(rows) for column in range(columns)]
+    edges = [edge(column, row) for column in (0, across) for row in range(rows)]
+    cells = np.concatenate([np.array([[len(cell), *cell] for cell in quads]).ravel(), np.array([[len(cell), *cell] for cell in edges]).ravel()])
+    quadratic = order == 2
+    types = np.array([pv.CellType.QUADRATIC_QUAD if quadratic else pv.CellType.QUAD] * len(quads) + [pv.CellType.QUADRATIC_EDGE if quadratic else pv.CellType.LINE] * len(edges))
     grid = pv.UnstructuredGrid(cells, types, points)
     grid.cell_data["GeometryIds"] = np.array([1] * len(quads) + [101, 101, 102, 102], dtype=np.int32)
     grid.point_data["displacement"] = np.column_stack([0.01 * points[:, 0], np.zeros(len(points)), np.zeros(len(points))])
@@ -369,11 +398,11 @@ def _flexure_grid() -> pv.UnstructuredGrid:  # pragma: no cover - helper for the
     return grid
 
 
-def _flexure_scene(frame: Cartesian2D | Axisymmetric | None = None) -> FieldScene:  # pragma: no cover - helper for the pyvista-gated tests below
+def _flexure_scene(frame: Cartesian2D | Axisymmetric | None = None, order: int = 1) -> FieldScene:  # pragma: no cover - helper for the pyvista-gated tests below
     from femforge.run.entities import Bodies, Boundaries
     from femforge.viz.field_display import FieldScene, list_fields, model_dim_of, split_by_body
 
-    grid = _flexure_grid()
+    grid = _flexure_grid(order)
     bodies = Bodies(_flexure_bodies())
     scene = FieldScene(
         grid=grid,
@@ -517,6 +546,7 @@ def test_a_selected_body_gets_an_accent_silhouette_and_fill_and_a_boundary_an_ac
 
     assert {"glyph-selection", "glyph-selection-fill"} <= set(_glyph_names(plotter))
     assert _actor(plotter, "glyph-selection").GetProperty().GetColor() == pytest.approx((1.0, 0.0, 0.0))
+    assert _bounds(plotter, GlyphActor.SELECTION_FILL)[4] == pytest.approx(2e-3 * FLEXURE_DIAGONAL), "the fill sits off the section, so the mirror never speckles it"
 
     hidden = scene.spec.model_copy(update={"hidden_bodies": ("FLEXURE",)})
     plotter = _drawn(scene, GlyphView(selected="body:FLEXURE"), hidden)
@@ -540,6 +570,37 @@ def test_the_outline_and_triad_label_the_solve_axes_by_their_authored_directions
 
     assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["X = Authored (1, 0, 0)", "Y = Authored (0, 1, 0)"]
     assert _bounds(plotter, GlyphActor.OUTLINE)[1] == pytest.approx(0.1)
+    assert _bounds(plotter, GlyphActor.TRIAD)[3] < 0.0, "the triad sits below the section, so its labels never cover the body"
+
+
+def test_a_quadratic_section_tints_its_held_face_and_highlights_a_selected_boundary() -> None:
+    pytest.importorskip("pyvista")
+
+    plotter = _drawn(_flexure_scene(order=2), GlyphView(selected="boundary:LEFTFACE"))
+    tint = _bounds(plotter, GlyphActor.LINES)
+    line = _bounds(plotter, GlyphActor.SELECTION)
+
+    assert {"glyph-lines", "glyph-marks", "glyph-selection"} <= set(_glyph_names(plotter))
+    assert tint[0] == pytest.approx(0.0) and tint[2] == pytest.approx(0.0) and tint[3] == pytest.approx(0.02), "the tint runs the whole held face"
+    assert line[1] == pytest.approx(0.0) and line[3] == pytest.approx(0.02)
+
+
+def test_a_selected_boundary_without_edges_draws_no_highlight_and_the_rest_still_draws(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _flexure_scene()
+    point = pv.PolyData(np.array([[0.0, 0.01, 0.0]]))
+
+    def lone_point(_ref: EntityRef) -> pv.DataSet:
+        return point
+
+    monkeypatch.setattr(scene, "group_cells", lone_point)
+
+    names = _glyph_names(_drawn(scene, GlyphView(selected="boundary:LEFTFACE")))
+
+    assert "glyph-selection" not in names and "glyph-lines" not in names
+    assert {"glyph-arrows", "glyph-outline"} <= set(names)
 
 
 def test_the_ghost_draws_the_authored_bodies_and_the_dashed_prism_they_are_checked_against() -> None:
@@ -640,7 +701,7 @@ class _Groups:  # pragma: no cover - helper for the pyvista-gated tests below
         return self._of(body.mesh_id)
 
     def boundary(self, boundary: Boundary) -> pv.UnstructuredGrid:
-        return self._of({"LEFTFACE": 101, "RIGHTFACE": 102}.get(boundary.name, 0))
+        return self._of(BC_ID_OFFSET + boundary.sif_index if boundary.sif_index is not None else 0)
 
 
 def test_groups_the_fields_lack_come_from_the_mesh_and_a_mesh_only_scene_draws_them_grey() -> None:
