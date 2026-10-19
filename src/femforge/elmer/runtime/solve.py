@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import IO
 
 from femforge.common.files import BundleFile
-from femforge.common.log import log
+from femforge.common.log import LogKey, log
 from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.elmer.solver_log import (
     ConvergenceRenderer,
@@ -111,7 +111,7 @@ def solve_case(
 
         line: str | None = renderer.heartbeat(progress)
         if line is not None:
-            log.bind(**asdict(progress)).info(line)
+            log.bind(**{**asdict(progress), str(LogKey.PROGRESS): progress.fraction}).info(line)
 
     def handle(line: str) -> None:
         if on_line is not None:
@@ -144,7 +144,7 @@ def solve_case(
             on_event(event)
 
         if isinstance(event, ConvergenceSample):
-            log.info(renderer.render(event))
+            log.bind(**{str(LogKey.PROGRESS): renderer.progress(event), str(LogKey.SOLVER): event.solver}).info(renderer.render(event))
         elif isinstance(event, SolverMessage):
             (log.warning if event.severity == "warning" else log.error)(event.text)
 

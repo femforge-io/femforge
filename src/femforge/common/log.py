@@ -32,13 +32,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "LOG_LEVEL_ENV",
+    "RELAYED_ROUTE",
     "TELEMETRY_ENV",
     "TELEMETRY_ROUTE",
+    "LogKey",
     "LogLevel",
     "RelayedRecord",
+    "emit_relayed",
     "get_console",
     "log",
     "log_to_stdout_json",
+    "parse_relayed",
     "relay_record",
     "run_log_context",
     "setup_logging",
@@ -54,6 +58,34 @@ LOG_LEVEL_ENV = "FEMFORGE_LOG_LEVEL"
 
 TELEMETRY_ROUTE = "telemetry_root"
 """The bound key routing a record to the telemetry root of the [`telemetry_scope`][femforge.common.log.telemetry_scope] it was logged in."""
+
+RELAYED_ROUTE = "relayed"
+"""A ``TELEMETRY_ROUTE`` value no sink stores: a relayed record was already stored by the process that logged it."""
+
+
+class LogKey(StrEnum):
+    """Bound keys that the code logging a record and the code reading it back must agree on."""
+
+    RUN_ID = "run_id"
+    """The run a record belongs to."""
+
+    RUN_DIR = "run_dir"
+    """The run's bundle directory."""
+
+    STAGE = "stage"
+    """The pipeline stage a stage record starts or ends."""
+
+    PROGRESS = "progress"
+    """The share of a solve's convergence covered so far, between 0 and 1."""
+
+    SOLVER = "solver"
+    """The solver a convergence or progress record reports on."""
+
+    ORIGIN = "origin"
+    """Where a reused bundle came from."""
+
+    TASK = "task"
+    """The workbench task whose child process logged a relayed record."""
 
 
 class LogLevel(StrEnum):
@@ -277,7 +309,7 @@ def setup_logging(
     sink = RichSink(
         console if console is not None else get_console(),
         path_width=_PATH_WIDTH,
-        hide_keys=frozenset({"run_id", TELEMETRY_ROUTE}),
+        hide_keys=frozenset({LogKey.RUN_ID, LogKey.RUN_DIR, LogKey.STAGE, LogKey.PROGRESS, TELEMETRY_ROUTE}),
     )
     _logger.remove()
     _terminal = (sink, _add_terminal_sink(sink, resolved))
@@ -323,15 +355,17 @@ def _write_json_record(message: Message) -> None:
     sys.stdout.flush()
 
 
-def log_to_stdout_json(level: LogLevel | str = LogLevel.DEBUG) -> None:
-    """Write every record to stdout as one JSON line, in place of the terminal sink, for a parent process to relay with [`relay_record`][femforge.common.log.relay_record]."""
+def log_to_stdout_json(level: LogLevel | str = LogLevel.DEBUG, *, process: str | None = None) -> None:
+    """Write every record to stdout as one JSON line for a parent to relay with [`relay_record`][femforge.common.log.relay_record]; ``FEMFORGE_TELEMETRY`` still stores them, under ``process``."""
     global _json_sink
+    _close_telemetry_sink()
     _logger.remove()
     _json_sink = _logger.add(_write_json_record, level=level, format="{message}")
 
     logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
     logging.captureWarnings(True)
     _apply_library_levels(DEFAULT_LIBRARY_LEVELS)
+    _install_telemetry(None, process)
 
 
 @functools.cache
@@ -341,17 +375,16 @@ def _relayed_records() -> TypeAdapter[RelayedRecord]:
     return TypeAdapter(RelayedRecord)
 
 
-def relay_record(line: str, **bound: object) -> None:
-    """Log one child-process output line with the ``bound`` fields: a [`log_to_stdout_json`][femforge.common.log.log_to_stdout_json] record at its own level and origin, other lines at DEBUG."""
-    text: str = line.rstrip("\r\n")
-    if not text.strip():
-        return
-
+def parse_relayed(line: str) -> RelayedRecord | None:
+    """The [`log_to_stdout_json`][femforge.common.log.log_to_stdout_json] record a child-process output line holds; None for any other line."""
     try:
-        record: RelayedRecord = _relayed_records().validate_json(text)
+        return _relayed_records().validate_json(line.rstrip("\r\n"))
     except ValueError:
-        log.bind(**bound).debug(text)
-        return
+        return None
+
+
+def emit_relayed(record: RelayedRecord, **bound: object) -> None:
+    """Log a child's record in this process at its own level and origin, with the ``bound`` fields over its own."""
 
     def origin(relayed: Record) -> None:
         relayed["name"] = record["name"]
@@ -359,6 +392,20 @@ def relay_record(line: str, **bound: object) -> None:
         relayed["line"] = record["line"]
 
     log.patch(origin).bind(**{**record["extra"], **bound}).log(record["level"], record["message"])
+
+
+def relay_record(line: str, **bound: object) -> None:
+    """Log one child-process output line with the ``bound`` fields: a [`log_to_stdout_json`][femforge.common.log.log_to_stdout_json] record at its own level and origin, other lines at DEBUG."""
+    text: str = line.rstrip("\r\n")
+    if not text.strip():
+        return
+
+    record: RelayedRecord | None = parse_relayed(text)
+    if record is None:
+        log.bind(**bound).debug(text)
+        return
+
+    emit_relayed(record, **bound)
 
 
 class _AutoSetupLogger:
@@ -427,7 +474,7 @@ def run_log_context(run_id: str, run_dir: Path) -> Iterator[None]:
     _ensure_setup()
 
     def _same_run(record: Record) -> bool:
-        bound: object = record["extra"].get("run_id")
+        bound: object = record["extra"].get(LogKey.RUN_ID)
         return bound == run_id
 
     # Explicit format: loguru's default omits {extra}, and the run_id (plus any future worker/batch ids) must
@@ -446,7 +493,7 @@ def run_log_context(run_id: str, run_dir: Path) -> Iterator[None]:
         format=line,
     )
     try:
-        with _logger.contextualize(run_id=run_id):
+        with _logger.contextualize(**{str(LogKey.RUN_ID): run_id}):
             yield
     finally:
         _logger.remove(sink_id)

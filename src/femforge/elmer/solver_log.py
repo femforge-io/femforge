@@ -388,10 +388,7 @@ class ConvergenceRenderer:
     def render(self, sample: ConvergenceSample) -> str:
         """One aligned line; the iteration cap, tolerance, and percent appear only when the sample's solver has known targets."""
         key: tuple[str, str] = (normalize_solver_key(sample.solver or ""), sample.loop)
-
-        if sample.iteration == 1:
-            self._first_relc[key] = sample.relative_change
-
+        progress: float | None = self.progress(sample)
         targets: LoopTargets | None = self._targets.get(key)
         max_iterations: int | None = targets.max_iterations if targets is not None else None
         tolerance: float | None = targets.tolerance if targets is not None else None
@@ -399,7 +396,6 @@ class ConvergenceRenderer:
         iterations = f"{sample.iteration:>3}/{max_iterations:<4}" if max_iterations is not None else f"{sample.iteration:>3}     "
         # The arrow branch is 8 chars (" → 1e-10"); the no-target pad matches so mixed lines stay aligned.
         target = f" / {tolerance:.0e}" if tolerance is not None else " " * 8
-        progress: float | None = self._progress(key, sample.relative_change, tolerance)
         percent = f"{progress * 100:>4.0f}%" if progress is not None else ""
 
         line = f"{sample.solver or 'solver':<12.12} {sample.loop:<2} {iterations}  L₂ Norm = {sample.norm:.3e}  Δ = {sample.relative_change:.2e}{target}  {percent}"
@@ -421,9 +417,16 @@ class ConvergenceRenderer:
 
         return f"{progress.solver or 'solver':<12.12} {progress.method or '':<9} {iterations} r = {progress.residual:.3e}{target}  {best}  {progress.elapsed:>5.0f} s"
 
-    def _progress(self, key: tuple[str, str], relc: float, tolerance: float | None) -> float | None:
-        """This loop's progress against its tolerance, measured from the first relative change the renderer saw for it."""
-        return convergence_progress(self._first_relc.get(key), relc, tolerance)
+    def progress(self, sample: ConvergenceSample) -> float | None:
+        """The sample's loop progress against its tolerance, from the loop's first relative change; iteration 1 sets that baseline."""
+        key: tuple[str, str] = (normalize_solver_key(sample.solver or ""), sample.loop)
+        if sample.iteration == 1:
+            self._first_relc[key] = sample.relative_change
+
+        targets: LoopTargets | None = self._targets.get(key)
+        tolerance: float | None = targets.tolerance if targets is not None else None
+
+        return convergence_progress(self._first_relc.get(key), sample.relative_change, tolerance)
 
 
 class SolverLogParser:

@@ -21,7 +21,7 @@ from femforge.artifacts.kind import Produced
 from femforge.artifacts.lock import HEARTBEAT_S, LOCK_SUFFIX, DirLock, keep_alive
 from femforge.artifacts.sidecar import ArtifactOrigin, ArtifactRef, ToolVersions
 from femforge.common.files import BundleFile, BundleGlob, RunFile
-from femforge.common.log import TELEMETRY_ENV, log, run_log_context, telemetry_scope
+from femforge.common.log import TELEMETRY_ENV, LogKey, log, run_log_context, telemetry_scope
 from femforge.common.names import bundle_name
 from femforge.config import SimulationConfig
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, convergence_targets, linear_targets, needs_halobc
@@ -240,7 +240,7 @@ class Driver:
 
         result: Result | None = self._reusable_local(key, sim_dir)
         if result is not None:
-            log.bind(run_id=sim_dir.name, origin=ArtifactOrigin.LOCAL).info("Reusing bundle.")
+            log.bind(**{str(LogKey.RUN_ID): sim_dir.name, str(LogKey.ORIGIN): ArtifactOrigin.LOCAL}).info("Reusing bundle.")
             return result
 
         if self.artifacts is None:
@@ -254,7 +254,7 @@ class Driver:
         if handle is None:
             return None
 
-        log.bind(run_id=sim_dir.name, origin=handle.origin).info("Reusing bundle.")
+        log.bind(**{str(LogKey.RUN_ID): sim_dir.name, str(LogKey.ORIGIN): handle.origin}).info("Reusing bundle.")
         return Result.load(sim_dir)
 
     def _reusable_local(self, key: ArtifactKey[RunSpec], sim_dir: Path) -> Result | None:
@@ -306,6 +306,7 @@ class Driver:
                     backend=type(self.backend).__name__,
                     mpi=self.mpi_processes,
                     description=config.meta.description or None,
+                    **{str(LogKey.RUN_DIR): str(sim_dir)},
                 ).info("Beginning evaluation.")
 
                 # A re-used run dir must not leak a previous result or SaveScalars exports into parse_result's glob-all.
@@ -538,12 +539,13 @@ class Driver:
 
         manifest, sim_dir = self._active
 
+        staged = log.bind(**{str(LogKey.STAGE): str(event.stage)})
         if event.finished_at is None:
-            log.info(f"[{event.stage.name}] started.")
+            staged.info(f"[{event.stage.name}] started.")
             manifest.stage_history.append(event)
         else:
             time_taken = (event.finished_at - event.started_at).total_seconds()
-            log.info(f"[{event.stage.name}] completed ({round(time_taken, 2)}s).")
+            staged.info(f"[{event.stage.name}] completed ({round(time_taken, 2)}s).")
 
         write_manifest(sim_dir, manifest)
 

@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from femforge.common.log import log
+from femforge.common.log import LogKey, log
 from femforge.elmer.runtime import solve
 from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.elmer.runtime.solve import solve_case
@@ -249,3 +249,17 @@ def test_a_long_linear_solve_logs_a_progress_line_with_its_fields(tmp_path: Path
     assert "31/5000" in message
     assert {"solver", "method", "iteration", "max_iterations", "residual", "tolerance", "best_residual", "best_iteration", "started", "elapsed", "fraction"} <= set(extra)
     assert extra["iteration"] == 31 and extra["method"] == "CG" and extra["elapsed"] == 30.0
+
+
+def test_the_convergence_and_progress_lines_bind_their_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    targets: ConvergenceTargets = {("mgdyn", "NS"): LoopTargets(max_iterations=50, tolerance=1e-10)}
+    _, converging = _records("INFO", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path, targets=targets))
+
+    monkeypatch.setattr(solve, "SolverLogParser", partial(SolverLogParser, clock=_FakeClock()))
+    lines = [f"{iteration:>8} {1.0 / iteration:.4E}" for iteration in range(1, 40)]
+    _, linear = _records("INFO", lambda: solve_case(_ScriptedBackend(lines), tmp_path, linear_targets=ELASTICITY))
+
+    computed = [extra for message, extra in converging if "Δ = " in message]
+    beats = [extra for message, extra in linear if " r = " in message]
+    assert computed[0][LogKey.PROGRESS] == 0.0 and computed[0][LogKey.SOLVER] == "mgdyn"
+    assert [extra[LogKey.PROGRESS] for extra in beats] == [beats[0]["fraction"]]
