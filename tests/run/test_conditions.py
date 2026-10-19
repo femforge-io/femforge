@@ -21,6 +21,7 @@ from femforge.physical.conditions import FixedDisplacement, FixedTemperature, He
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import U, quantity
 from femforge.run.conditions import ConditionRecord, ConditionsFile, GroupConditions, SifKeyword, SolveComponent
+from tests.elmer.test_sif_coil_magnetostatics import _coil_boundary_groups, _coil_groups
 from tests.elmer.test_sif_smoke import FakeBoundaryGroup, FakePhysicalGroup
 
 
@@ -102,6 +103,25 @@ def test_a_face_value_shadows_the_body_value_it_overrides(tmp_path: Path) -> Non
     assert group.conditions[0].keywords == [SifKeyword(name="Temperature", value=300.0, shadowed=True)]
     assert group.conditions[1].keywords == [SifKeyword(name="Temperature", value=350.0, shadowed=False)]
     assert _only(captured.boundary("BOX__EXT")).keywords == [SifKeyword(name="Temperature", value=300.0)]
+
+
+def test_a_component_shared_by_several_bodies_shadows_nothing(tmp_path: Path) -> None:
+    groups = _coil_groups()
+    unique: dict[int, EntityTag] = {id(tag): tag for group in groups for tag in group.tags}
+    captured = _capture(tmp_path, Physics.COIL_MAGNETOSTATICS, groups, _coil_boundary_groups(), list(unique.values()))
+
+    def _drives(name: str) -> list[ConditionRecord]:
+        group = captured.body(name)
+        assert group is not None
+
+        return [record for record in group.conditions if record.kind == "coil_drive"]
+
+    drives: list[ConditionRecord] = [record for name in ("COPPER_PHASE0", "COPPER_PHASE0_ENTRY0", "COPPER_PHASE0_EXIT0") for record in _drives(name)]
+
+    assert len(drives) == 3
+    assert {(record.block, record.block_name) for record in drives} == {(1, "Phase0_coil")}
+    assert all(not keyword.shadowed for record in drives for keyword in record.keywords)
+    assert [keyword.name for keyword in drives[0].keywords] == ["Desired Coil Current", "Coil Type"]
 
 
 def test_a_body_force_lands_in_the_body_force_block(tmp_path: Path) -> None:

@@ -33,7 +33,7 @@ class SifKeyword(BaseModel):
     """`[?]`: The emitted value, in the SI unit Elmer reads the keyword in."""
 
     shadowed: bool = False
-    """Whether a later emission into the same block set the same keyword, so this value never reached the solver."""
+    """Whether a later emission into the same block for the same group set the same keyword, so this value never reached the solver."""
 
 
 class SolveComponent(BaseModel):
@@ -118,7 +118,7 @@ class ConditionsFile(BaseModel):
         landings: list[SifLanding] = sim.landings
 
         def record(position: int, landing: SifLanding) -> ConditionRecord:
-            later: list[SifLanding] = [other for other in landings[position + 1 :] if other.block is landing.block]
+            later: list[SifLanding] = [other for other in landings[position + 1 :] if other.block is landing.block and other.group == landing.group]
             keywords: list[SifKeyword] = [SifKeyword(name=name, value=value, shadowed=any(name in other.keywords for other in later)) for name, value in landing.keywords.items()]
             index: int | None = next((number for number, tag in enumerate(tags) if tag is landing.tag), None)
             condition = cast("ConditionUnion | None", landing.condition)
