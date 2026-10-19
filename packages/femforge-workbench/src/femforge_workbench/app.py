@@ -361,6 +361,10 @@ class Workbench(TrameApp):
         self.tour_steps: list[TourStep] = []
         """The tour's stops in order, before the shell's own closing one; panels add theirs through `add_tour_steps`."""
         self.dock: Dock | None = None
+        self.docked = False
+        """Whether the client dock has reported ready; until then it drops activations and its layout restore decides the front tabs."""
+        self.front: str | None = None
+        """The panel `activate` asked to the front before the dock was ready, activated once the layout is restored."""
         self.board: TaskBoard | None = None
         self.armed = 0
         """How many times a Cancel was armed, so the countdown of one disarmed and armed again stops."""
@@ -1190,7 +1194,23 @@ class Workbench(TrameApp):
         for opened in self.opened.values():
             self.place(opened.root, opened.reference)
 
+        self.docked = True
+        if self.front is not None:
+            self.dock.active_panel(self.front)
+            self.front = None
+
         log.bind(workbench=self.name, restored=saved is not None).info("Dock ready.")
+
+    def activate(self, panel_id: str) -> None:
+        """Brings a panel's tab to the front, or once the dock is ready when it is not yet."""
+        if self.dock is None:
+            return
+
+        if not self.docked:
+            self.front = panel_id
+            return
+
+        self.dock.active_panel(panel_id)
 
     @guard
     def on_layout_changed(self, layout: Mapping[str, object]) -> None:
@@ -1285,6 +1305,16 @@ class Workbench(TrameApp):
         self.loop = asyncio.get_running_loop()
         if self.window is Window.APP:
             self.open_app_window()
+
+    @life_cycle.client_connected
+    def on_client_connected(self, **_: object) -> None:
+        """Forgets the dock a reloaded page left, so `activate` holds a panel until the new dock reports ready."""
+        self.docked = False
+
+    @life_cycle.client_exited
+    def on_client_exited(self, **_: object) -> None:
+        """Forgets the dock of the page that left, so `activate` holds a panel until the next dock reports ready."""
+        self.docked = False
 
     @life_cycle.server_exited
     def on_server_exited(self, **_: object) -> None:

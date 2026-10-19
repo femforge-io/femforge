@@ -56,6 +56,7 @@ from femforge_workbench.tasks import Task, TaskBoard, TaskPhase  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
+from femforge_workbench.panels.setup import SetupPanel  # noqa: E402
 from femforge_workbench.panels.scene import StateVar as SceneVar, View, ViewMode  # noqa: E402
 from femforge_workbench.panels.field_viewer import (  # noqa: E402
     FieldControlsPanel,
@@ -203,7 +204,7 @@ def _start(app: Workbench) -> object:
 # --- spec and shell -----------------------------------------------------------
 
 
-def test_the_builtin_spec_resolves_to_a_split_with_the_two_panel_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_builtin_spec_resolves_to_a_split_with_the_three_panel_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(TELEMETRY_ENV, raising=False)
     factory = resolve(FIELD_VIEWER.target)
     assert callable(factory)
@@ -221,6 +222,7 @@ def test_a_shell_builds_the_templates_the_controls_defaults_and_the_open_hook(tm
     assert all(app.state.has(f"trame__template_{template_name(panel_id)}") for panel_id in FieldPanel)
     assert app.state.has(f"trame__template_{Template.HEADER}")
     assert isinstance(app.panel(FieldPanel.CONTROLS, FieldControlsPanel), FieldControlsPanel)
+    assert isinstance(app.panel(FieldPanel.SETUP, SetupPanel), SetupPanel)
     assert controller.viewer is app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
     assert app.ctrl[Hook.FIELD_OPEN].exists()
 
@@ -948,6 +950,7 @@ def test_the_last_panel_to_leave_the_dock_releases_the_controller(tmp_path: Path
     assert app.ctrl[Hook.FIELD_OPEN].exists() and listening()
     assert controller.attached == {str(panel_id) for panel_id in FieldPanel}
 
+    setup = app.panel(FieldPanel.SETUP, SetupPanel)
     controls.dispose()
 
     assert controller.live and listening(), "the viewer is still on screen"
@@ -955,8 +958,13 @@ def test_the_last_panel_to_leave_the_dock_releases_the_controller(tmp_path: Path
 
     app.panel(FieldPanel.VIEW_3D, FieldViewerPanel).dispose()
 
+    assert controller.live and listening(), "Setup alone keeps the controller"
+    assert controller.viewer is None and controller.setup_panel is setup
+
+    setup.dispose()
+
     assert not app.ctrl[Hook.FIELD_OPEN].exists() and not listening()
-    assert controller.viewer is None and controls.bound == [] and not controller.live
+    assert controller.setup_panel is None and controls.bound == [] and setup.bound == [] and not controller.live
 
 
 
@@ -2182,6 +2190,7 @@ def test_a_run_without_fields_draws_its_mesh_groups_only_while_the_glyphs_are_sh
 
         assert viewer.renderable is controller.groups
         assert SceneActor.STYLED.of("LEFT") in viewer.plotter.renderer.actors and "glyph-arrows" in _glyph_actors(viewer)
+        assert app.state[viewer.key(SceneVar.NOTICE)] == "", "the mesh draws over the empty view's notice"
 
         app.state[FieldVar.SELECTED_ENTITY] = "boundary:LEFT__EXT"
         controller.on_glyphs()
@@ -2193,6 +2202,7 @@ def test_a_run_without_fields_draws_its_mesh_groups_only_while_the_glyphs_are_sh
         controller.on_glyphs()
 
         assert viewer.renderable is None and _glyph_actors(viewer) == []
+        assert app.state[viewer.key(SceneVar.NOTICE)] == controller.note != ""
 
         await controller.load(_glyph_bundle(tmp_path / "solved"))
         await controller.settle()

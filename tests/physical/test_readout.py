@@ -5,7 +5,7 @@ import math
 import pytest
 
 from femforge.common.vector import Direction, Vec3
-from femforge.physical.readout import LADDERS, along, readout, vector_readout
+from femforge.physical.readout import LADDERS, along, components_readout, readout, vector_readout
 from femforge.physical.units import Quantity, U, Unit, quantity
 
 
@@ -72,3 +72,11 @@ def test_a_direction_reads_as_its_unit_components(direction: Vec3, expected: str
 def test_a_vector_reads_as_its_size_along_its_direction() -> None:
     assert vector_readout(quantity(Vec3(100, 0, 0), "N")) == "100 N Along (1, 0, 0)"
     assert vector_readout(quantity(Vec3(0, 0, 0), "N")) == "0 N"
+
+
+def test_components_read_signed_in_the_rung_of_the_largest() -> None:
+    assert components_readout([500000.0, 0.0], "Pa") == "(500, 0) kPa"
+    assert components_readout([-2.5e6, 1.0e-9, 1.2e5], "Pa") == "(-2.5, 0, 0.12) MPa"
+    assert components_readout([0.0, 0.0], "N") == "(0, 0) N"
+    assert components_readout([500000.0, "expr"], "Pa") == "(500, expr) kPa", "a text component reads as itself"
+    assert components_readout([3.0, 4.0], "s") == "(3, 4) s", "a quantity without a ladder reads in its compact unit"

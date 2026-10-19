@@ -466,7 +466,7 @@ def _hierarchy(plotter: pv.Plotter) -> vtkPointSetToLabelHierarchy:  # pragma: n
 
 def test_a_flexure_draws_named_glyph_actors_the_mirror_can_serialize() -> None:
     pytest.importorskip("pyvista")
-    from vtkmodules.vtkRenderingCore import vtkActor, vtkActor2D
+    from vtkmodules.vtkRenderingCore import vtkActor, vtkActor2D, vtkPolyDataMapper2D
     from vtkmodules.vtkRenderingLabel import vtkLabelPlacementMapper
 
     plotter = _drawn(_flexure_scene(), GlyphView())
@@ -478,8 +478,8 @@ def test_a_flexure_draws_named_glyph_actors_the_mirror_can_serialize() -> None:
     assert names == sorted(["glyph-arrows", "glyph-halos", "glyph-lines", "glyph-marks", "glyph-outline", "glyph-triad", "glyph-labels-labels"])
     assert len(condition_actors) <= len(GLYPH_ACTORS) == 7
     for prop in drawn:
-        labelled = isinstance(prop, vtkActor2D) and isinstance(prop.GetMapper(), vtkLabelPlacementMapper)
-        assert isinstance(prop, vtkActor) or labelled, f"{type(prop).__name__} would blank the mirror"
+        overlaid = isinstance(prop, vtkActor2D) and isinstance(prop.GetMapper(), vtkLabelPlacementMapper | vtkPolyDataMapper2D)
+        assert isinstance(prop, vtkActor) or overlaid, f"{type(prop).__name__} would blank the mirror"
 
 
 def test_kinds_off_leave_no_condition_glyph_and_none_removes_every_glyph_actor() -> None:
@@ -571,6 +571,39 @@ def test_the_outline_and_triad_label_the_solve_axes_by_their_authored_directions
     assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["X = Authored (1, 0, 0)", "Y = Authored (0, 1, 0)"]
     assert _bounds(plotter, GlyphActor.OUTLINE)[1] == pytest.approx(0.1)
     assert _bounds(plotter, GlyphActor.TRIAD)[3] < 0.0, "the triad sits below the section, so its labels never cover the body"
+
+
+def test_a_revolved_outline_and_triad_draw_over_the_scene_and_name_the_radial_and_axial_axes() -> None:
+    pytest.importorskip("pyvista")
+    from vtkmodules.vtkCommonCore import vtkStringArray
+    from vtkmodules.vtkCommonDataModel import vtkDataSet
+    from vtkmodules.vtkRenderingCore import vtkActor2D, vtkPolyDataMapper2D
+
+    scene = _flexure_scene(Axisymmetric())
+    revolved = scene.spec.model_copy(update={"expansion": Expansion.REVOLVE, "sweep": 360.0})
+    plotter = _drawn(scene, GlyphView(kinds=frozenset()), revolved)
+    points = cast("object", _hierarchy(plotter).GetInput())  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
+    assert isinstance(points, vtkDataSet)
+    labels = cast("object", points.GetPointData().GetAbstractArray("labels"))  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
+    assert isinstance(labels, vtkStringArray)
+
+    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["Radial = Authored (1, 0, 0)", "Axial = Authored (0, 0, 1)"]
+    for name in ("glyph-outline", "glyph-triad"):
+        actor = plotter.renderer.actors[name]
+        assert isinstance(actor, vtkActor2D) and isinstance(actor.GetMapper(), vtkPolyDataMapper2D), f"{name} draws over the translucent revolved bodies"
+
+
+def test_the_outline_and_a_framed_boundary_follow_the_deformed_shape() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _flexure_scene()
+    warped = scene.spec.model_copy(update={"warp": "displacement", "warp_scale": 10.0})
+    plotter = _drawn(scene, GlyphView(), warped)
+    assert scene.glyphs is not None
+
+    assert _bounds(plotter, GlyphActor.OUTLINE)[1] == pytest.approx(0.11), "the right edge moves 10 × 0.001 m"
+    right = scene.glyphs.bounds_of(EntityRef(EntityKind.BOUNDARY, "RIGHTFACE"))
+    assert right is not None and right[0] == pytest.approx(0.11) and right[1] == pytest.approx(0.11)
 
 
 def test_a_quadratic_section_tints_its_held_face_and_highlights_a_selected_boundary() -> None:

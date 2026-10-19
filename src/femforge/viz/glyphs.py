@@ -41,6 +41,7 @@ from femforge.viz.symmetry import Basis, Expansion, Surface, swept_lines
 
 if TYPE_CHECKING:
     import pyvista as pv
+    from vtkmodules.vtkRenderingCore import vtkActor2D
 
     from femforge.run.conditions import ConditionRecord, ConditionsFile
     from femforge.run.entities import Bodies, Body, Boundaries, Boundary
@@ -769,6 +770,9 @@ class GlyphDraw:
     font_size: int = 0
     """The label font size in window pixels."""
 
+    overlay: bool = False
+    """Whether the lines draw over the scene as a 2D overlay at their world positions rather than among the bodies."""
+
 
 def _segments(dataset: pv.DataSet) -> FloatArray:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
     """The ``(m, 2, 3)`` straight edges of ``dataset``'s lines and surface cells, a quadratic edge split at its mid node."""
@@ -789,6 +793,26 @@ def _polylines(segments: FloatArray) -> pv.PolyData:  # pragma: no cover - needs
     cells: IntArray = np.column_stack([np.full(count, 2, dtype=np.int64), ids]).reshape(-1)
 
     return pv.PolyData(segments.reshape(-1, 3), lines=cells)
+
+
+def _overlay(draw: GlyphDraw) -> vtkActor2D:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+    """The lines of ``draw`` as a 2D actor that projects their world points and draws over the scene."""
+    import pyvista as pv
+    from vtkmodules.vtkRenderingCore import vtkActor2D, vtkCoordinate, vtkPolyDataMapper2D
+
+    world = vtkCoordinate()
+    world.SetCoordinateSystemToWorld()
+    mapper = vtkPolyDataMapper2D()
+    mapper.SetInputData(draw.mesh)  # pyright: ignore[reportUnknownMemberType]  # overloaded twice in the VTK stubs without @overload
+    mapper.SetTransformCoordinate(world)
+    actor = vtkActor2D()
+    actor.SetMapper(mapper)
+    red, green, blue = pv.Color(draw.color).float_rgb
+    actor.GetProperty().SetColor(red, green, blue)
+    actor.GetProperty().SetLineWidth(draw.line_width or 1.0)
+    actor.GetProperty().SetOpacity(draw.opacity)
+
+    return actor
 
 
 def _surface(surface: Surface) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
@@ -1067,6 +1091,12 @@ class GlyphLayer:
     names: frozenset[str] = frozenset()
     """The actor names the plotter holds from the last draw."""
 
+    label_spots: FloatArray = field(default_factory=lambda: np.zeros((0, 3)))
+    """`[m]`: The ``(n, 3)`` points the last draw labelled, in the displayed scene's frame."""
+
+    label_texts: tuple[str, ...] = ()
+    """The text at each of ``label_spots``."""
+
     @classmethod
     def from_run(cls, run: Run, scene: FieldScene | None = None) -> GlyphLayer:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
         """The glyphs of ``run`` from its conditions sidecar and entities, in the frame of ``scene`` when given, else of its manifest."""
@@ -1134,7 +1164,7 @@ class GlyphLayer:
         )
 
     def bounds_of(self, ref: EntityRef) -> Bounds | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-        """The bounds of ``ref`` as the last host shows it, from its measured box when it has no cells there; None when it has neither."""
+        """The bounds of ``ref`` as the last host shows it, its cells moved by their mean warp as the glyph anchors are, from its measured box when it has no cells there; None when it has neither."""
         host: GlyphHost | None = self.host
 
         if host is not None and ref.kind is EntityKind.BODY and ref.name in host.blocks.keys():
@@ -1143,7 +1173,8 @@ class GlyphLayer:
         cells: pv.DataSet | None = self.group_cells(ref)
 
         if cells is not None and host is not None:
-            points: FloatArray = np.concatenate(self.placement(host).copies(np.asarray(cells.points, dtype=np.float64)))
+            moved: FloatArray = np.asarray(cells.points, dtype=np.float64) + _mean_shift(cells, host.warped)
+            points: FloatArray = np.concatenate(self.placement(host).copies(moved))
             low: FloatArray = points.min(axis=0)
             high: FloatArray = points.max(axis=0)
 
@@ -1179,6 +1210,8 @@ class GlyphLayer:
 
         self.drawn = key
         self.names = frozenset()
+        self.label_spots = np.zeros((0, 3))
+        self.label_texts = ()
 
         if view is None:
             return
@@ -1194,8 +1227,14 @@ class GlyphLayer:
             spots: FloatArray = np.concatenate([np.asarray(draw.mesh.points, dtype=np.float64) for draw in labelled])
             texts: tuple[str, ...] = tuple(text for draw in labelled for text in draw.labels)
             merged.append(GlyphDraw(GlyphActor.LABELS, pv.PolyData(spots), labels=texts, font_size=labelled[0].font_size))
+            self.label_spots = spots
+            self.label_texts = texts
 
         for draw in merged:
+            if draw.overlay:
+                _ = plotter.add_actor(_overlay(draw), name=str(draw.actor), reset_camera=False, render=False)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista adds any prop by name, and its _Wrapped stub loses `self`
+                continue
+
             if draw.labels:
                 _ = plotter.add_point_labels(  # pyright: ignore[reportUnknownMemberType]
                     np.asarray(draw.mesh.points, dtype=np.float64),
@@ -1302,10 +1341,14 @@ class GlyphLayer:
                 draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, surface, color=view.accent, opacity=SELECTION_OPACITY))
 
         if plane is not None and view.outline:
-            loops: pv.PolyData | None = feature_outline(host.section_blocks)
+            loops: pv.PolyData | None = feature_outline(self.deformed_section(host))
+
+            # VTK.wasm lets a revolved display's translucent bodies hide or stipple the lines behind and along them, so there the outline and triad draw on top in both renderers.
+            def stroked(actor: GlyphActor, lines: pv.PolyData) -> GlyphDraw:
+                return GlyphDraw(actor, lines, color=view.ink, line_width=OUTLINE_LINE_PX * view.scale, overlay=placement.revolved)
 
             if loops is not None:
-                draws.append(GlyphDraw(GlyphActor.OUTLINE, segments_mesh(_segments(loops) + lift), color=view.ink, line_width=OUTLINE_LINE_PX * view.scale))
+                draws.append(stroked(GlyphActor.OUTLINE, segments_mesh(_segments(loops) + lift)))
 
             bounds: Sequence[float] = tuple(host.section_blocks.bounds)
             reach: float = TRIAD_SHARE * diagonal
@@ -1313,12 +1356,15 @@ class GlyphLayer:
             # Labels run right from their point, so the triad sits wholly below the section to keep its Y label off the body.
             corner: FloatArray = np.array([bounds[0] - gap, bounds[2] - gap - reach, 0.0])
             axes: FloatArray = np.array([[corner, corner + [reach, 0.0, 0.0]], [corner, corner + [0.0, reach, 0.0]]])
-            draws.append(GlyphDraw(GlyphActor.TRIAD, _polylines(np.concatenate(placement.copies(axes.reshape(-1, 3))[:1]).reshape(-1, 2, 3)), color=view.ink, line_width=OUTLINE_LINE_PX * view.scale))
+            draws.append(stroked(GlyphActor.TRIAD, _polylines(np.concatenate(placement.copies(axes.reshape(-1, 3))[:1]).reshape(-1, 2, 3))))
 
             if view.labels is GlyphLabels.SCENE:
+                across, up = self.frame.axis_names
                 tips: FloatArray = placement.placed(axes[:, 1])
                 draws.append(
-                    GlyphDraw(GlyphActor.LABELS, pv.PolyData(tips), labels=(f"X = Authored {along(plane.x_dir)}", f"Y = Authored {along(plane.y_dir)}"), font_size=round(LABEL_FONT_PX * view.scale))
+                    GlyphDraw(
+                        GlyphActor.LABELS, pv.PolyData(tips), labels=(f"{across} = Authored {along(plane.x_dir)}", f"{up} = Authored {along(plane.y_dir)}"), font_size=round(LABEL_FONT_PX * view.scale)
+                    )
                 )
 
             if placement.revolved:
@@ -1338,6 +1384,24 @@ class GlyphLayer:
             draws.append(GlyphDraw(GlyphActor.HULL, _polylines(np.concatenate(pieces)), color=view.ink, line_width=MARK_LINE_PX * view.scale))
 
         return draws
+
+    def deformed_section(self, host: GlyphHost) -> pv.MultiBlock:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The section blocks of ``host`` displaced by its warp, so an outline follows the body the scene shows; as solved without a warp."""
+        import pyvista as pv
+
+        warp: tuple[str, float] | None = host.warped
+
+        if warp is None:
+            return host.section_blocks
+
+        moved: pv.MultiBlock = pv.MultiBlock()
+
+        for name in (str(key) for key in host.section_blocks.keys()):
+            block: pv.DataSet = cast("pv.DataSet", host.section_blocks[name])
+            displaced: bool = warp[0] in block.point_data or warp[0] in block.cell_data
+            moved.append(warped(block, *warp) if displaced else block, name=name)
+
+        return moved
 
     def hull(self, host: GlyphHost, placement: GlyphPlacement) -> FloatArray:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
         """The ``(m, 2, 3)`` edges the ghost is checked against: the section extruded through the prism depth, or revolved about the axis."""

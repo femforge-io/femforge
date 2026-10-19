@@ -18,7 +18,7 @@ RESERVED = frozenset({"self", "children", "kwargs", "__class__"})
 MODEL = "model"
 """The Python-only parameter of the control wrappers: the state variable the control binds and writes client-side."""
 
-RENAMES: Mapping[str, str] = {"aria_label": "aria-label"}
+RENAMES: Mapping[str, str] = {"aria_label": "aria-label", "aria_disabled": "aria-disabled"}
 """Parameters whose React prop is not their camelCase."""
 
 EVENT_PREFIX = "on_"
@@ -51,7 +51,7 @@ class Shared(TypedDict, total=False):
     hidden: bool | react.Bind
     tabIndex: int
     ref: str
-    key: str
+    key: str | react.Bind
     connect_parent: bool
     on_click: react.Callback
     on_double_click: react.Callback

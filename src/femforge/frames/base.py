@@ -13,6 +13,7 @@ from femforge.common.config import ConfigArea
 from femforge.common.files import write_atomic
 from femforge.common.vector import DIRECTION_SLACK, Direction, DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
+from femforge.physical.readout import along
 
 
 if TYPE_CHECKING:
@@ -95,6 +96,31 @@ class SolvePlane(ConfigArea):
         normal: Vec3 = self.x_dir.cross(self.y_dir)
 
         return Direction(normal.x, normal.y, normal.z)
+
+
+def axis_word(direction: Vec3) -> str:
+    """``+X`` or ``-Y`` for a signed world axis, else the component form of ``direction``, such as ``(0.6, 0.8, 0)``."""
+    components: list[float] = direction.normalized().to_list()
+    coordinate: int | None = next((index for index, component in enumerate(components) if abs(abs(component) - 1.0) <= ALIGNMENT_TOLERANCE), None)
+
+    if coordinate is None:
+        return along(direction)
+
+    sign: str = "-" if components[coordinate] < 0 else "+"
+
+    return f"{sign}{'XYZ'[coordinate]}"
+
+
+class FrameFact(BaseModel):
+    """One row of the Setup tab's Frame section: a label and the value it reads."""
+
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
+
+    label: str
+    """The row's label, such as ``Plane Origin``."""
+
+    value: str
+    """The row's value, such as ``(0, 0, 5) mm``."""
 
 
 def least_aligned_world_axis(direction: Vec3) -> Vec3:
@@ -294,6 +320,11 @@ class Frame(ConfigArea, ABC):
         return False
 
     @property
+    def axis_names(self) -> tuple[str, str]:
+        """The names of the solve plane's X and Y axes: ``Radial`` and ``Axial`` for a revolving section, else ``X`` and ``Y``."""
+        return ("Radial", "Axial") if self.revolves else ("X", "Y")
+
+    @property
     def plane_stress(self) -> bool | None:
         """Whether a 2D elasticity solve is plane stress (True) or plane strain (False); None when the frame poses no plane state."""
         return None
@@ -347,3 +378,30 @@ class Frame(ConfigArea, ABC):
     @abstractmethod
     def along(self, vector: Vec3, axis: Axis | None) -> float:
         """The component of a solve-frame vector along an authored ``axis``, or along the frame's own axis for None."""
+
+    def facts(self) -> tuple[FrameFact, ...]:
+        """Which way the solve plane faces, where it sits and how its axes run in the authored model, then the plane state when the frame poses one; none for a frame that solves the model whole."""
+        plane: SolvePlane | None = self.plane
+
+        if plane is None:
+            return ()
+
+        revolves: bool = self.revolves
+        pointing = FrameFact(label="Axis" if revolves else "Normal", value=along(plane.y_dir if revolves else plane.normal))
+        origin = FrameFact(label="Axis Origin" if revolves else "Plane Origin", value=f"{plane.origin:.3g} mm")
+        axes = FrameFact(label="Radial, Axial" if revolves else "Solve X, Y", value=f"{axis_word(plane.x_dir)}, {axis_word(plane.y_dir)}")
+        state: bool | None = self.plane_stress
+
+        if state is None:
+            return (pointing, origin, axes)
+
+        return (pointing, origin, axes, FrameFact(label="Plane State", value="Plane Stress" if state else "Plane Strain"))
+
+    def face_measure(self, length: float, centroid: Vec3) -> FrameFact | None:
+        """What a boundary group meshed as a line of ``length`` metres at ``centroid`` measures in the whole model; None for a frame that meshes faces as faces.
+
+        Args:
+            length: `L` `[m]`: The group's length in the solve plane.
+            centroid: `[m]`: The group's centroid in the solve frame.
+        """
+        return None

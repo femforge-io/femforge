@@ -6,12 +6,16 @@ from femforge_workbench.widgets.element import Element, Prop, Shared
 
 
 type IconName = Literal[
+    "anchor",
     "app-window",
+    "arrow-big-right-dash",
     "box",
     "check",
     "chevron-down",
     "chevron-right",
+    "circle-dot",
     "circle-help",
+    "circle-x",
     "columns-3",
     "copy",
     "external-link",
@@ -19,9 +23,12 @@ type IconName = Literal[
     "eye-off",
     "file",
     "filter",
+    "flame",
     "folder",
     "grip-vertical",
+    "info",
     "layout-grid",
+    "magnet",
     "maximize-2",
     "minimize-2",
     "minus",
@@ -35,7 +42,9 @@ type IconName = Literal[
     "square",
     "terminal",
     "trash-2",
+    "triangle-alert",
     "x",
+    "zap",
 ]
 """The names in the dist's icons.json."""
 

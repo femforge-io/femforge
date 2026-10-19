@@ -14,6 +14,7 @@ try:
     from femforge_workbench.panels.field_viewer import FieldControlsPanel, FieldViewerPanel, workbench as field_viewer
     from femforge_workbench.panels.figure import FigurePanel
     from femforge_workbench.panels.runs import RunBrowserPanel, RunDetailPanel
+    from femforge_workbench.panels.setup import SetupPanel
     from femforge_workbench.panels.table import TablePanel
     from femforge_workbench.serve import show
     from femforge_workbench.tasks import Task, TaskFactory
@@ -32,6 +33,7 @@ __all__ = [
     "PanelComponent",
     "RunBrowserPanel",
     "RunDetailPanel",
+    "SetupPanel",
     "Split",
     "TablePanel",
     "Tabs",

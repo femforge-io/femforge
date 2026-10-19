@@ -29,6 +29,7 @@ from femforge.physical.conditions import (
     HeatSource,
     JouleHeat,
     Magnetization,
+    SummaryLine,
     SurfaceForce,
     shipped_conditions,
 )
@@ -542,3 +543,116 @@ def test_the_solve_components_follow_the_frame() -> None:
     assert Magnetization(direction=Direction(0, 0, 1)).solve_components(Axisymmetric()) == ((1, 0.0), (2, 1.0))
     assert Magnetization(direction=None).solve_components(Solid()) == ()
     assert FixedTemperature(value=300 * U.K).solve_components(flexure) == ()
+
+
+# --- the Setup tab copy ------------------------------------------------------
+
+SUMMARY_SAMPLES: tuple[Condition, ...] = (
+    Magnetization(direction=Direction(0, 0, 1)),
+    CurrentDensity(value=quantity(-2.5e6, "A/m**2")),
+    FixedTemperature(value=quantity(300, "K")),
+    HeatFlux(value=quantity(500, "W/m**2")),
+    Convection(coefficient=quantity(10, "W/(m**2*K)"), ext_temperature=quantity(293, "K")),
+    HeatSource(power_density=quantity(1.2e6, "W/m**3")),
+    FixedVoltage(value=quantity(0.5, "V")),
+    JouleHeat(),
+    CoilDrive(current=quantity(12, "A")),
+    CoilTerminal(role="end"),
+    CalculateMagneticForce(),
+    FixedDisplacement(),
+    SurfaceForce(force=quantity(Vec3(100, 0, 0), "N")),
+)
+
+
+def _read(lines: tuple[SummaryLine, ...]) -> list[list[str]]:
+    """Each summary line as its labels and values, in reading order."""
+    return [[text for part in line for text in (part.label, part.value) if text] for line in lines]
+
+
+def test_every_shipped_condition_reads_as_at_least_one_line() -> None:
+    assert {type(sample) for sample in SUMMARY_SAMPLES} == set(shipped_conditions())
+    assert all(len(sample.summary()) >= 1 for sample in SUMMARY_SAMPLES)
+
+
+def test_a_surface_force_reads_its_total_then_the_traction_the_face_received() -> None:
+    pull = SurfaceForce(force=quantity(Vec3(100, 0, 0), "N"))
+
+    assert _read(pull.summary({"Force 1": 500000.0, "Force 2": 0.0})) == [["100 N Along (1, 0, 0)"], ["Traction", "(500, 0) kPa"]]
+    assert _read(pull.summary({"Force 1": 1.0, "Force 2": -2.0, "Force 3": 0.5})) == [["100 N Along (1, 0, 0)"], ["Traction", "(1, -2, 0.5) Pa"]]
+    assert _read(pull.summary()) == [["100 N Along (1, 0, 0)"]], "without the emitted keywords there is no traction to read"
+
+
+def test_a_traction_reads_the_sign_the_frame_mapping_gave_it() -> None:
+    sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
+    pull = SurfaceForce(force=quantity(Vec3(0, -100, 0), "N"))
+    emitted = pull.on_boundary(BoundarySite(name="TIP", measure=2e-2, frame=sideways))
+    share = dict(pull.solve_components(sideways))
+
+    assert share[1] < 0.0, "authored -Y runs along the solve +X of a plane normal to X"
+    assert _read(pull.summary(emitted)) == [["100 N Along (0, -1, 0)"], ["Traction", "(-500, 0) kPa"]]
+
+
+def test_a_fixed_displacement_reads_each_axis_with_its_component() -> None:
+    clamp = FixedDisplacement().summary()[0]
+    roller = FixedDisplacement(x=quantity(0.1, "mm"), y=None).summary()[0]
+
+    assert [(part.label, part.value, part.component) for part in clamp] == [("X", "0", "x"), ("Y", "0", "y"), ("Z", "0", "z")]
+    assert [part.value for part in roller] == ["0.1 mm", "Free", "0"]
+
+
+def _solved(condition: FixedDisplacement, frame: Frame) -> list[tuple[str, str, str | None]]:
+    """The summary of what ``condition`` emitted on a boundary of ``frame``, as label, value and authored component."""
+    emitted = condition.on_boundary(BoundarySite(name="FACE", measure=None, frame=frame))
+
+    return [(part.label, part.value, part.component) for part in condition.summary(emitted, frame=frame)[0]]
+
+
+def test_a_fixed_displacement_reads_what_each_solve_coordinate_received() -> None:
+    roller = FixedDisplacement(x=quantity(-2, "mm"), y=None, z=None)
+
+    assert _solved(FixedDisplacement(), Solid()) == [("X", "0", "x"), ("Y", "0", "y"), ("Z", "0", "z")]
+    assert _solved(roller, Solid()) == [("X", "-2 mm", "x"), ("Y", "Free", "y"), ("Z", "Free", "z")]
+    assert _read(roller.summary({"Displacement 1": -0.002})) == [["X", "-2 mm", "Y", "Free", "Z", "Free"]], "no frame reads the identity frame"
+
+
+def test_a_fixed_displacement_reads_the_authored_axes_whatever_the_frame_solves() -> None:
+    sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
+    flipped = Cartesian2D(normal=Axis(direction=Direction(0, 0, -1)), thickness=quantity(10, "mm"))
+    lifted = FixedDisplacement(y=quantity(1, "mm"))
+
+    assert _solved(FixedDisplacement(y=None), sideways) == [("X", "–", "x"), ("Y", "Free", "y"), ("Z", "0", "z")]
+    assert _solved(FixedDisplacement(z=None), sideways) == [("X", "–", "x"), ("Y", "0", "y"), ("Z", "Free", "z")]
+    assert lifted.on_boundary(BoundarySite(name="FACE", measure=None, frame=flipped)) == {"Displacement 1": 0.0, "Displacement 2": -0.001}
+    assert _solved(lifted, flipped) == [("X", "0", "x"), ("Y", "1 mm", "y"), ("Z", "–", "z")], "the sign the frame gave the solve Y is restored"
+    assert _solved(FixedDisplacement(), Axisymmetric()) == [("X", "0", "x"), ("Y", "–", "y"), ("Z", "0", "z")]
+    assert FixedDisplacement().dropped_fields(Axisymmetric()) == ("y",), "the dash marks exactly the axis the record drops"
+
+
+def test_an_axis_oblique_to_the_solve_axes_reads_its_authored_value() -> None:
+    oblique = Cartesian2D(normal=Axis(direction=Direction(0, 0, 1)), x_dir=Direction(1, 1, 0), thickness=quantity(10, "mm"))
+    held = FixedDisplacement(x=quantity(1, "mm"), y=quantity(1, "mm"), z=None)
+
+    assert _solved(held, oblique) == [("X", "1 mm", "x"), ("Y", "1 mm", "y"), ("Z", "Free", "z")]
+
+
+def test_a_condition_with_several_values_labels_each_with_its_glyph() -> None:
+    cooled = Convection(coefficient=quantity(10, "W/(m**2*K)"), ext_temperature=quantity(293, "K"))
+
+    assert _read(cooled.summary()) == [["h", "10 W/(m²·K)", "T", "293 K"]]
+    assert _read(FixedVoltage(value=quantity(0.5, "V")).summary()) == [["0.5 V"]], "a single value needs no glyph"
+    assert _read(JouleHeat().summary()) == [[]], "a flag reads as its kind alone"
+
+
+def test_a_magnet_reads_its_direction_and_the_remanence_it_was_emitted_with() -> None:
+    magnet = Magnetization(direction=Direction(0, 0, 1))
+    emitted = {"Magnetization 1": "0", "Magnetization 2": f"{1.32 / MU0:.6g}", "Magnetization 3": "Real MATC"}
+
+    assert _read(magnet.summary(emitted)) == [["Along (0, 0, 1)"], ["Br", "(0, 1.32, expr) T"]], "an expression keeps its place in the tuple"
+    assert magnet.summary(emitted)[1][0].tip == "Real MATC", "the placeholder's tooltip is the expression"
+    assert _read(magnet.summary()) == [["Along (0, 0, 1)"]]
+    assert _read(Magnetization(direction=None).summary()) == [["No Direction"]]
+
+
+def test_the_terminal_and_the_force_output_read_as_words() -> None:
+    assert _read(CoilTerminal(role="start").summary()) == [["Start"]]
+    assert _read(CalculateMagneticForce().summary()) == [["(Output, No Glyph)"]]

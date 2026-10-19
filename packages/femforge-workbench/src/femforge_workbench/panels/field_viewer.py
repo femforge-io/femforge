@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache, partial
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import polars as pl
 import pyvista as pv
 from trame.app import TrameComponent
@@ -31,8 +32,8 @@ from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
 from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap
-from femforge.viz.field_lines import FieldLineOptions, SeedPlacement
-from femforge.viz.glyphs import GlyphLayer, GlyphView, GroupScene, plain_spec
+from femforge.viz.field_lines import Bounds, FieldLineOptions, SeedPlacement
+from femforge.viz.glyphs import LABEL_FONT_PX, EntityKind, EntityRef, GlyphHost, GlyphLayer, GlyphView, GroupScene, plain_spec
 from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
@@ -56,6 +57,10 @@ from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.switch import Switch
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 from femforge_workbench.widgets.tour import TourStep
+
+
+if TYPE_CHECKING:
+    from femforge_workbench.panels.setup import SetupModel, SetupPanel
 
 
 RUN_PICKER_LIMIT = 200
@@ -125,6 +130,11 @@ COLORMAP_FILTERS = [FAVORITES_GROUP, *(kind.value for kind in ColormapType)]
 SAME_AS_FIELD = "same-as-field"
 SAME_AS_FIELD_LABEL = "Same as Field"
 STACK = "flex flex-col gap-1.5"
+FIT_SHARE = 0.15
+"""`[-]`: The least extent a group is framed at, as a share of the scene diagonal, so the bodies around it stay in view."""
+
+LABEL_EM = 0.6
+"""`[-]`: The width of a label character, as a share of the font size, for fitting the labels the scene draws."""
 SETTING = "flex h-6 w-full shrink-0 items-center justify-between gap-2"
 READOUTS = "flex items-center justify-between"
 SWITCH_ID = "ff-switch-"
@@ -182,6 +192,7 @@ class FieldPanel(StrEnum):
     """The viewer's panel ids."""
 
     CONTROLS = "field-controls"
+    SETUP = "field-setup"
     VIEW_3D = "field3d"
 
 
@@ -741,6 +752,39 @@ def group_scene(run: Run) -> GroupScene | None:
         return None
 
 
+def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) -> frozenset[str] | None:
+    """The ids of the run's groups the scene has cells of, which the Setup tab can highlight; none without a scene, None when the scene's glyph layer or cells failed to read.
+
+    Args:
+        layer: The run's glyph layer.
+        host: The scene the layer draws over, whose cells come first.
+        run: The run whose groups are checked.
+    """
+    if layer is None:
+        return frozenset() if host is None else None
+
+    bodies = [EntityRef(EntityKind.BODY, body.name) for body in run.bodies]
+    refs = [*bodies, *(EntityRef(EntityKind.BOUNDARY, boundary.name) for boundary in run.boundaries)]
+    try:
+        return frozenset(ref.id for ref in refs if layer.group_cells(ref, host) is not None)
+    except Exception:  # noqa: BLE001 - a group whose cells fail to read costs the highlight, never the tab
+        log.bind(run_id=run.path.name).opt(exception=True).warning("Group cells unreadable.")
+
+        return None
+
+
+def padded(bounds: Bounds, least: float) -> Bounds:
+    """``bounds`` widened about its centre so every side spans at least ``least``."""
+    low = np.array(bounds[0::2], dtype=np.float64)
+    high = np.array(bounds[1::2], dtype=np.float64)
+    centre = (low + high) / 2.0
+    half = np.maximum((high - low) / 2.0, least / 2.0)
+    lows = cast("list[float]", (centre - half).tolist())
+    highs = cast("list[float]", (centre + half).tolist())
+
+    return (lows[0], highs[0], lows[1], highs[1], lows[2], highs[2])
+
+
 def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
     """What the empty view says while the open run is still solving: where its progress shows, the task strip when the workbench runs tasks."""
     where = "the task strip below" if tasks else "the solver's terminal"
@@ -757,7 +801,7 @@ def captioned(label: str) -> Field:
     return field
 
 
-def setting(model: FieldVar, label: str, *, disabled: react.Bind | None = None) -> None:
+def setting(model: StrEnum, label: str, *, disabled: react.Bind | None = None) -> None:
     """A switch over `model` at the right of its label, every switch of the controls in one column.
 
     Args:
@@ -765,12 +809,14 @@ def setting(model: FieldVar, label: str, *, disabled: react.Bind | None = None) 
         label: The caption at the left.
         disabled: A client expression that disables the switch; None keeps it enabled.
     """
+    caption = str(Cls.CAPTION)
+    dimmed = react.Bind(f"({disabled.js_expression}) ? {json.dumps(f'{caption} opacity-50')} : {json.dumps(caption)}") if disabled is not None else caption
     with Field(orientation="horizontal", classes=SETTING):
-        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=str(Cls.CAPTION))
-        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled)
+        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=dimmed)
+        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled, aria_disabled=disabled)
 
 
-def segmented(model: FieldVar, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
+def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
     """A captioned single choice among `values` as one row of equal segments; pressing the chosen segment again changes nothing.
 
     Args:
@@ -844,6 +890,8 @@ class FieldViewerController(TrameComponent):
         """The runs the index offered at its last read."""
         self.unreadable = False
         """Whether the last read of the index failed, which logs once until a read succeeds."""
+        self.failure: str | None = None
+        """The error line of the last run that failed to open, None once a run opens."""
         self.seen: list[Path] | None = None
         """The index shards at the feed's last read; None reads the index on the next tick."""
         self.picked_at = 0.0
@@ -883,6 +931,13 @@ class FieldViewerController(TrameComponent):
         """What the Setup tab asks the scene to draw; None while it is off screen."""
         self.iso_pending = False
         """Whether the next draw turns the camera to Iso, once the ghost was switched on."""
+        self.setup: SetupModel | None = None
+        """What the Setup tab shows of the open run; None while no run is open."""
+        self.setup_panel: SetupPanel | None = None
+        self.highlightable: frozenset[str] | None = None
+        """The entity ids the scene has cells of; None until the open run's scene or mesh is read."""
+        self.cells_unreadable = False
+        """Whether the open run's scene failed to read its group cells, so the Setup tab can highlight none."""
         self.model_dim = 3
         self.bodies: list[str] = []
         self.viewer: FieldViewerPanel | None = None
@@ -992,6 +1047,9 @@ class FieldViewerController(TrameComponent):
         self.attached.discard(panel.id)
         if panel is self.viewer:
             self.viewer = None
+
+        if panel is self.setup_panel:
+            self.setup_panel = None
 
         if not self.attached:
             self.release()
@@ -1160,7 +1218,10 @@ class FieldViewerController(TrameComponent):
         self.load_task = asyncio.create_task(self.load(location))
 
     async def load(self, location: Location) -> None:
-        """Opens the run at ``location`` off the loop and shows it; a run without fields empties the views, one still solving opens once it ends; a newer open in flight wins."""
+        """Opens the run at ``location`` off the loop and shows it; a run without fields empties the views and brings Setup forward, one still solving opens once it ends; a newer open wins."""
+        # The Setup tab's module imports this one.
+        from femforge_workbench.panels.setup import read_setup
+
         self.generation += 1
         token = self.generation
         waiting = False
@@ -1180,9 +1241,18 @@ class FieldViewerController(TrameComponent):
             flag = RunFlag.SOLVING if waiting else missing
             opened = await asyncio.to_thread(bundle_entry, run, value, flag)
             indexed = await asyncio.to_thread(self.scan_runs)
+            setup = await asyncio.to_thread(partial(read_setup, run, solving=waiting))
             if token != self.generation:
                 return
 
+            previous = self.opened
+            same = previous is not None and (previous.runs_dir, previous.run_id) == (opened.runs_dir, opened.run_id)
+            fresh = not same or self.setup is None
+            self.setup = setup
+            self.failure = None
+            self.highlightable = None
+            self.cells_unreadable = False
+            self.publish_setup(fresh=fresh)
             self.indexed = indexed
             self.seen = None
             offered = self.adopt(opened, run.path)
@@ -1192,24 +1262,31 @@ class FieldViewerController(TrameComponent):
                     self.state[FieldVar.SOLVED_AS] = SOLVING_AS
 
                 self.wait_task = asyncio.create_task(self.await_fields(location, run.path, token))
+                self.reveal_setup()
                 await self.adopt_groups(run, token)
                 return
 
             if reason is not None:
                 self.clear(f"{run.path.name}: {reason}")
+                self.reveal_setup()
                 await self.adopt_groups(run, token)
                 return
 
             scene = await asyncio.to_thread(FieldScene.from_run, run)
             scene.glyphs = await asyncio.to_thread(glyph_layer, run, scene)
+            marks = await asyncio.to_thread(highlightable, scene.glyphs, scene, run)
             if token != self.generation:
                 return
 
             self.show(run, scene)
+            self.mark(marks)
         except Exception as error:  # noqa: BLE001 - every failure to open a bundle ends in the status line
             log.opt(exception=True).warning("Run failed to open.")
             waiting = False
-            self.clear(f"{type(error).__name__}: {error}")
+            self.setup = None
+            self.failure = f"{type(error).__name__}: {error}"
+            self.publish_setup()
+            self.clear(self.failure)
         finally:
             if token == self.generation and not waiting:
                 self.set_busy(False)
@@ -1235,11 +1312,70 @@ class FieldViewerController(TrameComponent):
     async def adopt_groups(self, run: Run, token: int) -> None:
         """Reads the mesh-only scene of a run without fields off the loop and draws it while the glyphs are shown, unless a newer open came first."""
         groups = await asyncio.to_thread(group_scene, run)
+        marks = await asyncio.to_thread(highlightable, groups.glyphs if groups is not None else None, groups, run)
         if token != self.generation:
             return
 
         self.groups = groups
+        self.mark(marks)
         self.draw_groups()
+
+    def publish_setup(self, *, fresh: bool = True) -> None:
+        """Shows the open run in the Setup tab, its toggles and selection reset unless the same run reopened."""
+        if self.setup_panel is not None:
+            self.setup_panel.show_run(self.setup, fresh=fresh)
+
+    def mark(self, marks: frozenset[str] | None) -> None:
+        """Records which groups the scene can highlight, None when its cells failed to read, and has the Setup tab dim the rest."""
+        self.highlightable = marks if marks is not None else frozenset()
+        self.cells_unreadable = marks is None
+        if self.setup_panel is not None:
+            self.setup_panel.publish()
+
+    def reveal_setup(self) -> None:
+        """Brings the Setup tab to the front for a run without fields, the one panel with something to show."""
+        self.app.activate(str(FieldPanel.SETUP))
+
+    def frame_entity(self, ref: EntityRef) -> None:
+        """Fits the camera to a body or boundary group of the shown run, padded so its surroundings stay in view; a group without bounds leaves the camera."""
+        viewer = self.viewer
+        shown = self.scene if self.scene is not None else self.groups
+        layer = shown.glyphs if shown is not None else None
+        bounds = layer.bounds_of(ref) if layer is not None else None
+        if viewer is None or shown is None or layer is None or bounds is None:
+            return
+
+        diagonal = layer.placement(shown).diagonal
+        viewer.adopt_camera()
+        viewer.plotter.renderer.ResetCamera(padded(bounds, FIT_SHARE * diagonal))
+        viewer.push()
+
+    def fit_bounds(self) -> Bounds | None:
+        """What a fit frames while the Setup tab shows the glyphs: the drawn scene with every label's text reaching right of its point; None to fit the scene alone."""
+        viewer = self.viewer
+        shown = self.scene if self.scene is not None else self.groups
+        layer = shown.glyphs if shown is not None else None
+        if viewer is None or layer is None or not bool(self.state[FieldVar.SETUP_SHOWN]) or not layer.label_texts:
+            return None
+
+        plotter = viewer.plotter
+        drawn = np.array(plotter.bounds, dtype=np.float64)
+        camera = plotter.camera
+        sight = np.array(camera.focal_point, dtype=np.float64) - np.array(camera.position, dtype=np.float64)
+        right = np.cross(sight, np.array(camera.up, dtype=np.float64))
+        length = float(np.linalg.norm(right))
+        if length == 0.0:
+            return None
+
+        per_pixel = float(np.linalg.norm(drawn[1::2] - drawn[0::2])) / max(int(plotter.window_size[1]), 1)
+        font = LABEL_FONT_PX * viewer.window_scale()
+        reach = np.array([len(text) * LABEL_EM * font * per_pixel for text in layer.label_texts])
+        ends = layer.label_spots + reach[:, None] * (right / length)
+        points = np.vstack([drawn[0::2], drawn[1::2], layer.label_spots, ends])
+        low = cast("list[float]", points.min(axis=0).tolist())
+        high = cast("list[float]", points.max(axis=0).tolist())
+
+        return (low[0], high[0], low[1], high[1], low[2], high[2])
 
     def clear(self, reason: str, *, status: str | None = None) -> None:
         """Empties both views and the run's controls, saying why over the view and in `status`, the reason itself when None, so nothing left on screen reads as the run asked for."""
@@ -1663,7 +1799,7 @@ class FieldViewerController(TrameComponent):
         self.draw_groups()
 
     def draw_groups(self) -> None:
-        """Draws the mesh-only scene of a run without fields while the glyphs are shown, and empties the view once they are not."""
+        """Draws the mesh-only scene of a run without fields over its notice while the glyphs are shown, and empties the view back to the notice once they are not."""
         viewer = self.viewer
         groups = self.groups
         if viewer is None or groups is None:
@@ -1673,11 +1809,13 @@ class FieldViewerController(TrameComponent):
         if view is None:
             if viewer.renderable is groups:
                 viewer.clear()
+                viewer.notice(self.note)
 
             return
 
         fresh = viewer.renderable is not groups
         groups.glyph_view = view
+        viewer.notice("")
         viewer.render(groups, keep_camera=not fresh)
         if fresh:
             viewer.look(View.TOP if groups.frame.model_dim == 2 else View.ISO)
@@ -1975,6 +2113,16 @@ class FieldViewerPanel(ScenePanel):
         """Empties the plotter and pushes the empty frame."""
         self.plotter.clear()
         self.renderable = None
+        self.push()
+
+    def refit(self) -> None:
+        """Fits the camera to the model and, while the Setup tab shows them, the glyphs and their labels."""
+        bounds = self.controller.fit_bounds()
+        if bounds is None:
+            super().refit()
+            return
+
+        self.plotter.renderer.ResetCamera(bounds)
         self.push()
 
     def rescale(self) -> None:
@@ -2277,7 +2425,7 @@ class FieldControlsPanel(PanelComponent):
 
 
 def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DEFAULTS, telemetry: str | Path | None = None) -> dock.Split:
-    """The field viewer dock: the controls beside the view.
+    """The field viewer dock: the controls and the Setup tab beside the view.
 
     Args:
         run: The run to open once the server runs: a Result, a Run, a run id or a bundle directory; None opens the newest indexed run once one lands.
@@ -2305,7 +2453,15 @@ def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DE
 
         return panel
 
+    def setup(app: Workbench, id: str, title: str) -> "SetupPanel":
+        # The Setup tab's module imports this one.
+        from femforge_workbench.panels.setup import SetupPanel
+
+        return SetupPanel(app, id, title, controller_for(app))
+
     def view_3d(app: Workbench, id: str, title: str) -> FieldViewerPanel:
         return FieldViewerPanel(app, id, title, controller_for(app))
 
-    return dock.Split([dock.Panel(FIELD_VIEWER.title, controls, id=FieldPanel.CONTROLS, weight=1), dock.Panel("View", view_3d, id=FieldPanel.VIEW_3D, weight=3)])
+    tabs = dock.Tabs([dock.Panel(FIELD_VIEWER.title, controls, id=FieldPanel.CONTROLS), dock.Panel("Setup", setup, id=FieldPanel.SETUP)], weight=1)
+
+    return dock.Split([tabs, dock.Panel("View", view_3d, id=FieldPanel.VIEW_3D, weight=3)])

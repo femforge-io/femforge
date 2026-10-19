@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from femforge.common.vector import Vec3
@@ -28,6 +29,7 @@ __all__ = [
     "readout",
     "along",
     "vector_readout",
+    "components_readout",
 ]
 
 SIGNIFICANT_DIGITS = 3
@@ -121,6 +123,20 @@ def _significant(value: float) -> str:
     return text
 
 
+def _rung(value: Quantity) -> Rung | None:
+    """The largest rung of the ladder of ``value`` that reads it at least 1, else the smallest; None when no ladder matches."""
+    ladder: Ladder | None = next((candidate for candidate in LADDERS if candidate.matches(value)), None)
+
+    if ladder is None:
+        return None
+
+    for rung in reversed(ladder.rungs):
+        if abs(_rounded(value.m_as(rung.unit))) >= 1.0:
+            return rung
+
+    return ladder.rungs[0]
+
+
 def readout(value: Quantity, *, unit: Unit | None = None) -> str:
     """``value`` at three significant figures in the largest rung of its ladder that reads at least 1, or in ``unit`` when given."""
     if unit is not None:
@@ -129,22 +145,14 @@ def readout(value: Quantity, *, unit: Unit | None = None) -> str:
 
         return f"{_significant(value.m_as(unit))} {label}"
 
-    ladder: Ladder | None = next((candidate for candidate in LADDERS if candidate.matches(value)), None)
+    rung: Rung | None = _rung(value)
 
-    if ladder is None:
+    if rung is None:
         compact: Quantity = value.to_compact()
 
         return f"{_significant(compact.magnitude)} {compact.units:~P}"
 
-    for rung in reversed(ladder.rungs):
-        magnitude: float = _rounded(value.m_as(rung.unit))
-
-        if abs(magnitude) >= 1.0:
-            return f"{_significant(magnitude)} {rung.label}"
-
-    smallest: Rung = ladder.rungs[0]
-
-    return f"{_significant(value.m_as(smallest.unit))} {smallest.label}"
+    return f"{_significant(value.m_as(rung.unit))} {rung.label}"
 
 
 def along(direction: Vec3) -> str:
@@ -164,3 +172,30 @@ def vector_readout(value: VectorQuantity) -> str:
         return readout(size)
 
     return f"{readout(size)} Along {along(vector)}"
+
+
+def components_readout(components: Sequence[float | str], unit: str) -> str:
+    """Signed ``components`` in the SI ``unit`` as one tuple in the rung their largest reads in, such as ``(500, -0.2) kPa``; a text component reads as itself.
+
+    Args:
+        components: The components, in solve order.
+        unit: The pint unit the components are in, such as ``Pa``.
+    """
+
+    def text_of(component: float | str) -> str:
+        if isinstance(component, str):
+            return component
+
+        if abs(component) <= ZERO_COMPONENT * largest:
+            return "0"
+
+        return _significant(quantity(component, unit).m_as(shown))
+
+    largest: float = max((abs(component) for component in components if not isinstance(component, str)), default=0.0)
+    size: Quantity = quantity(largest, unit)
+    rung: Rung | None = _rung(size)
+    shown: str = rung.unit if rung is not None else str(size.to_compact().units)
+    label: str = rung.label if rung is not None else f"{U.Unit(shown):~P}"
+    texts: list[str] = [text_of(component) for component in components]
+
+    return f"({', '.join(texts)}) {label}"
