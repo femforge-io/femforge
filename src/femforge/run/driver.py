@@ -215,7 +215,14 @@ class Driver:
 
             # One producer per bundle: a second process asking for the same identity waits, then reuses what the first left.
             claim = DirLock(self.runs_dir / f"{run_id}{LOCK_SUFFIX}")
+            waiting = False
             while not claim.try_acquire():
+                if not waiting:
+                    waiting = True
+                    owner = claim.owner()
+                    holder = owner.pid if owner is not None else None
+                    log.bind(**{str(LogKey.RUN_ID): run_id, str(LogKey.HOLDER): holder}).info("Waiting for another process to finish the run.")
+
                 time.sleep(CLAIM_POLL_S)
                 reused = self._reuse(config, key, sim_dir)
                 if reused is not None:

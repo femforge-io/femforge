@@ -223,8 +223,9 @@ def test_a_stalled_linear_solve_is_stopped_and_reported_once(tmp_path: Path) -> 
 
     stalled = [(message, extra) for message, extra in records if message.startswith("stalled:")]
     assert len(stalled) == 1
-    assert stalled[0][1]["iteration"] == 1339
-    assert stalled[0][1]["solver"] == "linear elasticity"
+    assert stalled[0][1][LogKey.ITERATION] == 1339
+    assert stalled[0][1][LogKey.SOLVER] == "linear elasticity"
+    assert stalled[0][1][LogKey.STALL] is StallReason.REPEATED and stalled[0][1][LogKey.RESIDUAL] == run.stall.residual
 
 
 def test_the_backend_sees_the_stall_as_a_cancel(tmp_path: Path) -> None:

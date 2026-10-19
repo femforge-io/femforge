@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from rich.console import Console
 
-from femforge.common.log import LOG_LEVEL_ENV, RelayedRecord, _reset_for_tests, gate_libraries, get_console, log, log_to_stdout_json, relay_record, run_log_context, setup_logging
+from femforge.common.log import LOG_LEVEL_ENV, LogKey, RelayedRecord, _reset_for_tests, gate_libraries, get_console, log, log_to_stdout_json, relay_record, run_log_context, setup_logging
 
 
 if TYPE_CHECKING:
@@ -130,6 +130,17 @@ def test_terminal_sink_hides_run_id() -> None:
     assert "run_id:" not in out
     assert "abc123" not in out
     assert "step: 'mesh'" in out
+
+
+@pytest.mark.usefixtures("clean_logging")
+def test_terminal_sink_keeps_a_bound_convergence_line_on_one_row() -> None:
+    """The keys a convergence or progress record binds for its readers stay out of the terminal, so the aligned line never wraps."""
+    buf = StringIO()
+    setup_logging(level="INFO", console=Console(file=buf, width=140))
+    bound: dict[LogKey, object] = {LogKey.PROGRESS: 0.23, LogKey.SOLVER: "mgdyn2d", LogKey.ITERATION: 2, LogKey.MAX_ITERATIONS: 5, LogKey.STALL: "repeated", LogKey.STAGE: "run_solver"}
+    log.bind(**{str(key): value for key, value in bound.items()}).info("mgdyn2d NS 2/5 L₂ Norm = 1.234e-03  Δ = 2.45e-02 / 1e-07 23%")
+
+    assert len(buf.getvalue().strip().splitlines()) == 1
 
 
 @pytest.mark.usefixtures("clean_logging")

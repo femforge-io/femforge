@@ -87,11 +87,20 @@ class LogKey(StrEnum):
     MAX_ITERATIONS = "max_iterations"
     """That linear solve's iteration cap."""
 
+    RESIDUAL = "residual"
+    """The latest relative residual of the linear solve a progress or stall record reports on."""
+
+    STALL = "stall"
+    """Why the watchdog stopped a linear solve, on its stall record."""
+
+    HOLDER = "holder"
+    """The process id holding the claim on the run a driver waits for; None when it already let go."""
+
     ORIGIN = "origin"
     """Where a reused bundle came from."""
 
     TASK = "task"
-    """The workbench task whose child process logged a relayed record."""
+    """The workbench task a board record is about."""
 
 
 class LogLevel(StrEnum):
@@ -112,6 +121,9 @@ DEFAULT_LIBRARY_LEVELS: dict[str, LogLevel] = {"build123d": LogLevel.WARNING}
 
 # The terminal sink's fixed name:function column width; long paths are left-truncated to keep lines aligned.
 _PATH_WIDTH = 36
+
+_PLUMBING_KEYS = frozenset({LogKey.RUN_ID, LogKey.RUN_DIR, LogKey.STAGE, LogKey.PROGRESS, LogKey.SOLVER, LogKey.ITERATION, LogKey.MAX_ITERATIONS, LogKey.STALL})
+"""Bound keys a reader of the record parses and the terminal leaves out, since the message already says them."""
 
 _console: Console | None = None
 _terminal: tuple[RichSink, int] | None = None
@@ -315,7 +327,7 @@ def setup_logging(
     sink = RichSink(
         console if console is not None else get_console(),
         path_width=_PATH_WIDTH,
-        hide_keys=frozenset({LogKey.RUN_ID, LogKey.RUN_DIR, LogKey.STAGE, LogKey.PROGRESS, TELEMETRY_ROUTE}),
+        hide_keys=frozenset({*_PLUMBING_KEYS, TELEMETRY_ROUTE}),
     )
     _logger.remove()
     _terminal = (sink, _add_terminal_sink(sink, resolved))

@@ -1,5 +1,6 @@
 """Driver reuse, run-directory claims, bundle publish, and the cache-served STEP and mesh stages — all without gmsh or Elmer."""
 
+import os
 import shutil
 import threading
 import time
@@ -17,6 +18,7 @@ from femforge.artifacts.local import LocalArtifactStore
 from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock, LockOwner
 from femforge.artifacts.sidecar import ArtifactOrigin
 from femforge.frames import Axis, Axisymmetric, FrameGeometryError, FrameUnion, Solid
+from femforge.common.log import LogKey, log
 from femforge.common.names import bundle_name
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
@@ -208,14 +210,21 @@ def test_evaluate_waits_for_a_claim_held_elsewhere(tmp_path: Path, monkeypatch: 
         time.sleep(0.05)
         lock.release()
 
+    records: list[tuple[str, dict[str, object]]] = []
+    sink_id: int = log.add(lambda message: records.append((message.record["message"], dict(message.record["extra"]))), level="INFO")
     thread = threading.Thread(target=release_later)
     thread.start()
-    result = Driver(runs_dir=tmp_path, code_sha="sha1", solver=solver).evaluate(config)
-    thread.join()
+    try:
+        result = Driver(runs_dir=tmp_path, code_sha="sha1", solver=solver).evaluate(config)
+    finally:
+        thread.join()
+        log.remove(sink_id)
 
+    waits = [extra for message, extra in records if LogKey.HOLDER in extra]
     assert result.status == RunStatus.OK
     assert solver.calls == 1
     assert not lock.path.exists()
+    assert [(extra[LogKey.RUN_ID], extra[LogKey.HOLDER]) for extra in waits] == [(_run_name(config), os.getpid())], "the wait is logged once, naming the holder"
 
 
 def test_a_waiting_driver_reuses_what_the_holder_produced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

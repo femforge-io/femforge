@@ -97,9 +97,12 @@ def solve_case(
         if verdict is not None:
             stalled.set()
             log.bind(
-                solver=verdict.solver,
-                iteration=verdict.iteration,
-                residual=verdict.residual,
+                **{
+                    str(LogKey.STALL): verdict.reason,
+                    str(LogKey.SOLVER): verdict.solver,
+                    str(LogKey.ITERATION): verdict.iteration,
+                    str(LogKey.RESIDUAL): verdict.residual,
+                },
                 best_residual=verdict.best_residual,
                 tolerance=verdict.tolerance,
             ).warning(f"stalled: {verdict.summary}")
