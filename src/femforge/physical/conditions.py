@@ -179,14 +179,6 @@ type SummaryLine = tuple[SummaryPart, ...]
 """One line of a condition's summary, its parts in reading order."""
 
 
-def _glyph_of(field: FieldInfo) -> str:
-    """The glyph of a field's docstring without its subscript, such as ``T`` for ``T_amb``; empty when the docstring names none."""
-    match: re.Match[str] | None = FIELD_DOCSTRING.match(field.description or "")
-    symbol: str | None = match.group("symbol") if match is not None else None
-
-    return symbol.split("_")[0] if symbol else ""
-
-
 def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[float]:
     """The numeric values of the ``stem 1`` to ``stem 3`` keywords in ``emitted``, in index order, skipping any that are absent or not numbers."""
     if emitted is None:
@@ -197,9 +189,12 @@ def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[float
     for index in range(1, 4):
         value: float | str | None = emitted.get(f"{stem} {index}")
 
+        if value is None:
+            continue
+
         try:
-            found.append(float(value))  # pyright: ignore[reportArgumentType]  # a None or non-numeric value raises, which skips it
-        except (TypeError, ValueError):
+            found.append(float(value))
+        except ValueError:
             continue
 
     return found
@@ -264,6 +259,13 @@ class Condition(BaseModel):
         Args:
             emitted: The keywords the condition's sif block received, by name.
         """
+
+        def glyph_of(field: FieldInfo) -> str:
+            match: re.Match[str] | None = FIELD_DOCSTRING.match(field.description or "")
+            symbol: str | None = match.group("symbol") if match is not None else None
+
+            return symbol.split("_")[0] if symbol else ""
+
         values: list[tuple[FieldInfo, Quantity]] = []
 
         for name, field in type(self).model_fields.items():
@@ -273,7 +275,7 @@ class Condition(BaseModel):
                 values.append((field, value))
 
         labelled: bool = len(values) > 1
-        parts: SummaryLine = tuple(SummaryPart(readout(value), label=_glyph_of(field) if labelled else "") for field, value in values)
+        parts: SummaryLine = tuple(SummaryPart(readout(value), label=glyph_of(field) if labelled else "") for field, value in values)
 
         return (parts,)
 

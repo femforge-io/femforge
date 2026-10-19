@@ -18,13 +18,15 @@ test("other keys and an empty grid move nothing", () => {
   expect(nextFocus("ArrowDown", 0, 0)).toBeNull();
 });
 
-test("Enter and Space select, G toggles the glyph, F frames and Escape clears", () => {
+test("Enter and Space select, G toggles the glyph, F frames, S shows and Escape clears", () => {
   expect(action("Enter")).toBe("select");
   expect(action(" ")).toBe("select");
   expect(action("g")).toBe("glyph");
   expect(action("G")).toBe("glyph");
   expect(action("f")).toBe("frame");
   expect(action("F")).toBe("frame");
+  expect(action("s")).toBe("show");
+  expect(action("S")).toBe("show");
   expect(action("Escape")).toBe("clear");
   expect(action("x")).toBeNull();
 });

@@ -49,10 +49,10 @@ class EntityRow(TypedDict, total=False):
     """One line per condition, under the name."""
 
     icon: IconName
-    """The glyph toggle's icon; absent for a row without a drawable condition."""
+    """The icon of the row's glyph kind; absent for a row without a drawable condition."""
 
     glyph_shown: bool
-    """Whether the row's glyph is shown."""
+    """Whether the row's glyph is shown; absent while no scene draws it, which leaves the icon without a toggle."""
 
     group: bool
     """Whether the row heads the bodies of one material."""
@@ -70,11 +70,11 @@ class EntityRow(TypedDict, total=False):
     """Whether the body is hidden in the Field Viewer, which the row offers to show."""
 
     label: str
-    """The row's accessible name: its name, its condition lines and its glyph state."""
+    """The row's accessible name: its name, its condition lines with their tooltips, its glyph state and why it is dimmed or hidden."""
 
 
 class EntityGrid(Element):
-    """Rows of bodies or boundaries as one grid: the arrows move the focus, Enter selects, G toggles a glyph, F frames and Escape clears."""
+    """Rows of bodies or boundaries as one grid: the arrows move the focus, Enter selects, G toggles a glyph, F frames, S shows a hidden body and Escape clears."""
 
     def __init__(
         self,
@@ -97,7 +97,7 @@ class EntityGrid(Element):
             on_select: Receives the id of a row clicked or chosen with Enter, or an empty id for Escape.
             on_toggle_glyph: Receives the id of a row whose glyph toggle was pressed.
             on_frame: Receives the id of a row double-clicked or framed with F.
-            on_show: Receives the id of a hidden body the row asked to show.
+            on_show: Receives the id of a hidden body whose Show was clicked or pressed with S.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         super().__init__("ff-entity-grid", locals(), None, **kwargs)

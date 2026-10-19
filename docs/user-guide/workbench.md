@@ -186,7 +186,7 @@ Field lines follow the shown vector field. While a scalar or a principal value i
 
 ### The Setup tab
 
-**Setup shows what the solver received.** The second tab beside the controls lists every body and boundary group with its material or measure and each condition in the solve frame, such as `Traction 500 kPa` for a 100 N pull on a 20 mm × 10 mm face; a component the frame drops reads `–`. The values come from the run's `conditions.json`, the record of what each sif block got, so a condition the frame mapped differently from how it was authored reads as solved. A run from before that record lists its groups without conditions and says so.
+**Setup shows what the solver received.** The second tab beside the controls lists every body and boundary group with its material or measure and each condition in the solve frame, such as `Traction 500 kPa` for a 100 N pull on a 20 mm × 10 mm face; a component the frame drops reads `–`, and its tooltip and the row's spoken name say which solve axes the frame keeps. The values come from the run's `conditions.json`, the record of what each sif block got, so a condition the frame mapped differently from how it was authored reads as solved. A run from before that record lists its groups without conditions and says so.
 
 | Section | Shows |
 |---|---|
@@ -197,9 +197,10 @@ Field lines follow the shown vector field. While a scalar or a principal value i
 
 - **Glyphs show only while the tab does.** The scene then draws each condition as a shape on a neutral fill with its value, and Show Glyphs turns them all off. A row's icon toggles its own glyph.
 - **Plain Bodies** paints every body grey while it is on, so the glyphs read clearly.
-- **Select a row to highlight its group** in the accent. Click it again or press `Esc` to clear the selection, and double-click it or press `F` to fit the camera to it. A row whose group has no cells to draw is dimmed.
+- **Select a row to highlight its group** in the accent. Click it again or press `Esc` to clear the selection, and double-click it or press `F` to fit the camera to it. A row whose group has no cells to draw is dimmed, and a body hidden in the Field Viewer offers Show, or `S`.
 - **Search** matches names, Elmer group names, materials and condition kinds. Press `/` to reach it from the tab, and `Esc` to clear it.
-- **A run without fields** opens on the Setup tab: one still solving or one that failed after meshing draws its glyphs on the mesh, and one that failed before meshing lists its authored tags. A run whose mesh was purged lists its rows without glyphs.
+- **A run without fields** opens on the Setup tab: one still solving or one that failed after meshing draws its glyphs on the mesh, and one that failed before meshing lists its authored tags. A run whose mesh was purged lists its rows without glyphs. Show Glyphs, Plain Bodies, the 2D switches and the legend switches act only while the view draws the run, and hide or disable otherwise.
+- **A new run resets** the row and kind toggles, the selection and the filter. A solving run that reopens with its fields keeps them, and the search carries over either way.
 
 ## Runs and figures
 

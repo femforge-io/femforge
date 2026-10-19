@@ -32,7 +32,6 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 ### Changed
 
 - The field viewer dock puts Setup beside the controls; a saved layout from before is ignored once.
-
 - Run, mesh and STEP keys move: every run re-meshes and re-solves once.
 - `ForceComponent` is now `CalculateMagneticForce`, with the kind `calculate_magnetic_force`, after the Elmer keyword it sets. Rename it in your scripts and saved configs.
 - `FixedPotential` is now `FixedVoltage`, with the kind `fixed_voltage`, and `scale_fixed_potentials` is now `scale_fixed_voltages`. Saved configs with `fixed_potential` no longer load: rename the kind. The sif keyword stays `Potential`, but the electrode boundary blocks, and so the `Run.electrode_currents` keys, end in `_fixed_voltage`. The field viewer names the potential of a voltage-driven run `Voltage Potential` and that of a 2D magnetostatic run `Magnetic Potential`, through the new `ElmerVariable.display_name` and the physics it reads from the run.

@@ -746,8 +746,8 @@ def group_scene(run: Run) -> GroupScene | None:
         return None
 
 
-def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) -> frozenset[str]:
-    """The ids of the run's groups the scene has cells of, which the Setup tab can highlight; none without a glyph layer or when the cells cannot be read.
+def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) -> frozenset[str] | None:
+    """The ids of the run's groups the scene has cells of, which the Setup tab can highlight; none without a scene, None when the scene's glyph layer or cells failed to read.
 
     Args:
         layer: The run's glyph layer.
@@ -755,7 +755,7 @@ def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) ->
         run: The run whose groups are checked.
     """
     if layer is None:
-        return frozenset()
+        return frozenset() if host is None else None
 
     bodies = [EntityRef(EntityKind.BODY, body.name) for body in run.bodies]
     refs = [*bodies, *(EntityRef(EntityKind.BOUNDARY, boundary.name) for boundary in run.boundaries)]
@@ -764,7 +764,7 @@ def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) ->
     except Exception:  # noqa: BLE001 - a group whose cells fail to read costs the highlight, never the tab
         log.bind(run_id=run.path.name).opt(exception=True).warning("Group cells unreadable; the Setup tab dims every row.")
 
-        return frozenset()
+        return None
 
 
 def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
@@ -914,6 +914,8 @@ class FieldViewerController(TrameComponent):
         self.setup_panel: SetupPanel | None = None
         self.highlightable: frozenset[str] | None = None
         """The entity ids the scene has cells of; None until the open run's scene or mesh is read."""
+        self.cells_unreadable = False
+        """Whether the open run's scene failed to read its group cells, so the Setup tab can highlight none."""
         self.model_dim = 3
         self.bodies: list[str] = []
         self.viewer: FieldViewerPanel | None = None
@@ -1221,9 +1223,13 @@ class FieldViewerController(TrameComponent):
             if token != self.generation:
                 return
 
+            previous = self.opened
+            same = previous is not None and (previous.runs_dir, previous.run_id) == (opened.runs_dir, opened.run_id)
+            fresh = not same or self.setup is None
             self.setup = setup
             self.highlightable = None
-            self.publish_setup()
+            self.cells_unreadable = False
+            self.publish_setup(fresh=fresh)
             self.indexed = indexed
             self.seen = None
             offered = self.adopt(opened, run.path)
@@ -1290,14 +1296,15 @@ class FieldViewerController(TrameComponent):
         self.mark(marks)
         self.draw_groups()
 
-    def publish_setup(self) -> None:
-        """Shows the open run in the Setup tab, its toggles and selection reset."""
+    def publish_setup(self, *, fresh: bool = True) -> None:
+        """Shows the open run in the Setup tab, its toggles and selection reset unless the same run reopened."""
         if self.setup_panel is not None:
-            self.setup_panel.show_run(self.setup)
+            self.setup_panel.show_run(self.setup, fresh=fresh)
 
-    def mark(self, marks: frozenset[str]) -> None:
-        """Records which groups the scene can highlight and has the Setup tab dim the rest."""
-        self.highlightable = marks
+    def mark(self, marks: frozenset[str] | None) -> None:
+        """Records which groups the scene can highlight, None when its cells failed to read, and has the Setup tab dim the rest."""
+        self.highlightable = marks if marks is not None else frozenset()
+        self.cells_unreadable = marks is None
         if self.setup_panel is not None:
             self.setup_panel.publish()
 

@@ -154,7 +154,7 @@ function RowView({
           </Tipped>
         </span>
         <span role="gridcell" className="flex justify-center">
-          {row.icon ? (
+          {row.icon && row.glyph_shown !== undefined ? (
             <button
               type="button"
               tabIndex={-1}
@@ -171,6 +171,10 @@ function RowView({
             >
               <Icon name={row.icon} size={14} />
             </button>
+          ) : row.icon ? (
+            <span aria-hidden className="flex size-5 items-center justify-center text-muted-foreground">
+              <Icon name={row.icon} size={14} />
+            </span>
           ) : (
             <span aria-hidden className="text-muted-foreground">
               ─
@@ -197,6 +201,7 @@ function RowView({
           <button
             type="button"
             tabIndex={-1}
+            aria-keyshortcuts="S"
             onClick={(event) => {
               event.stopPropagation();
               onShow?.(row.id);
@@ -268,7 +273,7 @@ function VirtualRows({ rows, focus, selected, scroller, ...rest }: RowsProps & {
   );
 }
 
-/** Rows of bodies or boundaries as one grid with a single tab stop: the arrows move, Enter selects, G toggles the glyph, F frames and Escape clears. */
+/** Rows of bodies or boundaries as one grid with a single tab stop: the arrows move, Enter selects, G toggles the glyph, F frames, S shows a hidden body and Escape clears. */
 export function EntityGrid({
   rows,
   selected,
@@ -318,10 +323,13 @@ export function EntityGrid({
         onSelect?.(row.id);
         break;
       case "glyph":
-        if (row.icon) onToggleGlyph?.(row.id);
+        if (row.icon && row.glyph_shown !== undefined) onToggleGlyph?.(row.id);
         break;
       case "frame":
         onFrame?.(row.id);
+        break;
+      case "show":
+        if (row.hidden) onShow?.(row.id);
         break;
       case "clear":
         onSelect?.("");
