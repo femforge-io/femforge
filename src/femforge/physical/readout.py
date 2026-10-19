@@ -174,18 +174,28 @@ def vector_readout(value: VectorQuantity) -> str:
     return f"{readout(size)} Along {along(vector)}"
 
 
-def components_readout(components: Sequence[float], unit: str) -> str:
-    """Signed ``components`` in the SI ``unit`` as one tuple in the rung their largest reads in, such as ``(500, -0.2) kPa``.
+def components_readout(components: Sequence[float | str], unit: str) -> str:
+    """Signed ``components`` in the SI ``unit`` as one tuple in the rung their largest reads in, such as ``(500, -0.2) kPa``; a text component reads as itself.
 
     Args:
         components: The components, in solve order.
         unit: The pint unit the components are in, such as ``Pa``.
     """
-    largest: float = max((abs(component) for component in components), default=0.0)
+
+    def text_of(component: float | str) -> str:
+        if isinstance(component, str):
+            return component
+
+        if abs(component) <= ZERO_COMPONENT * largest:
+            return "0"
+
+        return _significant(quantity(component, unit).m_as(shown))
+
+    largest: float = max((abs(component) for component in components if not isinstance(component, str)), default=0.0)
     size: Quantity = quantity(largest, unit)
     rung: Rung | None = _rung(size)
     shown: str = rung.unit if rung is not None else str(size.to_compact().units)
     label: str = rung.label if rung is not None else f"{U.Unit(shown):~P}"
-    texts: list[str] = ["0" if abs(component) <= ZERO_COMPONENT * largest else _significant(quantity(component, unit).m_as(shown)) for component in components]
+    texts: list[str] = [text_of(component) for component in components]
 
     return f"({', '.join(texts)}) {label}"

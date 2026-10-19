@@ -78,4 +78,5 @@ def test_components_read_signed_in_the_rung_of_the_largest() -> None:
     assert components_readout([500000.0, 0.0], "Pa") == "(500, 0) kPa"
     assert components_readout([-2.5e6, 1.0e-9, 1.2e5], "Pa") == "(-2.5, 0, 0.12) MPa"
     assert components_readout([0.0, 0.0], "N") == "(0, 0) N"
+    assert components_readout([500000.0, "expr"], "Pa") == "(500, expr) kPa", "a text component reads as itself"
     assert components_readout([3.0, 4.0], "s") == "(3, 4) s", "a quantity without a ladder reads in its compact unit"

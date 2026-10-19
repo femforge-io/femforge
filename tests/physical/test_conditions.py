@@ -600,12 +600,39 @@ def test_a_fixed_displacement_reads_each_axis_with_its_component() -> None:
     assert [part.value for part in roller] == ["0.1 mm", "Free", "0"]
 
 
-def test_a_fixed_displacement_reads_what_each_solve_coordinate_received() -> None:
-    clamp = FixedDisplacement().summary({"Displacement 1": 0.0, "Displacement 2": 0.0})[0]
-    roller = FixedDisplacement(y=None, z=None).summary({"Displacement 1": -0.002})[0]
+def _solved(condition: FixedDisplacement, frame: Frame) -> list[tuple[str, str, str | None]]:
+    """The summary of what ``condition`` emitted on a boundary of ``frame``, as label, value and authored component."""
+    emitted = condition.on_boundary(BoundarySite(name="FACE", measure=None, frame=frame))
 
-    assert [(part.label, part.value, part.component) for part in clamp] == [("X", "0", None), ("Y", "0", None)]
-    assert [(part.label, part.value, part.component) for part in roller] == [("X", "-2 mm", None), ("Y", "Free", "y"), ("Z", "Free", "z")]
+    return [(part.label, part.value, part.component) for part in condition.summary(emitted, frame=frame)[0]]
+
+
+def test_a_fixed_displacement_reads_what_each_solve_coordinate_received() -> None:
+    roller = FixedDisplacement(x=quantity(-2, "mm"), y=None, z=None)
+
+    assert _solved(FixedDisplacement(), Solid()) == [("X", "0", "x"), ("Y", "0", "y"), ("Z", "0", "z")]
+    assert _solved(roller, Solid()) == [("X", "-2 mm", "x"), ("Y", "Free", "y"), ("Z", "Free", "z")]
+    assert _read(roller.summary({"Displacement 1": -0.002})) == [["X", "-2 mm", "Y", "Free", "Z", "Free"]], "no frame reads the identity frame"
+
+
+def test_a_fixed_displacement_reads_the_authored_axes_whatever_the_frame_solves() -> None:
+    sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
+    flipped = Cartesian2D(normal=Axis(direction=Direction(0, 0, -1)), thickness=quantity(10, "mm"))
+    lifted = FixedDisplacement(y=quantity(1, "mm"))
+
+    assert _solved(FixedDisplacement(y=None), sideways) == [("X", "–", "x"), ("Y", "Free", "y"), ("Z", "0", "z")]
+    assert _solved(FixedDisplacement(z=None), sideways) == [("X", "–", "x"), ("Y", "0", "y"), ("Z", "Free", "z")]
+    assert lifted.on_boundary(BoundarySite(name="FACE", measure=None, frame=flipped)) == {"Displacement 1": 0.0, "Displacement 2": -0.001}
+    assert _solved(lifted, flipped) == [("X", "0", "x"), ("Y", "1 mm", "y"), ("Z", "–", "z")], "the sign the frame gave the solve Y is restored"
+    assert _solved(FixedDisplacement(), Axisymmetric()) == [("X", "0", "x"), ("Y", "–", "y"), ("Z", "0", "z")]
+    assert FixedDisplacement().dropped_fields(Axisymmetric()) == ("y",), "the dash marks exactly the axis the record drops"
+
+
+def test_an_axis_oblique_to_the_solve_axes_reads_its_authored_value() -> None:
+    oblique = Cartesian2D(normal=Axis(direction=Direction(0, 0, 1)), x_dir=Direction(1, 1, 0), thickness=quantity(10, "mm"))
+    held = FixedDisplacement(x=quantity(1, "mm"), y=quantity(1, "mm"), z=None)
+
+    assert _solved(held, oblique) == [("X", "1 mm", "x"), ("Y", "1 mm", "y"), ("Z", "Free", "z")]
 
 
 def test_a_condition_with_several_values_labels_each_with_its_glyph() -> None:
@@ -620,7 +647,8 @@ def test_a_magnet_reads_its_direction_and_the_remanence_it_was_emitted_with() ->
     magnet = Magnetization(direction=Direction(0, 0, 1))
     emitted = {"Magnetization 1": "0", "Magnetization 2": f"{1.32 / MU0:.6g}", "Magnetization 3": "Real MATC"}
 
-    assert _read(magnet.summary(emitted)) == [["Along (0, 0, 1)"], ["Br", "(0, 1.32) T"]]
+    assert _read(magnet.summary(emitted)) == [["Along (0, 0, 1)"], ["Br", "(0, 1.32, expr) T"]], "an expression keeps its place in the tuple"
+    assert magnet.summary(emitted)[1][0].tip == "Real MATC", "the placeholder's tooltip is the expression"
     assert _read(magnet.summary()) == [["Along (0, 0, 1)"]]
     assert _read(Magnetization(direction=None).summary()) == [["No Direction"]]
 

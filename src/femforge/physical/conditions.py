@@ -101,9 +101,9 @@ class ConditionGlyph(StrEnum):
     """A voltage potential or coil terminal."""
 
 
-def _solve_axes(frame: Frame) -> tuple[Vec3, ...]:
-    """The authored directions of the solve coordinates of ``frame``: the world axes, or the solve plane's X and Y."""
-    plane: SolvePlane | None = frame.plane
+def _solve_axes(frame: Frame | None) -> tuple[Vec3, ...]:
+    """The authored directions of the solve coordinates of ``frame``: the world axes for a whole-model or absent frame, or the solve plane's X and Y."""
+    plane: SolvePlane | None = frame.plane if frame is not None else None
 
     if plane is None:
         return (Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0), Vec3(0.0, 0.0, 1.0))
@@ -174,17 +174,27 @@ class SummaryPart:
     component: Component | None = None
     """The authored axis the part reads, so the Setup tab can mark an axis the frame drops; None for any other part."""
 
+    tip: str = ""
+    """What a placeholder in the value stands for, such as the expression an ``expr`` replaces; empty for none."""
+
 
 type SummaryLine = tuple[SummaryPart, ...]
 """One line of a condition's summary, its parts in reading order."""
 
 
-def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[tuple[int, float]]:
-    """The 1-based index and numeric value of each ``stem 1`` to ``stem 3`` keyword in ``emitted``, in solve order, skipping any that are absent or not numbers."""
+_DROPPED = "–"
+"""What an authored axis the frame has no solve coordinate for reads as."""
+
+_EXPRESSION = "expr"
+"""What a keyword holding an expression rather than a number reads as."""
+
+
+def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[tuple[int, float | str]]:
+    """The 1-based index and value of each ``stem 1`` to ``stem 3`` keyword in ``emitted``, in solve order: a number as a float, an expression as its text."""
     if emitted is None:
         return []
 
-    found: list[tuple[int, float]] = []
+    found: list[tuple[int, float | str]] = []
 
     for index in range(1, 4):
         value: float | str | None = emitted.get(f"{stem} {index}")
@@ -195,9 +205,17 @@ def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[tuple
         try:
             found.append((index, float(value)))
         except ValueError:
-            continue
+            found.append((index, str(value)))
 
     return found
+
+
+def _components_part(components: list[tuple[int, float | str]], unit: str, label: str, *, scale: float = 1.0) -> SummaryPart:
+    """``components`` scaled by ``scale`` as one signed tuple in ``unit`` after ``label``; an expression reads ``expr`` in its place, its text the tooltip."""
+    values: list[float | str] = [value * scale if isinstance(value, float) else _EXPRESSION for _, value in components]
+    expressions: list[str] = [value for _, value in components if isinstance(value, str)]
+
+    return SummaryPart(components_readout(values, unit), label=label, tip="; ".join(expressions))
 
 
 class Condition(BaseModel):
@@ -253,11 +271,12 @@ class Condition(BaseModel):
         """The authored fields ``frame`` has no solve coordinate for; the default drops none."""
         return ()
 
-    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """How the Setup tab reads this condition: one line of its sif-keyword fields, each after its glyph when there are several; the default ignores ``emitted``.
+    def summary(self, emitted: Mapping[str, float | str] | None = None, *, frame: Frame | None = None) -> tuple[SummaryLine, ...]:
+        """How the Setup tab reads this condition: one line of its sif-keyword fields, each after its glyph when there are several; the default ignores ``emitted`` and ``frame``.
 
         Args:
             emitted: The keywords the condition's sif block received, by name.
+            frame: The frame the run solved in; None reads the authored axes as the solve axes.
         """
 
         def glyph_of(field: FieldInfo) -> str:
@@ -333,25 +352,25 @@ class Magnetization(Condition):
 
         return tuple(enumerate(components, start=1))
 
-    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """The authored direction, then the remanence ``Br = μ₀·M`` of the emitted ``Magnetization i`` components in solve order.
+    def summary(self, emitted: Mapping[str, float | str] | None = None, *, frame: Frame | None = None) -> tuple[SummaryLine, ...]:
+        """The authored direction, then the remanence ``Br = μ₀·M`` of the emitted ``Magnetization i`` components in solve order; ``frame`` is ignored.
 
         Args:
             emitted: The keywords the magnet's Material block received, by name.
+            frame: The frame the run solved in.
         """
         if self.direction is None:
             return ((SummaryPart("No Direction"),),)
 
         direction: SummaryLine = (SummaryPart(f"Along {along(self.direction)}"),)
-        components: list[tuple[int, float]] = _numbers(emitted, "Magnetization")
+        components: list[tuple[int, float | str]] = _numbers(emitted, "Magnetization")
 
         if not components:
             return (direction,)
 
         mu_0: float = quantity(1.0, "mu_0").m_as("T*m/A")
-        remanence: list[float] = [mu_0 * value for _, value in components]
 
-        return (direction, (SummaryPart(components_readout(remanence, "T"), label="Br"),))
+        return (direction, (_components_part(components, "T", "Br", scale=mu_0),))
 
 
 class CurrentDensity(Condition):
@@ -600,11 +619,12 @@ class CoilTerminal(Condition):
         """The ``Coil Start`` or ``Coil End`` flag for this ``role``."""
         return {"Coil Start" if self.role == "start" else "Coil End": "Logical True"}
 
-    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """The ``role``, ``Start`` or ``End``; ``emitted`` is ignored.
+    def summary(self, emitted: Mapping[str, float | str] | None = None, *, frame: Frame | None = None) -> tuple[SummaryLine, ...]:
+        """The ``role``, ``Start`` or ``End``; ``emitted`` and ``frame`` are ignored.
 
         Args:
             emitted: The keywords the electrode's sif block received, by name.
+            frame: The frame the run solved in.
         """
         return ((SummaryPart(title(self.role)),),)
 
@@ -660,11 +680,12 @@ class CalculateMagneticForce(Condition):
         if torque and not frame.lumps_torque:
             raise ValueError(f"CalculateMagneticForce torque has no form in the {frame.label} frame; drop calculate_magnetic_torque, torque_origin and torque_axis.")
 
-    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """That the condition is an output the scene draws no glyph for; ``emitted`` is ignored.
+    def summary(self, emitted: Mapping[str, float | str] | None = None, *, frame: Frame | None = None) -> tuple[SummaryLine, ...]:
+        """That the condition is an output the scene draws no glyph for; ``emitted`` and ``frame`` are ignored.
 
         Args:
             emitted: The keywords the force Component received, by name.
+            frame: The frame the run solved in.
         """
         return ((SummaryPart("(Output, No Glyph)"),),)
 
@@ -694,7 +715,7 @@ class FixedDisplacement(Condition):
     z: Length | None = Field(default_factory=lambda: quantity(0.0, "m"))
     """`u_z` `[m]`: Prescribed displacement along the authored Z axis; None leaves it free."""
 
-    def _constraints(self) -> tuple[tuple[str, Vec3, float | None], ...]:
+    def _constraints(self) -> tuple[tuple[Component, Vec3, float | None], ...]:
         """Each authored axis's name, unit direction and prescribed SI displacement, None when it is free."""
         x: float | None = None if self.x is None else _si(self.x, U.m)
         y: float | None = None if self.y is None else _si(self.y, U.m)
@@ -709,7 +730,7 @@ class FixedDisplacement(Condition):
     def solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
         """Each 1-based solve coordinate the constrained axes run along in ``frame``, with its signed prescribed value; raises when the mapping is ill posed."""
         solve_axes: tuple[Vec3, ...] = _solve_axes(frame)
-        constraints: tuple[tuple[str, Vec3, float | None], ...] = self._constraints()
+        constraints: tuple[tuple[Component, Vec3, float | None], ...] = self._constraints()
 
         for name, axis, value in constraints:
             if value is None or value == 0.0:
@@ -780,31 +801,42 @@ class FixedDisplacement(Condition):
 
         return tuple(dropped)
 
-    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """``X 0 · Y 0``: each solve coordinate an emitted ``Displacement i`` holds, then each authored axis left ``Free``; without ``emitted``, every authored axis as authored.
+    def summary(self, emitted: Mapping[str, float | str] | None = None, *, frame: Frame | None = None) -> tuple[SummaryLine, ...]:
+        """``X 0 · Y Free · Z –``: each authored axis in order, held at the value its solve coordinate received, ``Free``, or ``–`` when ``frame`` drops it.
 
         Args:
-            emitted: The keywords the boundary's sif block received, by name; None reads the authored axes.
+            emitted: The keywords the boundary's sif block received, by name; None reads the authored values.
+            frame: The frame the boundary's model solved in; None reads the authored axes as the solve axes.
         """
+        solve_axes: tuple[Vec3, ...] = _solve_axes(frame)
+        received: dict[int, float | str] = dict(_numbers(emitted, str(ElmerVariable.DISPLACEMENT)))
 
         def shown(value: float) -> str:
             return "0" if value == 0.0 else readout(quantity(value, "m"))
 
-        def part(component: Component, value: Length | None) -> SummaryPart:
+        def part(component: Component, axis: Vec3, value: float | None) -> SummaryPart:
+            label: str = component.upper()
+
             if value is None:
-                return SummaryPart("Free", label=component.upper(), component=component)
+                return SummaryPart("Free", label=label, component=component)
 
-            return SummaryPart(shown(value.m_as("m")), label=component.upper(), component=component)
+            cosines: list[float] = [_snapped(axis.dot(solve_axis)) for solve_axis in solve_axes]
+            aligned: list[tuple[int, float]] = [(index, cosine) for index, cosine in enumerate(cosines, start=1) if cosine != 0.0]
 
-        axes: tuple[tuple[Component, Length | None], ...] = (("x", self.x), ("y", self.y), ("z", self.z))
+            if not aligned:
+                return SummaryPart(_DROPPED, label=label, component=component)
 
-        if emitted is None:
-            return (tuple(part(component, value) for component, value in axes),)
+            index, cosine = aligned[0]
+            solved: float | str | None = received.get(index)
 
-        held: list[SummaryPart] = [SummaryPart(shown(value), label="XYZ"[index - 1]) for index, value in _numbers(emitted, str(ElmerVariable.DISPLACEMENT))]
-        free: list[SummaryPart] = [part(component, None) for component, value in axes if value is None]
+            if len(aligned) == 1 and abs(cosine) == 1.0 and isinstance(solved, float):
+                return SummaryPart(shown(cosine * solved), label=label, component=component)
 
-        return (tuple(sorted([*held, *free], key=lambda candidate: candidate.label)),)
+            return SummaryPart(shown(value), label=label, component=component)
+
+        parts: SummaryLine = tuple(part(name, axis, value) for name, axis, value in self._constraints())
+
+        return (parts,)
 
 
 class SurfaceForce(Condition):
@@ -863,21 +895,20 @@ class SurfaceForce(Condition):
 
         return tuple(enumerate(components, start=1))
 
-    def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """The authored total and its direction, then the signed traction the emitted ``Force i`` components hold on the face, in solve order.
+    def summary(self, emitted: Mapping[str, float | str] | None = None, *, frame: Frame | None = None) -> tuple[SummaryLine, ...]:
+        """The authored total and its direction, then the signed traction the emitted ``Force i`` components hold on the face, in solve order; ``frame`` is ignored.
 
         Args:
             emitted: The keywords the face's sif block received, by name.
+            frame: The frame the run solved in.
         """
         total: SummaryLine = (SummaryPart(vector_readout(self.force)),)
-        components: list[tuple[int, float]] = _numbers(emitted, "Force")
+        components: list[tuple[int, float | str]] = _numbers(emitted, "Force")
 
         if not components:
             return (total,)
 
-        traction: str = components_readout([value for _, value in components], "Pa")
-
-        return (total, (SummaryPart(traction, label="Traction"),))
+        return (total, (_components_part(components, "Pa", "Traction"),))
 
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.
