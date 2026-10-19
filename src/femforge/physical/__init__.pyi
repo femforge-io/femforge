@@ -4,6 +4,7 @@ from .conditions import (
     CoilDrive as CoilDrive,
     CoilTerminal as CoilTerminal,
     Condition as Condition,
+    ConditionGlyph as ConditionGlyph,
     ConditionTarget as ConditionTarget,
     ConditionUnion as ConditionUnion,
     Convection as Convection,
