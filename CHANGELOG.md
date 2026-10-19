@@ -26,6 +26,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - Driver and solve records bind the keys of the new `LogKey` enum: the run directory, the stage, the solver, the share of convergence covered, the linear iteration, a stall's reason, the holder of a claim the driver waits on, a solve's linear solvers and those that factorize, the kind of artifact the cache served, and whether a stage record ends its stage. The terminal leaves out the keys its message already says.
 
 - A run records what each body and boundary group received from the sif in `conditions.json` (`Run.conditions()`); bodies and boundaries carry their centroid, bounding box, measure, length and mean outward normal; `Run.mesh_groups()` reads the Elmer mesh by group and `Run.authored_geometry()` the authored bodies a 2D frame sectioned. `femforge.physical.readout` formats quantities and directions at three significant figures, and each condition names its scene glyph, `Condition.glyph`.
+- `femforge.viz` draws a run's conditions in the field scene through `GlyphLayer`: load arrows, held-face tints with clamp ticks, pins and rollers, magnet arrows, out-of-plane current markers and value labels, plus the selected body or boundary in the accent, a 2D section's outline with its solve axes, and the authored bodies against the prism or revolved outline they were checked against. `GroupScene` draws a run without fields from its Elmer mesh. The field viewer draws them while its new `field_setup_shown` state is set.
 
 ### Changed
 
@@ -51,6 +52,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 
 ### Fixed
 
+- Color bar text no longer halves on a 2x display, in the Client and Server views alike.
 - `SurfaceForce` takes the solve share of its solve components, so an axial load under an axisymmetric frame no longer raises.
 - The field viewer recolors the bodies when another field is picked. It used to keep drawing the values of the field it opened on, so a switch from the displacement to Von Mises left the bodies at the bottom of the colormap.
 - Exporting an authored STEP again keeps its run identity, so the driver reuses the run. The digest now hashes the names, tags, colors, sizes, mass properties, faces and vertices of its bodies, `TaggedCompound.fingerprint`, instead of the bytes, which changed on every export; runs on an authored STEP are solved once more on first use.
