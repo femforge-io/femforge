@@ -36,6 +36,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.spec import MeshSpec
 from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.run.conditions import ConditionsFile
 from femforge.run.manifest import RunManifest
 from femforge.run.result import MeshStats, Result
 from femforge.run.retention import CleanupRecord, RetentionPolicy
@@ -77,6 +78,8 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "RunManifest": RunManifest,
     "Result": Result,
     "MeshStats": MeshStats,
+    # What each body and boundary group of a run received from the sif.
+    "ConditionsFile": ConditionsFile,
     # Retention: the policy a driver or purge applies and the record it leaves on the manifest.
     "RetentionPolicy": RetentionPolicy,
     "CleanupRecord": CleanupRecord,

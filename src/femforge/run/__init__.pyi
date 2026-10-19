@@ -7,6 +7,13 @@ from .artifacts import (
     rehydrate_bundle as rehydrate_bundle,
 )
 from .bundle import load_manifest as load_manifest, load_result as load_result, write_atomic as write_atomic, write_bundle as write_bundle, write_manifest as write_manifest
+from .conditions import (
+    ConditionRecord as ConditionRecord,
+    ConditionsFile as ConditionsFile,
+    GroupConditions as GroupConditions,
+    SifKeyword as SifKeyword,
+    SolveComponent as SolveComponent,
+)
 from .convergence import ConvergencePoint as ConvergencePoint, RichardsonEstimate as RichardsonEstimate, convergence_ladder as convergence_ladder, richardson as richardson
 from .driver import Driver as Driver, SolverFn as SolverFn
 from .electrical import (

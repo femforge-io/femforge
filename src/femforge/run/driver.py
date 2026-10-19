@@ -36,6 +36,7 @@ from femforge.frames import FrameGeometryError, GeometryCheck
 from femforge.meshing.backend import GmshMesher, MeshBackend, MeshJob, MeshReport
 from femforge.run.artifacts import BundlePolicy, MeshGroupsFile, bundle_files, rebind_groups
 from femforge.run.bundle import write_bundle, write_manifest
+from femforge.run.conditions import ConditionsFile
 from femforge.run.entities import write_entities
 from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, MeshSpec, RunSpec, StepSpec, mesh_spec, step_spec
 from femforge.run.manifest import RunManifest, cache_key, git_sha
@@ -683,11 +684,12 @@ class Driver:
         """
 
     def write_sif(self, state: SolveState) -> None:
-        """Generate the sif object graph from the typed stack and write the sif into the run directory."""
+        """Generate the sif object graph from the typed stack, write the sif into the run directory and record what each group received in ``conditions.json``."""
         if state.sim is None:
             raise RuntimeError("write_sif requires build_sim to have populated state.sim.")
 
         state.sim.generate().write(str(state.sim_dir))
+        _ = ConditionsFile.capture(state.sim, state.config.domain.tags).write(state.sim_dir)
 
     def run_solver(self, state: SolveState) -> None:
         """Partition the mesh when the solve is parallel (a partitioned backend is checked at construction), then run ElmerSolver on `backend`."""

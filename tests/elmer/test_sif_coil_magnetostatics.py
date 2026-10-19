@@ -193,12 +193,12 @@ def test_fixed_voltage_electrodes_are_inert_under_the_coil_solve() -> None:
     assert "Save Scalars" not in sif
 
 
-def test_condition_tag_name_requires_an_authoring_tag() -> None:
+def test_the_authoring_tag_lookup_requires_a_tag_carrying_the_condition() -> None:
     from femforge.elmer.sim import Sim
 
     orphan = CoilDrive(current=1 * U.A)
     with pytest.raises(ValueError, match="CoilDrive condition not found on any"):
-        _ = Sim._condition_tag_name([EntityTag(selector={TagKey.PHASE: "0"}, conditions=[])], orphan)
+        _ = Sim._tag_of([EntityTag(selector={TagKey.PHASE: "0"}, conditions=[])], orphan)
 
 
 def test_driveless_coil_solve_warns() -> None:

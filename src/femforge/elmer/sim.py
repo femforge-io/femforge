@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import warnings
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Mapping, Protocol, cast
+from typing import TYPE_CHECKING, Iterable, Mapping, Protocol, cast
 
 from femforge.elmer import sif
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, PhysicsConfig, SaveScalarsSolver, SifValue, solved_stack
@@ -70,6 +71,45 @@ class _Labelled(Protocol):
     label: str | None
 
 
+@dataclass(frozen=True)
+class SifLanding:
+    """One emission into the sif: which group's block received which keywords, from which condition and tag."""
+
+    group: str
+    """The body or boundary group the keywords land on."""
+
+    target: ConditionTarget
+    """Whether ``group`` is a body or a boundary group."""
+
+    kind: str
+    """The condition kind, or the pseudo-kind of a block femforge emits on its own, such as ``far_field``."""
+
+    condition: Condition | None
+    """The authored condition; None for a block femforge emits on its own."""
+
+    tag: EntityTag | None
+    """The tag that carries ``condition``; None for a block femforge emits on its own."""
+
+    section: SifSection
+    """The sif section of ``block``."""
+
+    block: sif.Boundary | sif.BodyForce | sif.Material | sif.Component
+    """The sif block the keywords merged into; its ``id`` is set when the sif is written."""
+
+    keywords: Mapping[str, SifValue]
+    """The keywords this emission contributed, in the solve frame."""
+
+
+@dataclass(frozen=True)
+class _Emission:
+    """One boundary emission before its merged block exists."""
+
+    kind: str
+    condition: Condition | None
+    tag: EntityTag | None
+    keywords: dict[str, SifValue]
+
+
 class Sim:
     """
     Generate an Elmer Simulation (and write the .sif) from the gmsh physical/boundary groups, via a two-phase
@@ -120,6 +160,9 @@ class Sim:
         # The sif Simulation, built by generate(); None until then so write()/validate() fail loudly if skipped.
         self.sim: sif.Simulation | None = None
 
+        self.landings: list[SifLanding] = []
+        """Every emission ``generate`` made into a body, body force, material, component or boundary block, in emission order."""
+
     # -- generation ----------------------------------------------------------
 
     def generate(self, validate: bool = True) -> "Sim":
@@ -129,6 +172,7 @@ class Sim:
         (the wiring falls back to its in-sif markers).
         """
         sim: sif.Simulation = sif.Simulation()
+        self.landings = []
         sim.settings = self.config.simulation.to_elmer()
         # Each typed model reflects its sif keyword block on demand; the constants block carries only the physics' activated constants.
         sim.constants.update(self.config.constants.to_elmer())
@@ -337,10 +381,10 @@ class Sim:
         at: Mapping[str, Quantity] = self.config.operating_point.as_mapping()
 
         # One Component per distinct CoilDrive instance (keyed by identity: the SAME drive authored on a phase's tag reaches every body of that phase).
-        coil_components: dict[int, tuple[str, Condition, list[sif.Body]]] = {}
+        coil_components: dict[int, tuple[EntityTag, Condition, list[sif.Body]]] = {}
 
         # Same identity-keyed grouping for CalculateMagneticForce: one authored instance gathers every matched body into one Component.
-        force_components: dict[int, tuple[str, Condition, list[sif.Body]]] = {}
+        force_components: dict[int, tuple[EntityTag, Condition, list[sif.Body]]] = {}
 
         # Magnet groups that get an auto force Component (no authoring needed); an authored CalculateMagneticForce on the group suppresses it.
         auto_force_bodies: list[tuple[str, sif.Body]] = []
@@ -357,7 +401,7 @@ class Sim:
             body.equation = equation if on_main or dielectric_equation is None else dielectric_equation
 
             for drive in drives:
-                fresh_entry: tuple[str, Condition, list[sif.Body]] = (self._condition_tag_name(group.tags, drive), drive, [])
+                fresh_entry: tuple[EntityTag, Condition, list[sif.Body]] = (self._tag_of(group.tags, drive), drive, [])
                 _, _, bodies = coil_components.setdefault(id(drive), fresh_entry)
                 bodies.append(body)
 
@@ -370,7 +414,7 @@ class Sim:
             forces: list[Condition] = self._force_conditions(group.tags)
 
             for cond in forces:
-                fresh_force_entry: tuple[str, Condition, list[sif.Body]] = (self._condition_tag_name(group.tags, cond), cond, [])
+                fresh_force_entry: tuple[EntityTag, Condition, list[sif.Body]] = (self._tag_of(group.tags, cond), cond, [])
                 _, _, force_bodies = force_components.setdefault(id(cond), fresh_force_entry)
                 force_bodies.append(body)
 
@@ -383,33 +427,75 @@ class Sim:
                 target=ConditionTarget.BODY,
             )
             data: dict[str, SifValue] = {}
+            forcing: list[tuple[Condition, dict[str, float | str]]] = []
 
             for cond in body_conditions:
                 if cond.section is SifSection.BODY_FORCE:
-                    data.update(cond.to_elmer())
+                    emitted: dict[str, float | str] = cond.to_elmer()
+                    data.update(emitted)
+                    forcing.append((cond, emitted))
 
             if data:
                 body.body_force = sif.BodyForce(sim, f"{group.name}_body_force", data)
 
+                for cond, emitted in forcing:
+                    self._land(group.name, cond, self._tag_of(group.tags, cond), body.body_force, emitted)
+
         # The Component blocks CoilSolver reads; the Body references resolve to their sif ids at write time.
-        for name, drive, bodies in coil_components.values():
-            _ = sif.Component(sim, f"{name}_coil", master_bodies=bodies, data=drive.to_elmer())
+        for tag, drive, bodies in coil_components.values():
+            emitted = drive.to_elmer()
+            component: sif.Component = sif.Component(sim, f"{tag.name}_coil", master_bodies=bodies, data=emitted)
+
+            for coil_body in bodies:
+                self._land(coil_body.name, drive, tag, component, emitted)
 
         # The force/torque-lumping Components CalcFields fills and SaveScalars exports.
-        for tag_name, cond, bodies in force_components.values():
+        for tag, cond, bodies in force_components.values():
             label: str | None = cast("_Labelled", cond).label
-            _ = sif.Component(sim, label or tag_name, master_bodies=bodies, data=cond.to_elmer())
+            emitted = cond.to_elmer()
+            component = sif.Component(sim, label or tag.name, master_bodies=bodies, data=emitted)
+
+            for force_body in bodies:
+                self._land(force_body.name, cond, tag, component, emitted)
 
         # Every magnet body gets force scalars without authoring; named by group so run.magnetic's name join works.
         for group_name, magnet_body in auto_force_bodies:
-            _ = sif.Component(sim, group_name, master_bodies=[magnet_body], data=CalculateMagneticForce().to_elmer())
+            auto_force: CalculateMagneticForce = CalculateMagneticForce()
+            emitted = auto_force.to_elmer()
+            component = sif.Component(sim, group_name, master_bodies=[magnet_body], data=emitted)
+            self.landings.append(
+                SifLanding(
+                    group=group_name,
+                    target=ConditionTarget.BODY,
+                    kind=auto_force.kind,
+                    condition=None,
+                    tag=None,
+                    section=SifSection.COMPONENT,
+                    block=component,
+                    keywords=emitted,
+                )
+            )
+
+    def _land(self, group: str, condition: Condition, tag: EntityTag, block: sif.BodyForce | sif.Material | sif.Component, keywords: Mapping[str, SifValue]) -> None:
+        """Record that ``condition`` from ``tag`` put ``keywords`` into the body ``group``'s ``block``."""
+        landing: SifLanding = SifLanding(
+            group=group,
+            target=ConditionTarget.BODY,
+            kind=cast("_DiscriminatedCondition", condition).kind,
+            condition=condition,
+            tag=tag,
+            section=condition.section,
+            block=block,
+            keywords=keywords,
+        )
+        self.landings.append(landing)
 
     @staticmethod
-    def _condition_tag_name(tags: list[EntityTag], condition: Condition) -> str:
-        """The name of the EntityTag that authored ``condition`` — the stable, human-readable Component name stem."""
+    def _tag_of(tags: Iterable[EntityTag], condition: Condition) -> EntityTag:
+        """The EntityTag that authored ``condition``; its name is the stable, human-readable Component name stem."""
         for tag in tags:
             if any(c is condition for c in tag.conditions):
-                return tag.name
+                return tag
         raise ValueError(f"{type(condition).__name__} condition not found on any of the region's tags (conditions_for returned it, so a tag must carry it).")
 
     # -- boundary conditions -------------------------------------------------
@@ -423,29 +509,49 @@ class Sim:
         """
         tags_by_body: dict[str, list[EntityTag]] = {group.name: group.tags for group in self.physical_groups}
         for bg in self.boundary_groups:
-            specs = self._boundary_specs(bg, tags_by_body)
+            emissions: list[_Emission] = self._boundary_emissions(bg, tags_by_body)
 
-            if not specs:
+            if not emissions:
                 continue
 
             merged: dict[str, SifValue] = {}
 
-            for _, data in specs:
-                merged.update(data)
+            for emission in emissions:
+                merged.update(emission.keywords)
 
-            name = f"{bg.name}_{'_'.join(kind for kind, _ in specs)}"
-            _ = sif.Boundary(sim, name, [bg.id], data=merged)
+            name = f"{bg.name}_{'_'.join(emission.kind for emission in emissions)}"
+            block: sif.Boundary = sif.Boundary(sim, name, [bg.id], data=merged)
+
+            for emission in emissions:
+                landing: SifLanding = SifLanding(
+                    group=bg.name,
+                    target=ConditionTarget.BOUNDARY,
+                    kind=emission.kind,
+                    condition=emission.condition,
+                    tag=emission.tag,
+                    section=SifSection.BOUNDARY_CONDITION,
+                    block=block,
+                    keywords=emission.keywords,
+                )
+                self.landings.append(landing)
+
+    @staticmethod
+    def _boundary_tags(bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[EntityTag]:
+        """The tags one boundary group draws its conditions from: its bordering bodies' tags first, then its own face tags, each tag once."""
+        body_tags: list[EntityTag] = [tag for body in bg.bodies for tag in tags_by_body.get(body, [])]
+        unique_tags: dict[int, EntityTag] = {id(tag): tag for tag in body_tags + bg.tags}
+
+        return list(unique_tags.values())
 
     def _boundary_conditions(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[Condition]:
         """The boundary conditions one group resolves under the active physics: its bordering bodies' tags first, then its own face tags, each tag once.
 
         An ``external_only`` condition lands only on an external group.
         """
-        body_tags: list[EntityTag] = [tag for body in bg.bodies for tag in tags_by_body.get(body, [])]
-        unique_tags: dict[int, EntityTag] = {id(tag): tag for tag in body_tags + bg.tags}
+        unique_tags: list[EntityTag] = self._boundary_tags(bg, tags_by_body)
 
         resolved_conditions: list[Condition] = conditions_for(
-            tags=unique_tags.values(),
+            tags=unique_tags,
             physics=condition_physics(self.physics),
             target=ConditionTarget.BOUNDARY,
         )
@@ -461,20 +567,27 @@ class Sim:
 
     def _boundary_specs(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[tuple[str, dict[str, SifValue]]]:
         """
-        The ``(kind, sif-data)`` specs one surface group resolves: its conditions in ``_boundary_conditions`` order, so a face
-        tag's keyword wins a clash with a body's, then the auto-emitted magnetic blocks. Kept free of sif objects so the
-        projection rule is unit-testable.
+        The ``(kind, sif-data)`` specs one surface group resolves, in [`_boundary_emissions`][] order. Kept free of sif
+        objects so the projection rule is unit-testable.
 
         Returns:
             A list of ``(kind, sif-data)`` tuples, one per resolved condition. The ``kind`` is the condition's
             discriminator (the same string the config's solver stack uses to select the solver for that condition).
         """
-        specs: list[tuple[str, dict[str, SifValue]]] = []
+        return [(emission.kind, emission.keywords) for emission in self._boundary_emissions(bg, tags_by_body)]
+
+    def _boundary_emissions(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[_Emission]:
+        """
+        The emissions one surface group resolves: its conditions in ``_boundary_conditions`` order, so a face tag's keyword
+        wins a clash with a body's, then the auto-emitted magnetic blocks.
+        """
+        specs: list[_Emission] = []
         site: BoundarySite = BoundarySite(name=bg.name, measure=bg.measure, frame=self.frame)
+        tags: list[EntityTag] = self._boundary_tags(bg, tags_by_body)
 
         for cond in self._boundary_conditions(bg, tags_by_body):
             kind: str = cast("_DiscriminatedCondition", cond).kind
-            specs.append((kind, dict(cond.on_boundary(site))))
+            specs.append(_Emission(kind=kind, condition=cond, tag=self._tag_of(tags, cond), keywords=dict(cond.on_boundary(site))))
 
         if self.physics in _MAGNETIC_FIELD_PHYSICS and bg.is_external:
             # Far field: Dirichlet A=0 on the outer shell. The WhitneyAV stacks pin the edge DOFs (`AV {e}`, the
@@ -482,13 +595,13 @@ class Sim:
             # approximation is fragile and gave nonsensical fields here. The axisymmetric scalar stack pins its
             # nodal Potential instead.
             if self.physics is Physics.MAGNETOSTATICS_2D:
-                specs.append((BoundaryKind.FAR_FIELD, {str(ElmerVariable.POTENTIAL): "Real 0"}))
+                specs.append(_Emission(kind=BoundaryKind.FAR_FIELD, condition=None, tag=None, keywords={str(ElmerVariable.POTENTIAL): "Real 0"}))
             else:
-                specs.append((BoundaryKind.FAR_FIELD, {"AV {e}": "Real 0"}))
+                specs.append(_Emission(kind=BoundaryKind.FAR_FIELD, condition=None, tag=None, keywords={"AV {e}": "Real 0"}))
 
         if self.physics is Physics.MAGNETOSTATICS_2D and bg.is_axis:
             # The same Dirichlet as the far field, but on r=0 it is the EXACT axis condition A_phi = 0, not an approximation.
-            specs.append((BoundaryKind.SYMMETRY_AXIS, {str(ElmerVariable.POTENTIAL): "Real 0"}))
+            specs.append(_Emission(kind=BoundaryKind.SYMMETRY_AXIS, condition=None, tag=None, keywords={str(ElmerVariable.POTENTIAL): "Real 0"}))
 
         return specs
 
@@ -508,18 +621,24 @@ class Sim:
 
         conditions: list[Condition] = self._material_conditions(group.tags)
         magnetization: Condition | None = conditions[0] if conditions else None
+        emitted: dict[str, SifValue] = {}
 
         if magnitude is None:
             # Flagged as a magnet but no resolvable remanence; mark rather than emit a zero field.
-            data["! Magnetization"] = "MISSING REMANENCE"
+            emitted["! Magnetization"] = "MISSING REMANENCE"
         elif magnetization is None or cast("_Oriented", magnetization).direction is None:
             # Material is a magnet but no (usable) orientation was found; mark rather than emit a zero field.
-            data["! Magnetization"] = "MISSING DIRECTION TAG"
+            emitted["! Magnetization"] = "MISSING DIRECTION TAG"
         else:
-            data.update(magnetization.to_elmer(magnitude, self.frame))
+            emitted.update(magnetization.to_elmer(magnitude, self.frame))
+
+        data.update(emitted)
 
         # Named per body (group.name is unique), so each Halbach slot is its own Material; the sif registry guards name clashes.
         body.material = sif.Material(sim, group.name, data=data)
+
+        if magnetization is not None:
+            self._land(group.name, magnetization, self._tag_of(group.tags, magnetization), body.material, emitted)
 
     # -- output --------------------------------------------------------------
 
