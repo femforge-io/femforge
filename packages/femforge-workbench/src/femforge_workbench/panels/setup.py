@@ -1182,7 +1182,13 @@ class SetupPanel(PanelComponent):
                 html.Span([react.Bind(warped)], classes=str(Cls.CAPTION))
 
     def grid(self, rows: SetupVar, label: str, columns: Sequence[str] | react.Bind) -> None:
-        """One table of rows under its column headers, wired to the selection, the glyph toggles, the framing and the Show of a hidden body."""
+        """One table of rows under its column headers, wired to the selection, the glyph toggles, the framing and the Show of a hidden body.
+
+        Args:
+            rows: The state variable holding the rows.
+            label: The grid's accessible name.
+            columns: The column headers, or a binding to them.
+        """
         EntityGrid(
             rows=react.Bind(str(rows)),
             selected=react.Bind(str(FieldVar.SELECTED_ENTITY)),
