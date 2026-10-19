@@ -19,7 +19,7 @@ from femforge.elmer.sections import SifSection
 from femforge.frames import Axis, Axisymmetric, BodyMismatch, Cartesian2D, FrameCheck, GeometryCheck, Solid
 from femforge.materials import Steel_1080
 from femforge.meshing.config import MeshConfig
-from femforge.physical.conditions import BoundarySite, CalculateMagneticForce, ConditionGlyph, Convection, CurrentDensity, FixedDisplacement, FixedVoltage, SurfaceForce
+from femforge.physical.conditions import BoundarySite, CalculateMagneticForce, ConditionGlyph, Convection, CurrentDensity, FixedDisplacement, FixedVoltage, Magnetization, SurfaceForce
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import quantity
 from femforge.run.bundle import write_manifest
@@ -58,6 +58,7 @@ from femforge_workbench.panels.setup import (  # noqa: E402
     condition_lines,
     count_text,
     dropped_tip,
+    empty_text,
     frame_facts,
     icon_of,
     legend_label,
@@ -68,6 +69,7 @@ from femforge_workbench.panels.setup import (  # noqa: E402
     notice_of,
     order,
     read_setup,
+    scale_text,
     tag_rows,
 )
 from femforge_workbench.persist import LocalJsonStore  # noqa: E402
@@ -282,6 +284,48 @@ def test_the_order_ranks_named_faces_then_conditioned_groups_then_interfaces_ext
     assert [order(boundary(kind), conditioned=False) for kind in (BoundaryKind.INTERFACE, BoundaryKind.EXTERNAL, BoundaryKind.AXIS)] == [2, 3, 4]
 
 
+def test_a_line_reads_the_authored_axes_in_order_with_the_dropped_one_muted_in_place() -> None:
+    sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
+    roller = FixedDisplacement(y=None)
+    emitted = roller.on_boundary(BoundarySite(name="LEFTFACE", measure=0.02, frame=sideways))
+    record = _record("fixed_displacement", roller, 1, cast("dict[str, float]", emitted), dropped=roller.dropped_fields(sideways))
+
+    assert condition_lines(record, sideways) == [
+        {
+            "parts": [
+                {"text": "Fixed Displacement "},
+                {"text": "X –", "muted": True, "tip": "Authored X runs along no solve axis: solve X and Y run along +Y and +Z."},
+                {"text": " · Y Free · Z 0"},
+            ]
+        }
+    ]
+
+
+def test_an_expression_keeps_its_place_with_its_text_as_the_tooltip() -> None:
+    magnet = ConditionRecord(
+        kind="magnetization",
+        condition=Magnetization(direction=Direction(0, 0, 1)),
+        section=SifSection.MATERIAL,
+        block=1,
+        block_name="MAGNET",
+        keywords=[SifKeyword(name="Magnetization 1", value=1.0e6), SifKeyword(name="Magnetization 2", value="Real MATC")],
+    )
+
+    assert condition_lines(magnet, Solid())[1] == {"parts": [{"text": "Br (1.26, expr) T", "muted": False, "tip": "Real MATC"}]}
+
+
+def test_the_ghost_caption_reads_the_warp_scale_as_a_plain_grouped_number() -> None:
+    assert [scale_text(scale) for scale in (22654.0, 1234.5, 120.0)] == ["22,700", "1,230", "120"]
+    assert [scale_text(scale) for scale in (1.5, 2.0, 0.00123, 0.0)] == ["1.5", "2", "0.00123", "0"], "below 10 reads its significant decimals"
+    assert [scale_text(scale) for scale in (1e6, 2.27e7)] == ["1,000,000", "2.27e+07"], "exponent form only above a million"
+
+
+def test_the_empty_tab_says_why_no_run_is_open() -> None:
+    assert empty_text(None, indexed=True) == "No run open. Pick one in the Run picker in the app bar."
+    assert empty_text(None, indexed=False) == "No run index. Pass telemetry to the workbench to list runs."
+    assert empty_text("FileNotFoundError: missing", indexed=True) == "The run could not be opened."
+
+
 def test_a_dropped_axis_names_the_solve_axes_in_authored_terms() -> None:
     sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
 
@@ -445,7 +489,7 @@ def test_the_tab_builds_its_switches_sections_and_grids(tmp_path: Path, monkeypa
     assert _bound(switches[3], "aria-disabled") == f"!{SetupVar.HAS_GHOST}", "a ghost switch without a ghost says it is disabled"
     assert [prop(node, "columns") for node in find(template, "ff-entity-grid")][:2] == [["Tag", "", "Glyph"], ["Name", "Material", "Glyph"]]
     assert _bound(find(template, "ff-entity-grid")[2], "columns") == str(SetupVar.BOUNDARY_COLUMNS)
-    assert "Undeformed; the solved body is warped " in json.dumps(template), "the ghost names the warp the solved body shows"
+    assert f'"js": "{SetupVar.WARP_CAPTION}"' in json.dumps(template), "the ghost names the warp the solved body shows"
     assert f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && " in json.dumps(template), "the warp caption shows only while the ghost is drawn"
 
 
@@ -534,6 +578,64 @@ def test_opening_a_run_publishes_it_and_a_new_run_resets_the_toggles_but_keeps_t
         await controller.settle()
 
         assert app.state[SetupVar.STATE] == str(SetupState.NONE), "a run that fails to open clears the tab"
+        assert app.state[SetupVar.EMPTY] == "The run could not be opened."
+        assert app.state[SetupVar.EMPTY_DETAIL] == controller.note and str(controller.note).startswith("FileNotFoundError: "), "the tab shows the failure the view shows"
+
+        await controller.load(first)
+        await controller.settle()
+
+        assert controller.failure is None and app.state[SetupVar.STATE] == str(SetupState.GROUPS), "a run that opens forgets the failure"
+
+    asyncio.run(run())
+
+
+def test_the_empty_tab_names_a_missing_run_index_and_the_picker_otherwise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bare = _shell("bare", tmp_path / "bare", monkeypatch)
+
+    assert bare.state[SetupVar.EMPTY] == "No run index. Pass telemetry to the workbench to list runs." and bare.state[SetupVar.EMPTY_DETAIL] == ""
+
+    indexed = Workbench("indexed", title="Fields", server=get_server("setup-indexed"), persist=LocalJsonStore(tmp_path / "persist"), user="tester")
+    indexed.add(workbench(telemetry=tmp_path / "telemetry"))
+
+    assert indexed.state[SetupVar.EMPTY] == "No run open. Pick one in the Run picker in the app bar."
+
+
+def test_the_ghost_caption_follows_the_warp_scale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _shell("warp", tmp_path, monkeypatch)
+    panel = app.panel(FieldPanel.SETUP, SetupPanel)
+    app.state[FieldVar.WARP_SCALE] = [22654.0]
+    panel.on_warp_scale()
+
+    assert app.state[SetupVar.WARP_CAPTION] == "Undeformed; the solved body is warped ×22,700"
+
+
+def test_a_reloaded_page_brings_setup_forward_once_its_new_dock_is_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("reload", tmp_path, monkeypatch)
+        controller = _controller(app)
+        dock = app.dock
+        assert dock is not None
+        revealed: list[str] = []
+        monkeypatch.setattr(dock, "active_panel", revealed.append)
+
+        def restored(_: object) -> None:
+            revealed.append("layout")
+
+        monkeypatch.setattr(dock, "restore_layout", restored)
+        app.on_dock_ready()
+        app.on_client_exited()
+        app.on_client_connected()
+
+        assert app.docked is False, "a page that left takes its dock with it"
+
+        await controller.load(_flexure(tmp_path / "fieldless"))
+        await controller.settle()
+
+        assert revealed == ["layout"], "the reloaded page has no dock yet to activate a tab in"
+
+        app.on_dock_ready()
+
+        assert revealed == ["layout", "layout", str(FieldPanel.SETUP)], "the new dock brings Setup forward over its restored layout"
 
     asyncio.run(run())
 

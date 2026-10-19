@@ -1,6 +1,7 @@
 """The Setup tab: what each body and boundary group of the open run received from the solver, in the solve frame, with the scene glyphs it shows."""
 
 import json
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -30,7 +31,7 @@ from femforge.run.manifest import RunManifest
 from femforge.viz.glyphs import EntityKind, EntityRef
 from femforge.viz.symmetry import Expansion
 from femforge_workbench.panels import Cls, PanelComponent
-from femforge_workbench.panels.field_viewer import BUSY_FULL, PRECISION, STACK, TIMES, FieldVar, expansion_label, names_of, setting
+from femforge_workbench.panels.field_viewer import BUSY_FULL, STACK, TIMES, FieldVar, expansion_label, names_of, only, setting
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.element import EVENT, setter
@@ -53,12 +54,16 @@ FILTER_ABOVE = 12
 
 SEARCH_ID = "ff-setup-search"
 NO_RUN = "No run open. Pick one in the Run picker in the app bar."
+NO_INDEX = "No run index. Pass telemetry to the workbench to list runs."
+OPEN_FAILED = "The run could not be opened."
 NO_CONDITIONS = "No Conditions"
 NO_GLYPHS = "No glyphs in this run."
 NO_GLYPHS_AUTHORED = "Glyphs need a mesh; this run failed before meshing."
 ARROW_NOTE = "Arrow length scales with |F|."
 NO_GHOST = "No authored geometry in this bundle."
 GHOST_WARPED = "Undeformed; the solved body is warped "
+EXPONENT_ABOVE = 1e6
+"""The warp scale above which the ghost caption reads it in exponent form."""
 NO_CELLS_FIELDS = "Not in the fields file: no condition landed here."
 NO_CELLS_MESH = "Not in the mesh files: re-solve to restore the mesh."
 HIDDEN_LABEL = "Hidden in the Field Viewer; press S to show it."
@@ -67,7 +72,6 @@ GLYPH_SHOWN = "Glyph Shown"
 GLYPH_HIDDEN = "Glyph Hidden"
 HIDDEN_BY_LEGEND = "Glyph hidden by the legend"
 HIDDEN_BY_SWITCH = "Glyph hidden by Show Glyphs"
-DROPPED = "–"
 NBSP = "\u00a0"
 SEPARATOR = " · "
 AUTOMATIC = "(Set by femforge)"
@@ -103,6 +107,8 @@ SETTINGS = "flex shrink-0 flex-col gap-1.5 px-2"
 FILTER_GROUP = "grid w-full grid-cols-2"
 LEGEND_ROW = "grid h-6 grid-cols-[1rem_minmax(0,1fr)_2rem_auto] items-center gap-x-2"
 SR_ONLY = "sr-only"
+EMPTY_STACK = "flex min-w-0 flex-col gap-1 px-4 text-center"
+EMPTY_DETAIL = "break-all text-muted-foreground"
 
 
 class SetupState(StrEnum):
@@ -175,6 +181,15 @@ class SetupVar(StrEnum):
     NOTICE = "setup_notice"
     NOTICE_LEVEL = "setup_notice_level"
     CAPTION = "setup_caption"
+    EMPTY = "setup_empty"
+    """What the tab says while no run is open: why, from the Field Viewer's reason."""
+
+    EMPTY_DETAIL = "setup_empty_detail"
+    """The failure line of a run that could not be opened, empty otherwise."""
+
+    WARP_CAPTION = "setup_warp_caption"
+    """The ghost's note on the warp the solved body is drawn with."""
+
     MISS = "setup_miss"
     """The no-match notice of a search, empty while something matches."""
 
@@ -453,7 +468,7 @@ def line_of(lead: str, parts: Sequence[tuple[str, bool, str]]) -> ConditionLine:
 
 
 def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[ConditionLine]:
-    """The lines one emission reads as: its kind and the solver-side summary, each authored field the frame dropped as a muted ``–`` with the reason, and whether a later emission overrode it."""
+    """The lines one emission reads as: its kind and the solver-side summary in ``frame``, each authored field the frame dropped muted with the reason, and whether a later emission overrode it."""
     kind = title(record.kind)
     condition = record.condition
     if condition is None:
@@ -463,19 +478,15 @@ def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[Condit
     overridden = bool(record.keywords) and all(keyword.shadowed for keyword in record.keywords)
 
     def read(part: SummaryPart) -> tuple[str, bool, str]:
-        label = f"{part.label} " if part.label else ""
+        text = f"{part.label} {part.value}" if part.label else part.value
         if part.component is not None and part.component in record.dropped:
-            return f"{label}{DROPPED}", True, dropped_tip(part.component, frame)
+            return text, True, dropped_tip(part.component, frame)
 
-        return f"{label}{part.value}", False, ""
+        return text, False, part.tip
 
     lines: list[ConditionLine] = []
-    for number, summary in enumerate(condition.summary(emitted)):
+    for number, summary in enumerate(condition.summary(emitted, frame=frame)):
         parts = [read(part) for part in summary]
-        read_fields = {part.component for part in summary}
-        if number == 0:
-            parts.extend((f"{field.upper()} {DROPPED}", True, dropped_tip(field, frame)) for field in record.dropped if field not in read_fields)
-
         if number == 0 and overridden:
             parts.append((OVERRIDDEN, True, OVERRIDDEN_TIP))
 
@@ -835,6 +846,29 @@ def notice_of(model: SetupModel) -> tuple[str, NoticeLevel]:
     return "", NoticeLevel.INFO
 
 
+def empty_text(failure: str | None, *, indexed: bool) -> str:
+    """What the tab says while no run is open: that the run failed to open, that there is no run index to pick from, or where to pick one."""
+    if failure is not None:
+        return OPEN_FAILED
+
+    return NO_RUN if indexed else NO_INDEX
+
+
+def scale_text(scale: float) -> str:
+    """A warp scale at three significant figures, grouped in thousands, such as ``22,700`` or ``1.5``; exponent form above a million."""
+    if abs(scale) > EXPONENT_ABOVE:
+        return f"{scale:.2e}"
+
+    rounded = float(f"{scale:.3g}")
+    if rounded == 0.0:
+        return "0"
+
+    decimals = max(0, 2 - math.floor(math.log10(abs(rounded))))
+    text = f"{rounded:,.{decimals}f}"
+
+    return text.rstrip("0").rstrip(".") if decimals else text
+
+
 def caption_of(model: SetupModel) -> str:
     """The caption over the tables: what a run without fields shows, its glyphs named only when it draws some, and where legacy names came from."""
     parts: list[str] = []
@@ -909,6 +943,9 @@ class SetupPanel(PanelComponent):
             SetupVar.NOTICE: "",
             SetupVar.NOTICE_LEVEL: str(NoticeLevel.INFO),
             SetupVar.CAPTION: "",
+            SetupVar.EMPTY: NO_RUN,
+            SetupVar.EMPTY_DETAIL: "",
+            SetupVar.WARP_CAPTION: "",
             SetupVar.MISS: "",
             SetupVar.ANNOUNCE: "",
         }
@@ -919,9 +956,9 @@ class SetupPanel(PanelComponent):
 
         controller.setup_panel = self
         controller.attach(self)
-        if controller.setup is not None:
-            self.model = controller.setup
-            self.publish()
+        self.on_warp_scale()
+        self.model = controller.setup
+        self.publish()
 
     def view(self) -> RowView:
         """What the tables show besides the run, from the state."""
@@ -967,9 +1004,12 @@ class SetupPanel(PanelComponent):
         """Puts the open run's frame, tables, counts, legend and notices in the state."""
         model = self.model
         if model is None:
+            failure = self.controller.failure
             self.rows = []
             with self.state:
                 self.state[SetupVar.STATE] = str(SetupState.NONE)
+                self.state[SetupVar.EMPTY] = empty_text(failure, indexed=self.controller.telemetry is not None)
+                self.state[SetupVar.EMPTY_DETAIL] = failure or ""
                 self.state[SetupVar.BODY_ROWS] = []
                 self.state[SetupVar.BOUNDARY_ROWS] = []
                 self.state[SetupVar.TAG_ROWS] = []
@@ -1101,6 +1141,13 @@ class SetupPanel(PanelComponent):
         if self.model is not None:
             self.publish()
 
+    @change(FieldVar.WARP_SCALE)
+    def on_warp_scale(self, **_: object) -> None:
+        """Republishes the ghost's warp note after the Field Viewer's deformation scale changed."""
+        scale = only(self.state[FieldVar.WARP_SCALE], 1.0)
+        with self.state:
+            self.state[SetupVar.WARP_CAPTION] = f"{GHOST_WARPED}{TIMES}{scale_text(scale)}"
+
     @change(FieldVar.EXPANSION, FieldVar.SWEEP)
     def on_expansion(self, **_: object) -> None:
         """Republishes the Frame section's Shown As row after the Field Viewer's expansion changed."""
@@ -1174,7 +1221,6 @@ class SetupPanel(PanelComponent):
 
                         html.Span([react.Bind("line")])
 
-        warped = f"{json.dumps(GHOST_WARPED)} + {json.dumps(TIMES)} + {FieldVar.WARP_SCALE}[0].toPrecision({PRECISION})"
         with react.If(f"{SetupVar.IS_2D} && {SetupVar.HAS_SCENE}"), html.Div(classes=STACK):
             setting(FieldVar.SECTION_OUTLINE, "Section Outline")
             setting(FieldVar.AUTHORED_GHOST, "Authored Body Ghost", disabled=react.Bind(f"!{SetupVar.HAS_GHOST}"))
@@ -1182,7 +1228,7 @@ class SetupPanel(PanelComponent):
                 html.Span(NO_GHOST, classes=str(Cls.CAPTION))
 
             with react.If(f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && {FieldVar.HAS_DISPLACEMENT} && {FieldVar.WARP}"):
-                html.Span([react.Bind(warped)], classes=str(Cls.CAPTION))
+                html.Span([react.Bind(str(SetupVar.WARP_CAPTION))], classes=str(Cls.CAPTION))
 
     def grid(self, rows: SetupVar, label: str, columns: Sequence[str] | react.Bind) -> None:
         """One table of rows under its column headers, wired to the selection, the glyph toggles, the framing and the Show of a hidden body.
@@ -1264,8 +1310,10 @@ class SetupPanel(PanelComponent):
             with react.If(str(FieldVar.BUSY)):
                 Progress(value=BUSY_FULL, classes=str(Cls.BUSY))
 
-            with react.If(f"{state} === {json.dumps(str(SetupState.NONE))}"), html.Div(classes=str(Cls.EMPTY)):
-                html.Span(NO_RUN)
+            with react.If(f"{state} === {json.dumps(str(SetupState.NONE))}"), html.Div(classes=str(Cls.EMPTY)), html.Div(classes=EMPTY_STACK):
+                html.Span([react.Bind(str(SetupVar.EMPTY))])
+                with react.If(str(SetupVar.EMPTY_DETAIL)):
+                    html.Span([react.Bind(str(SetupVar.EMPTY_DETAIL))], classes=EMPTY_DETAIL)
 
             with react.If(f"{state} !== {json.dumps(str(SetupState.NONE))}"), html.Div(classes="flex flex-col gap-2"):
                 self.build_search()

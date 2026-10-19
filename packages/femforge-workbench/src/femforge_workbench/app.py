@@ -1306,6 +1306,16 @@ class Workbench(TrameApp):
         if self.window is Window.APP:
             self.open_app_window()
 
+    @life_cycle.client_connected
+    def on_client_connected(self, **_: object) -> None:
+        """Forgets the dock a reloaded page left, so `activate` holds a panel until the new dock reports ready."""
+        self.docked = False
+
+    @life_cycle.client_exited
+    def on_client_exited(self, **_: object) -> None:
+        """Forgets the dock of the page that left, so `activate` holds a panel until the next dock reports ready."""
+        self.docked = False
+
     @life_cycle.server_exited
     def on_server_exited(self, **_: object) -> None:
         """Stops every reloader and the running task, then flushes the persisted state."""

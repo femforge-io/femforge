@@ -890,6 +890,8 @@ class FieldViewerController(TrameComponent):
         """The runs the index offered at its last read."""
         self.unreadable = False
         """Whether the last read of the index failed, which logs once until a read succeeds."""
+        self.failure: str | None = None
+        """The error line of the last run that failed to open, None once a run opens."""
         self.seen: list[Path] | None = None
         """The index shards at the feed's last read; None reads the index on the next tick."""
         self.picked_at = 0.0
@@ -1247,6 +1249,7 @@ class FieldViewerController(TrameComponent):
             same = previous is not None and (previous.runs_dir, previous.run_id) == (opened.runs_dir, opened.run_id)
             fresh = not same or self.setup is None
             self.setup = setup
+            self.failure = None
             self.highlightable = None
             self.cells_unreadable = False
             self.publish_setup(fresh=fresh)
@@ -1281,8 +1284,9 @@ class FieldViewerController(TrameComponent):
             log.opt(exception=True).warning("Run failed to open.")
             waiting = False
             self.setup = None
+            self.failure = f"{type(error).__name__}: {error}"
             self.publish_setup()
-            self.clear(f"{type(error).__name__}: {error}")
+            self.clear(self.failure)
         finally:
             if token == self.generation and not waiting:
                 self.set_busy(False)
