@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,7 @@ from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock
 from femforge.common.files import BundleFile
 from femforge.common.log import TELEMETRY_ENV, log
 from femforge.common.tags import TagKey
-from femforge.common.vector import Vec3
+from femforge.common.vector import Direction, Vec3
 from femforge.config import RunMeta, SimulationConfig
 from femforge.elmer.config import PhysicsSelection
 from femforge.elmer.physics import Physics
@@ -25,7 +26,9 @@ from femforge.physical.conditions import SurfaceForce
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import quantity
 from femforge.run.bundle import write_manifest
-from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
+from femforge.elmer.sections import SifSection
+from femforge.run.conditions import ConditionRecord, ConditionsFile, GroupConditions, SolveComponent
+from femforge.run.entities import Bodies, Body, BodyRecord, BoundaryRecord, EntitiesFile
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.run.mechanical import VOIGT_COMPONENTS
@@ -33,6 +36,7 @@ from femforge.telemetry.paths import Telemetry
 from femforge.telemetry.schemas import RUN_INDEX_SCHEMA, RunColumn
 from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, SceneActor
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, StreamlineActor
+from femforge.viz.glyphs import PLAIN_BODY, GlyphLayer, GlyphView, GroupScene
 from femforge.viz.symmetry import Expansion
 from femforge_workbench.dock import Split, panels, template_name
 from femforge_workbench.feeds import Feed
@@ -52,13 +56,14 @@ from femforge_workbench.tasks import Task, TaskBoard, TaskPhase  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
-from femforge_workbench.panels.scene import StateVar as SceneVar  # noqa: E402
+from femforge_workbench.panels.scene import StateVar as SceneVar, View, ViewMode  # noqa: E402
 from femforge_workbench.panels.field_viewer import (  # noqa: E402
     FieldControlsPanel,
     FieldPanel,
     FieldVar,
     FieldViewerController,
     FieldViewerPanel,
+    GLYPH_KEYS,
     OPEN_SECTIONS,
     RowKey,
     body_rows,
@@ -1971,3 +1976,258 @@ def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_repl
     assert opened == ["r2"], "only the run the viewer shows is followed"
     assert app.state[StateVar.STATUS] == "Opened the newer run r2", "a followed run says why the view changed"
     assert [row["label"] for row in cast("list[dict[str, object]]", app.state[StateVar.TASKS])] == ["Solve"]
+
+
+# --- the Setup tab's glyph layer ------------------------------------------------
+
+
+MESH_NODES = """\
+1 -1 0 0 0
+2 -1 1 0 0
+3 -1 1 1 0
+4 -1 0 1 0
+5 -1 2 0 0
+6 -1 2 1 0
+"""
+
+MESH_ELEMENTS = """\
+1 1 303 1 2 3
+2 1 303 1 3 4
+3 2 303 2 5 6
+4 2 303 2 6 3
+"""
+
+MESH_BOUNDARY = """\
+1 3 2 0 202 5 6
+2 4 1 0 202 4 1
+"""
+
+
+def _glyph_bundle(root: Path, *, fields: bool = True) -> Path:
+    grid = _elastic_grid()
+    cells = np.concatenate([np.asarray(grid.cells, dtype=np.int64), np.array([4, 9, 10, 14, 13])])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista types the cell arrays loosely
+    types = np.append(np.asarray(grid.celltypes, dtype=np.uint8), np.uint8(pv.CellType.QUAD))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]  # pyvista types the cell arrays loosely
+    tipped = pv.UnstructuredGrid(cells, types, np.asarray(grid.points, dtype=np.float64))
+    for name in grid.point_data.keys():
+        tipped.point_data[name] = np.asarray(grid.point_data[name])
+
+    tipped.cell_data["GeometryIds"] = np.array([1, 2, 101], dtype=np.int32)
+    bundle = _bundle(root, tipped)
+    bodies = {1: BodyRecord(name="LEFT", centroid=Vec3(0.5, 0.5, 0.5)), 2: BodyRecord(name="RIGHT", centroid=Vec3(1.5, 0.5, 0.5))}
+    boundaries = {3: BoundaryRecord(name="TIP", bodies=("RIGHT",), named=True, centroid=Vec3(2, 0.5, 0.5), normal=Direction(1, 0, 0)), 4: BoundaryRecord(name="LEFT__EXT", bodies=("LEFT",))}
+    _ = (bundle / BundleFile.ENTITIES).write_text(EntitiesFile(bodies=bodies, boundaries=boundaries).model_dump_json(), encoding="utf-8")
+    _ = (bundle / BundleFile.BOUNDARIES).write_bytes(b"1: TIP_surface_force\n")
+    pull = ConditionRecord(
+        kind="surface_force",
+        condition=SurfaceForce(force=quantity(Vec3(100, 0, 0), "N")),
+        section=SifSection.BOUNDARY_CONDITION,
+        block=1,
+        block_name="TIP_surface_force",
+        solve_components=[SolveComponent(index=1, value=100.0), SolveComponent(index=2, value=0.0), SolveComponent(index=3, value=0.0)],
+    )
+    _ = ConditionsFile(bodies=[GroupConditions(group="LEFT"), GroupConditions(group="RIGHT")], boundaries=[GroupConditions(group="TIP", conditions=[pull])]).write(bundle)
+    for name, text in ((BundleFile.MESH_NODES, MESH_NODES), (BundleFile.MESH_ELEMENTS, MESH_ELEMENTS), (BundleFile.MESH_BOUNDARY, MESH_BOUNDARY)):
+        _ = (bundle / name).write_bytes(text.encode())
+
+    if not fields:
+        (bundle / "case_t0001.vtu").unlink()
+
+    return bundle
+
+
+def _glyph_actors(viewer: FieldViewerPanel) -> list[str]:
+    return sorted(str(name) for name in viewer.plotter.renderer.actors if str(name).startswith("glyph-"))
+
+
+def _arrow_bounds(viewer: FieldViewerPanel) -> tuple[float, ...]:
+    actor = viewer.plotter.renderer.actors["glyph-arrows"]
+    assert isinstance(actor, pv.Actor)
+
+    return tuple(actor.GetBounds())
+
+
+def test_the_glyph_keys_default_to_a_hidden_layer_and_none_persists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _shell("glyph-defaults", tmp_path, monkeypatch)
+    controller = _controller(app)
+
+    assert [app.state[key] for key in GLYPH_KEYS] == [False, True, [], [], "", False, True, False]
+    assert controller.glyph_view_from_state() is None
+
+
+def test_the_setup_tab_draws_the_glyphs_while_shown_follows_the_warp_and_removes_them_when_hidden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("glyphs", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_glyph_bundle(tmp_path / "tipped"))
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None and isinstance(scene.glyphs, GlyphLayer)
+        assert _glyph_actors(viewer) == [], "the glyphs show only while the Setup tab does"
+
+        app.state[FieldVar.SETUP_SHOWN] = True
+        app.state[FieldVar.GLYPH_KINDS_OFF] = ["thermal"]
+        app.state[FieldVar.SELECTED_ENTITY] = "boundary:TIP"
+        controller.on_glyphs()
+        await controller.settle()
+
+        shown = _glyph_actors(viewer)
+        assert {"glyph-arrows", "glyph-halos", "glyph-selection-fill", "glyph-labels-labels"} <= set(shown)
+        view = scene.glyph_view
+        assert view is not None and view.selected == "boundary:TIP" and "thermal" not in view.kinds and view.scale == viewer.window_scale()
+        before = _arrow_bounds(viewer)
+        auto = scene.auto_warp_scale("displacement")
+
+        app.state[FieldVar.WARP_SCALE] = [3.0 * auto]
+        controller.on_commit()
+        await controller.settle()
+
+        assert _arrow_bounds(viewer)[0] > before[0], "the arrow tail rides the displaced face"
+
+        app.state[FieldVar.GLYPHS] = False
+        controller.on_glyphs()
+        await controller.settle()
+
+        assert "glyph-arrows" not in _glyph_actors(viewer) and "glyph-selection-fill" in _glyph_actors(viewer), "Show Glyphs off keeps the selection"
+
+        app.state[FieldVar.SETUP_SHOWN] = False
+        controller.on_glyphs()
+        await controller.settle()
+
+        assert _glyph_actors(viewer) == []
+
+    asyncio.run(run())
+
+
+def test_plain_bodies_paint_the_bodies_grey_and_the_ghost_turns_the_camera_to_iso_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("plain", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_glyph_bundle(tmp_path / "tipped"))
+        await controller.settle()
+        viewer.look(View.TOP)
+        app.state[FieldVar.SETUP_SHOWN] = True
+        app.state[FieldVar.PLAIN_BODIES] = True
+        app.state[FieldVar.AUTHORED_GHOST] = True
+        controller.on_glyphs()
+        await controller.settle()
+
+        actor = viewer.plotter.renderer.actors[SceneActor.STYLED.of("LEFT")]
+        assert isinstance(actor, pv.Actor)
+        assert actor.GetProperty().GetColor() == pytest.approx(pv.Color(PLAIN_BODY).float_rgb)
+        camera = viewer.plotter.camera
+        offset = np.subtract(camera.position, camera.focal_point)
+        assert offset / np.linalg.norm(offset) == pytest.approx(np.array([1.0, -1.0, 1.0]) / math.sqrt(3.0)), "the ghost turns the view to Iso"
+        assert controller.iso_pending is False
+
+        viewer.look(View.TOP)
+        app.state[FieldVar.PLAIN_BODIES] = False
+        controller.on_glyphs()
+        await controller.settle()
+
+        offset = np.subtract(camera.position, camera.focal_point)
+        assert offset / np.linalg.norm(offset) == pytest.approx(np.array([0.0, 0.0, 1.0])), "only switching the ghost on turns the camera"
+        assert SceneActor.STYLED.of("LEFT") not in viewer.plotter.renderer.actors
+
+    asyncio.run(run())
+
+
+def test_a_denser_display_rescales_the_glyph_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> int:
+        app = _shell("dense-glyphs", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_glyph_bundle(tmp_path / "tipped"))
+        await controller.settle()
+        app.state[FieldVar.SETUP_SHOWN] = True
+        controller.on_glyphs()
+        await controller.settle()
+
+        viewer.on_client_size({"width": 400, "height": 300, "ratio": 2})
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None and scene.glyph_view is not None
+
+        viewer.switch(ViewMode.SERVER, persist=False)
+        await controller.settle()
+        streamed = scene.glyph_view
+        assert streamed is not None and streamed.scale == viewer.window_scale()
+
+        return round(scene.glyph_view.scale) if scene.glyph_view is not None else 0
+
+    assert asyncio.run(run()) == 2
+
+
+def test_a_run_without_fields_draws_its_mesh_groups_only_while_the_glyphs_are_shown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("mesh-only", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_glyph_bundle(tmp_path / "meshed", fields=False))
+
+        assert isinstance(controller.groups, GroupScene) and controller.scene is None
+        assert viewer.renderable is None, "nothing draws while the Setup tab is off screen"
+
+        app.state[FieldVar.SETUP_SHOWN] = True
+        controller.on_glyphs()
+
+        assert viewer.renderable is controller.groups
+        assert SceneActor.STYLED.of("LEFT") in viewer.plotter.renderer.actors and "glyph-arrows" in _glyph_actors(viewer)
+
+        app.state[FieldVar.SELECTED_ENTITY] = "boundary:LEFT__EXT"
+        controller.on_glyphs()
+
+        assert "glyph-selection-fill" in _glyph_actors(viewer), "a group without a condition is highlighted from the mesh"
+
+        controller.rescaled()
+        app.state[FieldVar.SETUP_SHOWN] = False
+        controller.on_glyphs()
+
+        assert viewer.renderable is None and _glyph_actors(viewer) == []
+
+        await controller.load(_glyph_bundle(tmp_path / "solved"))
+        await controller.settle()
+
+        assert controller.groups is None and controller.scene is not None
+
+    asyncio.run(run())
+
+
+def test_a_glyph_layer_or_mesh_that_fails_to_load_leaves_the_run_shown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("broken-glyphs", tmp_path, monkeypatch)
+        controller = _controller(app)
+
+        def broken(*_: object) -> GlyphLayer:
+            raise ValueError("unreadable sidecar")
+
+        monkeypatch.setattr(GlyphLayer, "from_run", broken)
+        monkeypatch.setattr(GroupScene, "from_run", broken)
+
+        await controller.load(_glyph_bundle(tmp_path / "solved"))
+        await controller.settle()
+
+        assert controller.scene is not None and controller.scene.glyphs is None
+
+        await controller.load(_glyph_bundle(tmp_path / "meshed", fields=False))
+
+        assert controller.groups is None
+
+    asyncio.run(run())
+
+
+def test_showing_glyphs_without_a_view_or_a_run_draws_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _shell("no-view", tmp_path, monkeypatch)
+    controller = _controller(app)
+    viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+    controller.show_glyphs(GlyphView())
+    controller.rescaled()
+    controller.turn_iso()
+
+    assert viewer.renderable is None and controller.glyph_view == GlyphView()
