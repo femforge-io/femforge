@@ -150,9 +150,9 @@ class Cartesian2D(Frame):
         """The whole prism's total of a per-metre integral: its in-plane components times the thickness."""
         return Vec3(integrated.x * self.thickness_m, integrated.y * self.thickness_m, 0.0)
 
-    def solve_share(self, total: Vec3) -> Vec3:
-        """The per-metre share of a whole-prism ``total``: the total over the thickness."""
-        return total / self.thickness_m
+    def solve_share(self, share_of: Vec3) -> Vec3:
+        """The per-metre share of a whole-prism solve-frame vector: the vector over the thickness."""
+        return share_of / self.thickness_m
 
     def along(self, vector: Vec3, axis: Axis | None) -> float:
         """The projection of the solve-frame ``vector`` onto the authored ``axis``; None raises, since the frame has no axis of its own."""

@@ -185,8 +185,14 @@ class Frame(ConfigArea, ABC):
         """The whole model's total of a vector Elmer integrated over the solve domain."""
 
     @abstractmethod
-    def solve_share(self, total: Vec3) -> Vec3:
-        """The share of a whole-model ``total`` the solve domain carries, the inverse of [`total`][femforge.frames.Frame.total]."""
+    def solve_share(self, share_of: Vec3) -> Vec3:
+        """The share the solve domain carries of a whole-model solve-frame vector, the inverse of [`total`][femforge.frames.Frame.total]."""
+
+    def authored_share(self, authored: Vec3) -> Vec3:
+        """The solve-frame share the solve domain carries of an authored whole-model vector; raises ``ValueError`` when it has no form here."""
+        components: list[float] = [*self.solve_vector(authored), 0.0, 0.0]
+
+        return self.solve_share(Vec3(components[0], components[1], components[2]))
 
     @abstractmethod
     def along(self, vector: Vec3, axis: Axis | None) -> float:

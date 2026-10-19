@@ -118,9 +118,9 @@ class Axisymmetric(Frame):
         """The full revolution of a per-radian integral: the axial component times 2π, the radial one zero by symmetry."""
         return Vec3(0.0, math.tau * integrated.y, 0.0)
 
-    def solve_share(self, total: Vec3) -> Vec3:
-        """The per-radian share of a full-revolution ``total``: its axial component over 2π, the radial one zero by symmetry."""
-        return Vec3(0.0, total.y / math.tau, 0.0)
+    def solve_share(self, share_of: Vec3) -> Vec3:
+        """The per-radian share of a full-revolution solve-frame vector: its axial component over 2π, the radial one zero by symmetry."""
+        return Vec3(0.0, share_of.y / math.tau, 0.0)
 
     def along(self, vector: Vec3, axis: Axis | None) -> float:
         """The axial component of ``vector`` along ``axis``, the symmetry axis for None; an axis off the symmetry axis raises."""
