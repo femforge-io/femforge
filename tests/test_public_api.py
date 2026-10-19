@@ -195,13 +195,16 @@ def _defined(value: type[object] | Callable[..., object]) -> Target:
 
 
 def _statements(body: list[ast.stmt]) -> Iterator[ast.stmt]:
-    """Module-level statements, those inside ``if`` blocks included."""
+    """Module-level statements, those inside ``if`` and ``try`` blocks included."""
     for statement in body:
         yield statement
 
         if isinstance(statement, ast.If):
             yield from _statements(statement.body)
             yield from _statements(statement.orelse)
+
+        if isinstance(statement, ast.Try):
+            yield from _statements(statement.body)
 
 
 def _binding(module_name: str, name: str) -> tuple[str, str]:

@@ -48,6 +48,7 @@ import pyvista as pv  # noqa: E402
 from trame.app import get_server  # noqa: E402
 
 from femforge_workbench.app import Hook, StateVar, Template, Workbench  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard, TaskPhase  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
@@ -72,6 +73,7 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     NO_RUN_INDEX,
     NO_RUN_SELECTED,
     NO_RUNS_NOTICE,
+    NO_RUNS_TASKS_NOTICE,
     NO_RUNS_YET,
     PICK_HOLD,
     SOLVING_AS,
@@ -602,6 +604,29 @@ def test_a_run_still_solving_empties_the_views_and_opens_once_it_ends(tmp_path: 
         assert cast("list[dict[str, object]]", app.state[FieldVar.RUN_ITEMS])[0] == {"title": "pending", "value": str(pending), "detail": []}
 
     asyncio.run(run())
+
+
+def test_with_tasks_a_run_still_solving_points_at_the_task_strip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def solving(_: object) -> bool:
+        return True
+
+    monkeypatch.setattr("femforge_workbench.panels.field_viewer.solving", solving)
+
+    async def run() -> str:
+        app = _shell("solving-tasks", tmp_path, monkeypatch)
+        app.board = TaskBoard(app, "main:tasks", [Task("Solve", time.time)], path=None, roots=[])
+        controller = _controller(app)
+        pending = _bundle(tmp_path / "pending", _hex_grid())
+        (pending / "case_t0001.vtu").unlink()
+
+        await controller.load(pending)
+        waiting = controller.wait_task
+        assert waiting is not None
+        _ = waiting.cancel()
+
+        return cast("str", app.state[app.panel(FieldPanel.VIEW_3D, FieldViewerPanel).key(SceneVar.NOTICE)])
+
+    assert asyncio.run(run()) == "pending is still solving. Its fields appear here when it finishes; the task strip below shows its progress."
 
 
 def test_a_solid_body_the_next_run_lacks_leaves_the_plotter_with_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1907,3 +1932,42 @@ def test_the_run_feed_runs_with_the_server_and_stops_with_the_last_panel(tmp_pat
         assert controller.scene is not None and controller.scene.run_id == "solved", "the feed opened the run once the server ran"
 
     asyncio.run(run())
+
+
+def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_replaces_its_previous_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(TELEMETRY_ENV, raising=False)
+    app = Workbench("follow", title="Fields", server=get_server("field-viewer-follow"), persist=LocalJsonStore(tmp_path / "persist"), user="tester")
+    app.board = TaskBoard(app, "main:tasks", [Task("Solve", time.time)], path=None, roots=[])
+    app.add(workbench(telemetry=tmp_path / "telemetry"))
+    controller = _controller(app)
+    viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+    opened: list[object] = []
+    monkeypatch.setattr(controller, "open", opened.append)
+
+    waiting = app.state[viewer.key(SceneVar.NOTICE)]
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.FAILED})
+    app.board.queue.clear()
+    app.board.publish(now=True)
+    failed = app.state[viewer.key(SceneVar.NOTICE)]
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.STALLED})
+    app.board.publish(now=True)
+    stalled = app.state[viewer.key(SceneVar.NOTICE)]
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.DONE})
+    app.board.publish(now=True)
+    done = app.state[viewer.key(SceneVar.NOTICE)]
+
+    app.follow_run("r1", "r2")
+    controller.opened = RunEntry("r1", "r1")
+    app.follow_run("r0", "r2")
+    app.follow_run("r1", "r2")
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.FAILED})
+    app.board.publish(now=True)
+
+    assert waiting == "Waiting for Solve · Queued\nIts progress shows in the task strip below."
+    assert failed == "No runs yet. 1 task failed; open the task strip for the reasons."
+    assert stalled == "No runs yet. 1 task stalled; open the task strip for the reasons."
+    assert done == NO_RUNS_TASKS_NOTICE
+    assert app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_TASKS_NOTICE, "a viewer showing a run keeps its notice"
+    assert opened == ["r2"], "only the run the viewer shows is followed"
+    assert app.state[StateVar.STATUS] == "Opened the newer run r2", "a followed run says why the view changed"
+    assert [row["label"] for row in cast("list[dict[str, object]]", app.state[StateVar.TASKS])] == ["Solve"]

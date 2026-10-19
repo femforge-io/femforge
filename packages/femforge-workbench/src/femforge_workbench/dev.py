@@ -2,7 +2,6 @@
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -11,7 +10,7 @@ from pathlib import Path
 
 import femforge_workbench
 from femforge.common.log import log
-from femforge_workbench.process_tree import CREATION_FLAGS, NEW_SESSION, ProcessTree
+from femforge_workbench.process_tree import BREAK_SIGNAL, CREATION_FLAGS, NEW_GROUP, NEW_SESSION, ProcessTree
 from femforge_workbench.reload import SaveWatcher, package_root, shell_files
 from femforge_workbench.widgets.module import ROUTE, VERSION_FILE, assets
 
@@ -32,14 +31,6 @@ LIBRARY_GRACE_MS = 2000
 
 STOP_GRACE = 5.0
 """Seconds a child gets to exit on its own after the break, so its exit hooks flush the persisted state."""
-
-if sys.platform == "win32":
-    BREAK_SIGNAL = signal.CTRL_BREAK_EVENT
-    NEW_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
-    """The child gets its own console group, so the break reaches it and not the supervisor."""
-else:
-    BREAK_SIGNAL = signal.SIGTERM
-    NEW_GROUP = 0
 
 
 def reload_script() -> str:

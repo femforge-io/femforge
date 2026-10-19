@@ -33,6 +33,8 @@ from femforge.common.names import bundle_name
 from femforge.run.result import LifecycleStatus, MeshStats, RunStatus
 from femforge.run.retention import Cleanup, CleanupTrigger, RetentionPolicy
 from femforge.run.stages import Stage, StageEvent
+from femforge.artifacts.sidecar import ArtifactOrigin
+from femforge.common.log import LogKey, log
 
 FIXTURES: Path = Path(__file__).parent / "fixtures"
 STALL_LOG: Path = Path(__file__).parents[1] / "elmer" / "fixtures" / "stall" / "lucid_cactus.log"
@@ -1011,3 +1013,25 @@ def test_a_stalled_solve_is_marked_stalled_and_reused(tmp_path: Path) -> None:
 
     assert again.status is RunStatus.STALLED
     assert [call for call in backend.calls if call[0] == "solve"] == [("solve", tmp_path / _run_name(config), 1)]
+
+
+def test_the_records_of_a_run_name_its_directory_and_each_stage_and_a_reuse_its_origin(tmp_path: Path) -> None:
+    config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"))
+    records: list[tuple[str, dict[str, object]]] = []
+    sink_id: int = log.add(lambda message: records.append((message.record["message"], dict(message.record["extra"]))), level="DEBUG")
+    try:
+        driver = Driver(runs_dir=tmp_path, code_sha="sha1", solver=_fake_solver)
+        _ = driver.evaluate(config)
+        _ = driver.evaluate(config)
+    finally:
+        log.remove(sink_id)
+
+    run_id = _run_name(config)
+    begun = [extra for message, extra in records if message == "Beginning evaluation."]
+    staged = [extra[LogKey.STAGE] for _, extra in records if LogKey.STAGE in extra]
+    ended = [extra[LogKey.ENDED] for _, extra in records if LogKey.STAGE in extra]
+    reused = [extra for message, extra in records if message == "Reusing bundle."]
+
+    assert [extra[LogKey.RUN_DIR] for extra in begun] == [str(tmp_path / run_id)]
+    assert staged == [Stage.CLEANUP, Stage.CLEANUP] and ended == [False, True], "the cleanup stage starts and finishes"
+    assert [(extra[LogKey.RUN_ID], extra[LogKey.ORIGIN]) for extra in reused] == [(run_id, ArtifactOrigin.LOCAL)]

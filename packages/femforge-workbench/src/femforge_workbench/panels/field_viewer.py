@@ -39,6 +39,7 @@ from femforge_workbench.feeds import Feed
 from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
 from femforge_workbench.panels.scene import ScenePanel, View, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
+from femforge_workbench.tasks import TaskPhase, TaskView
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.checkbox import Checkbox
@@ -72,6 +73,9 @@ INDEX_UNREADABLE = title("run index unreadable")
 SOLVING_AS = title("solving")
 NO_INDEX_NOTICE = f"No run index. Pass telemetry to field_viewer or set {TELEMETRY_ENV} to list runs here."
 NO_RUNS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving; the solver's progress and any errors show in its terminal."
+NO_RUNS_TASKS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving; its progress and any errors show in the task strip below."
+WAITING_FOR = title("waiting for")
+TASK_STRIP_HINT = "Its progress shows in the task strip below."
 RUN_MENU = "max-w-[36rem]"
 
 CLIM_STEPS = 1000
@@ -559,6 +563,22 @@ def bundle_entry(run: Run, value: str, flag: RunFlag | None) -> RunEntry:
     return RunEntry(value, run.path.name, manifest.config.meta.description, str(manifest.physics), manifest.config.frame.model_dim, flag, run.path.parent)
 
 
+def tasks_notice(view: TaskView) -> str:
+    """What an empty viewer says while tasks run: the task it waits for and its state, how many failed once none runs, else where the tasks show."""
+    focus = view.focus
+    if focus is not None and (focus.phase.active or focus.phase is TaskPhase.QUEUED):
+        return f"{WAITING_FOR} {focus.title} · {focus.state}\n{TASK_STRIP_HINT}"
+
+    ended = view.failed + view.stalled
+    if ended:
+        tasks = "task" if ended == 1 else "tasks"
+        how = "failed or stalled" if view.failed and view.stalled else "failed" if view.failed else "stalled"
+
+        return f"No runs yet. {ended} {tasks} {how}; open the task strip for the reasons."
+
+    return NO_RUNS_TASKS_NOTICE
+
+
 def run_entries(telemetry: Telemetry | None) -> list[RunEntry]:
     """The newest indexed runs that have fields, are solving under a live claim or failed, empty without a telemetry root; a solve that died keeps saying running, so its stale claim drops it."""
     if telemetry is None:
@@ -663,9 +683,11 @@ def missing_fields(run: Run) -> str | None:
     return "The solve wrote no fields"
 
 
-def solving_notice(entry: RunEntry) -> str:
-    """What the empty view says while the open run is still solving."""
-    return f"{entry.name} is still solving. Its fields appear here when it finishes; the solver's terminal shows its progress."
+def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
+    """What the empty view says while the open run is still solving: where its progress shows, the task strip when the workbench runs tasks."""
+    where = "the task strip below" if tasks else "the solver's terminal"
+
+    return f"{entry.name} is still solving. Its fields appear here when it finishes; {where} shows its progress."
 
 
 def captioned(label: str) -> Field:
@@ -773,7 +795,7 @@ class FieldViewerController(TrameComponent):
         """The run open or waited on, kept in the picker however the index changes."""
         self.entries = merged(self.indexed, [], None, "")
         """The runs the picker offers."""
-        listed = NO_RUN if self.entries else NO_RUNS_NOTICE
+        listed = NO_RUN if self.entries else tasks_notice(app.board.view()) if app.board is not None else NO_RUNS_NOTICE
         self.note = listed if telemetry is not None else NO_INDEX_NOTICE
         """What the empty view says, for a view built while no run is shown."""
         self.feed = self.runs_feed(telemetry) if telemetry is not None else None
@@ -1037,6 +1059,26 @@ class FieldViewerController(TrameComponent):
         finally:
             self.syncing = False
 
+    @controller.set(str(Hook.FIELD_FOLLOW))
+    def follow(self, previous: str, current: str) -> None:
+        """Opens a task's newer run when the viewer shows, or waits on, the task's previous one; any other view stays."""
+        if self.opened is None or self.opened.run_id != previous:
+            return
+
+        log.bind(previous=previous, run_id=current).info("Following the newer run of a task.")
+        self.open(current)
+        self.status(f"Opened the newer run {current}")
+
+    @controller.set(str(Hook.FIELD_TASKS))
+    def follow_tasks(self, view: TaskView) -> None:
+        """Names the task an empty viewer waits for, while no run is listed or open."""
+        if self.telemetry is None or self.entries or self.opened is not None:
+            return
+
+        text = tasks_notice(view)
+        if text != self.note:
+            self.notice(text)
+
     @controller.set(str(Hook.FIELD_OPEN))
     def open(self, location: Location) -> None:
         """Schedules opening the run at ``location`` (a run id, a bundle directory or a Run) on the server loop, with the run picker showing it."""
@@ -1073,7 +1115,7 @@ class FieldViewerController(TrameComponent):
             self.seen = None
             offered = self.adopt(opened, run.path)
             if waiting:
-                self.clear(solving_notice(offered), status=f"{offered.name} is solving")
+                self.clear(solving_notice(offered, tasks=self.app.board is not None), status=f"{offered.name} is solving")
                 with self.quiet():
                     self.state[FieldVar.SOLVED_AS] = SOLVING_AS
 

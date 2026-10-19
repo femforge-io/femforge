@@ -22,7 +22,7 @@ pytest.importorskip("pyvista")
 import pyvista as pv  # noqa: E402
 from trame.app import get_server  # noqa: E402
 
-from femforge_workbench.app import QUIET_LIBRARIES, StateVar, Template, Workbench  # noqa: E402
+from femforge_workbench.app import CONFIRM_S, COPIED_MS, QUIET_LIBRARIES, Cls, StateVar, Template, Workbench  # noqa: E402
 from femforge_workbench.demo import ALL_SERIES, ROWS, SERIES_COLUMN, DemoPanel, DemoVar, workbench  # noqa: E402
 from femforge_workbench.launcher import workbench as launcher  # noqa: E402
 from femforge_workbench.panels.figure import FigurePanel  # noqa: E402
@@ -30,6 +30,7 @@ from femforge_workbench.panels.launcher import LauncherPanelId  # noqa: E402
 from femforge_workbench.panels.scene import STILL_SCALE, ScenePanel, View, ViewMode  # noqa: E402
 from femforge_workbench.panels.table import TablePanel  # noqa: E402
 from femforge_workbench.registry import DEMO  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard, TaskPhase  # noqa: E402
 
 
 def _shell(name: str, root: Path) -> Workbench:
@@ -71,7 +72,8 @@ def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_se
 
     assert prop(root, "className") == "flex h-full flex-col"
     assert children[0]["tag"] == "ff-theme" and prop(children[0], "dark") == {"js": str(StateVar.DARK)}
-    assert [child["tag"] for child in children[1:]] == ["header", "ff-tour", "main"]
+    assert [child["tag"] for child in children[1:]] == ["header", "ff-tour", "main", "ReactIf"]
+    assert prop(children[-1], "value") == {"js": f"{StateVar.TASKS}.length"}, "the task strip shows only when a script passed tasks"
     header = cast("list[dict[str, object]]", children[1]["children"])
     assert [child["tag"] for child in header[:2]] == ["div", "div"], "the brand and a divider lead the title"
     assert [prop(node, "src") for node in find(header[0], "img")] == ["/__ff/ff-logo.svg"] and texts(find(header[0], "span")[0]) == ["femforge"]
@@ -81,7 +83,7 @@ def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_se
     slot = cast("dict[str, object]", render["slot"])
     assert slot["params"] == ["panel"]
     assert [prop(node, "templateName") for node in find(slot, "trame-template")] == [{"js": "panel.templateName"}]
-    assert [node.get("props") for node in find(root, "ReactFor")] == [{"items": {"js": str(StateVar.WORKBENCHES)}, "name": "card"}]
+    assert [node.get("props") for node in find(root, "ReactFor")] == [{"items": {"js": str(StateVar.WORKBENCHES)}, "name": "card"}, {"items": {"js": str(StateVar.TASKS)}, "name": "task"}]
     assert cast("dict[str, object]", cast("dict[str, object]", prop(switcher[0], "onSelect"))["callback"])["args"] == {"js": "[card.name]"}
     assert prop(close_all[0], "value") == {"js": f"{StateVar.OPENED}.length"} and texts(find(close_all[0], "ff-button")[0]) == ["Close All"]
     assert [prop(node, "templateName") for node in find(root, "trame-template")][0] == str(Template.HEADER)
@@ -352,3 +354,93 @@ def test_a_workbench_can_put_controls_in_the_header_bound_to_the_state(tmp_path:
         return shown
 
     assert asyncio.run(run()) == ["beta"]
+
+
+def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path) -> None:
+    app = _shell("smoke-tasks", tmp_path)
+    app.board = TaskBoard(app, "main:tasks", [Task("Solve 3D", sys.gettrace), Task("Planar 2D", sys.gettrace)], path=None, roots=[])
+    root = cast("dict[str, object]", app.ui.html)
+
+    toggles = [node for node in find(root, "button") if prop(node, "aria-controls") == "task-sheet"]
+    statuses = [node for node in find(root, "span") if prop(node, "role") == "status"]
+    alerts = [node for node in statuses if "Script Error · " in texts(node)]
+    assert len(toggles) == 1 and prop(toggles[0], "aria-expanded") == {"js": str(StateVar.TASK_SHEET)}
+    assert len(statuses) == 2 and all(prop(node, "aria-live") == "polite" for node in statuses), "the summary and a script error are announced"
+    assert len(alerts) == 1 and prop(alerts[0], "className") == str(Cls.TASK_ALERT)
+    assert app.state[StateVar.TASK_SUMMARY] == "0 of 2 Done"
+    assert cast("dict[str, object]", app.state[StateVar.TASK_FOCUS])["label"] == "Solve 3D"
+
+    escape = [node for node in find(root, "div") if prop(node, "onKeyDown") is not None]
+    every = {"js": f"{StateVar.TASK_SHEET} ? 'Hide Task List' : 'Show Task List'"}
+    lines = [node for node in find(root, "div") if prop(node, "title") == every]
+    narrow = [node for node in find(root, "span") if prop(node, "className") == "hidden tabular-nums max-[800px]:inline"]
+    assert len(escape) == 1 and "Escape" in str(prop(escape[0], "onKeyDown")) and "task-toggle" in str(prop(escape[0], "onKeyDown")), "Escape closes the sheet and hands focus back to the toggle"
+    assert prop(escape[0], "className") == str(Cls.ROOT), "the root catches Escape wherever the focus is in the page"
+    assert prop(toggles[0], "id") == "task-toggle" and len(lines) == 1 and prop(lines[0], "onClick") is not None, "the summary line opens the sheet too"
+    assert prop(toggles[0], "title") == every, "the toggle names what a press does: show, or hide once open"
+
+    buttons = find(root, "ff-button")
+    details = [node for node in buttons if "Details for " in str(prop(node, "aria-label"))]
+    copies = [node for node in buttons if "Copy Traceback" in str(node.get("children"))]
+    reused = [node for node in find(root, "span") if prop(node, "title") == "Tasks That Reused a Finished Run"]
+    assert len(details) == 1 and prop(details[0], "aria-expanded") == {"js": f"{StateVar.TASK_DETAILS} === task.label"}
+    assert prop(details[0], "aria-label") == {"js": "(task.stalled ? 'Log for ' : 'Details for ') + task.title"}, "the toggle names its task"
+    assert len(copies) == 1 and "'Copied'" in str(copies[0].get("children")) and prop(copies[0], "aria-live") == "polite"
+    copy = str(prop(copies[0], "onClick"))
+    assert "navigator.clipboard.writeText(task.traceback)" in copy and f'trame.state.set("{StateVar.TASK_COPIED}", label)' in copy and f"{COPIED_MS})" in copy, "Copy reads Copied for a moment"
+    assert len(reused) == 1 and reused[0].get("children") == ["↺ ", {"js": str(StateVar.TASK_REUSED)}, " Reused"] and app.state[StateVar.TASK_REUSED] == 0
+    assert len(narrow) == 1 and app.state[StateVar.TASK_COUNT] == "0/2"
+    assert app.state[StateVar.TASK_BUSY] is True and str(app.state[StateVar.TASK_SUBMITTED]).startswith("Submitted at ")
+
+    headings = find(root, "th")
+    errors = [node for node in find(root, "div") if prop(node, "className") == str(Cls.TASK_SCRIPT_ERROR)]
+    slides = [node for node in find(root, "div") if prop(node, "className") == str(Cls.TASK_SLIDE)]
+    pulses = [node for node in find(root, "div") if prop(node, "role") == "progressbar"]
+    opens = [node for node in find(root, "ff-button") if prop(node, "aria-label") == {"js": "'Open run for ' + wb_task_focus.title"}]
+    details_box = [node for node in find(root, "pre") if prop(node, "className") == str(Cls.TASK_DETAIL)]
+    assert [texts(node) for node in headings] == [[], ["Task"], ["State"], ["Elapsed"], ["Run"], []]
+    assert prop(headings[3], "className") == str(Cls.TASK_HEAD_ELAPSED) and "text-right" in str(Cls.TASK_HEAD_ELAPSED), "the Elapsed heading aligns with its figures"
+    assert [texts(node) for node in find(headings[5], "span")] == [["Actions"]] and prop(find(headings[5], "span")[0], "className") == "sr-only"
+    assert "table-fixed" in str(Cls.TASK_TABLE), "the columns keep their place while the state text changes"
+    assert len(errors) == 1 and errors[0].get("children") == ["Script Error · ", {"js": str(StateVar.TASK_ERROR)}], "the sheet repeats a script error untruncated"
+    assert "truncate" not in str(Cls.TASK_SCRIPT_ERROR)
+    assert len(pulses) == 2 and len(slides) == 2 and all(prop(node, "aria-valuenow") is None for node in pulses), "an indeterminate bar slides a segment along its track"
+    assert len(opens) == 1, "the strip names the run Open opens"
+    assert len(details_box) == 1 and "whitespace-pre-wrap" in str(Cls.TASK_DETAIL), "a long traceback line wraps"
+
+    app.state.ready()
+    app.toggle_tasks()
+    assert app.state[StateVar.TASK_SHEET] is True and app.persist.load(app.scope, StateKey.TASK_SHEET) == {"open": True}
+    with app.state:
+        app.state[StateVar.TASK_SHEET] = False
+
+    assert app.persist.load(app.scope, StateKey.TASK_SHEET) == {"open": False}, "a sheet closed on the client is remembered closed"
+
+    app.cancel_task("Planar 2D")
+    armed = app.state[StateVar.TASK_CONFIRM]
+    app.cancel_task("Planar 2D")
+    assert armed == "Planar 2D" and app.state[StateVar.TASK_CONFIRM] == "", "the second press cancels"
+    assert app.board.by_label["Planar 2D"].phase is TaskPhase.STOPPED
+
+    app.cancel_task("Solve 3D")
+    armed = app.armed
+    left = [app.state[StateVar.TASK_CONFIRM_LEFT]]
+    app.count_down("Solve 3D", armed - 1, 2)
+    left.append(app.state[StateVar.TASK_CONFIRM_LEFT])
+    for seconds in reversed(range(CONFIRM_S)):
+        app.count_down("Solve 3D", armed, seconds)
+        left.append(app.state[StateVar.TASK_CONFIRM_LEFT])
+
+    assert left == [3, 3, 2, 1, 0], "the armed button counts its seconds down, and a stale countdown does nothing"
+    assert app.state[StateVar.TASK_CONFIRM] == "" and app.board.by_label["Solve 3D"].phase is TaskPhase.QUEUED
+
+    app.retry_task("Planar 2D")
+    assert app.board.queue == ["Solve 3D", "Planar 2D"]
+
+    app.toggle_task_details("Planar 2D")
+    assert app.state[StateVar.TASK_DETAILS] == "Planar 2D"
+    app.toggle_task_details("Planar 2D")
+    assert app.state[StateVar.TASK_DETAILS] == ""
+
+    app.open_task_run("r1")
+    assert app.state[StateVar.STATUS] == "no field viewer to open the run in"

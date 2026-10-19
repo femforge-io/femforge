@@ -23,6 +23,12 @@ from trame_client.widgets.html import (
     Small as Small,
     Span as Span,
     Strong as Strong,
+    Table as Table,
+    Tbody as Tbody,
+    Td as Td,
     Template as Template,
+    Th as Th,
+    Thead as Thead,
+    Tr as Tr,
     Ul as Ul,
 )

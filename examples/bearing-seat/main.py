@@ -1,7 +1,5 @@
 """A magnet holds a steel bearing in its seat: compare the pull with and without a steel shell in 2D, check one case in 3D, and watch the runs land in a workbench."""
 
-import threading
-
 import femforge as ff
 from geometry import BearingSeat, EntityNames
 from paths import RUNS_DIR, TELEMETRY_DIR
@@ -126,12 +124,15 @@ def evaluate() -> ff.Driver:
     return driver
 
 
+def solves() -> list[ff.workbench.Task]:
+    """The shell comparison as one task, which the workbench runs in the background and again after every save."""
+    return [ff.workbench.Task("Shell Comparison", evaluate)]
+
+
 def main() -> None:
     """Solve the shell comparison in the background while the workbench shows the runs as they land."""
-    threading.Thread(target=evaluate, daemon=True).start()
-
-    # A factory, not a built Split, so the workbench rebuilds the UI on every save of ui.py.
-    ff.workbench.show(workbench_ui, title="Bearing Seat Workbench", window=ff.workbench.Window.BROWSER)
+    # Functions, not a built Split and a list, so every save rebuilds the UI from ui.py and solves the edit.
+    ff.workbench.show(workbench_ui, tasks=solves, title="Bearing Seat Workbench", window=ff.workbench.Window.BROWSER)
 
 
 if __name__ == "__main__":

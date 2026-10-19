@@ -6,7 +6,7 @@
 
 `resolve_root` is the on and off switch: an explicit path, else `FEMFORGE_TELEMETRY`, else None, and None means telemetry is off and nothing is created (`src/femforge/telemetry/paths.py:55-64`). A reader that needs a root calls `require_root`, which raises `TelemetryRootMissing` naming both ways to give one (`src/femforge/telemetry/paths.py:67-73`).
 
-With telemetry off, a process never imports polars. The logging setup and the driver check the explicit root and the variable before they import `femforge.telemetry` (`src/femforge/common/log.py:206-211`, `src/femforge/run/driver.py:368-377`).
+With telemetry off, a process never imports polars. The logging setup and the driver check the explicit root and the variable before they import `femforge.telemetry` (`src/femforge/common/log.py:268-273`, `src/femforge/run/driver.py:376-385`).
 
 [Telemetry][femforge.telemetry.Telemetry] addresses a root and hands out one cached [HiveStore][femforge.telemetry.HiveStore] per table (`src/femforge/telemetry/paths.py:76-115`). `TelemetryDir` names the directories (`src/femforge/telemetry/paths.py:33-52`):
 
@@ -145,16 +145,16 @@ Every new [ParquetLogSink][femforge.telemetry.ParquetLogSink] recovers the log j
 
 ## The log sink and loguru
 
-`src/femforge/common/log.py` is the only logging configuration site (`src/femforge/common/log.py:1`). [setup_logging][femforge.common.setup_logging] installs the terminal sink, routes the standard library's `logging` and `warnings` into loguru, gates chatty libraries such as build123d at the source, and installs the parquet sink when a root resolves (`src/femforge/common/log.py:246-299`):
+`src/femforge/common/log.py` is the only logging configuration site (`src/femforge/common/log.py:1`). [setup_logging][femforge.common.setup_logging] installs the terminal sink, routes the standard library's `logging` and `warnings` into loguru, gates chatty libraries such as build123d at the source, and installs the parquet sink when a root resolves (`src/femforge/common/log.py:308-361`):
 
 | Setting | Resolution | Where |
 |---|---|---|
-| terminal level | `level`, else `FEMFORGE_LOG_LEVEL`, else `INFO` | `src/femforge/common/log.py:264` |
-| parquet sink level | always `DEBUG`: the store is the searchable record, the terminal only the live view | `src/femforge/common/log.py:232-240` |
-| sink order | the parquet sink goes in after `logger.remove()`, which would otherwise drop it | `src/femforge/common/log.py:298-299` |
-| a repeat call | adjusts the terminal level, the library gates and the telemetry root, swapping the sink when the root moves | `src/femforge/common/log.py:266-275`, `src/femforge/common/log.py:213-217` |
+| terminal level | `level`, else `FEMFORGE_LOG_LEVEL`, else `INFO` | `src/femforge/common/log.py:326` |
+| parquet sink level | always `DEBUG`: the store is the searchable record, the terminal only the live view | `src/femforge/common/log.py:294-302` |
+| sink order | the parquet sink goes in after `logger.remove()`, which would otherwise drop it | `src/femforge/common/log.py:360-361` |
+| a repeat call | adjusts the terminal level, the library gates and the telemetry root, swapping the sink when the root moves | `src/femforge/common/log.py:328-337`, `src/femforge/common/log.py:275-279` |
 
-`ff.log` runs `setup_logging` with the defaults before its first record, so a script that never calls it still gets the terminal sink (`src/femforge/common/log.py:364-381`).
+`ff.log` runs `setup_logging` with the defaults before its first record, so a script that never calls it still gets the terminal sink (`src/femforge/common/log.py:441-458`).
 
 [ParquetLogSink][femforge.telemetry.ParquetLogSink] is a plain loguru sink callable (`src/femforge/telemetry/sink.py:117-197`):
 
@@ -167,12 +167,12 @@ Two context managers route records:
 
 | Context | Effect | Where |
 |---|---|---|
-| `telemetry_scope(root)` | binds a route key, so the records inside land in that root's own sink; one sink per folder lives for the process | `src/femforge/common/log.py:384-419` |
-| `run_log_context(run_id, dir)` | binds `run_id` and writes every record that carries it, at `DEBUG` and above, to the bundle's `run.log` | `src/femforge/common/log.py:422-452` |
+| `telemetry_scope(root)` | binds a route key, so the records inside land in that root's own sink; one sink per folder lives for the process | `src/femforge/common/log.py:461-496` |
+| `run_log_context(run_id, dir)` | binds `run_id` and writes every record that carries it, at `DEBUG` and above, to the bundle's `run.log` | `src/femforge/common/log.py:499-529` |
 
 [Driver.evaluate][femforge.run.Driver.evaluate] wraps a whole evaluation in `telemetry_scope(self.telemetry)`, so its records land in the driver's root and not the process default (`src/femforge/run/driver.py:205-206`).
 
-A child process relays its records instead of writing its own. `log_to_stdout_json` replaces the terminal sink with one JSON line per record on stdout (`src/femforge/common/log.py:326-334`). The parent passes each output line to `relay_record`, which logs a JSON record at its own level with the child's module, function and line patched in, and any other line at `DEBUG` (`src/femforge/common/log.py:344-361`). The mesh worker works this way (`src/femforge/meshing/backend.py:245`).
+A child process relays its records instead of writing its own. `log_to_stdout_json` replaces the terminal sink with one JSON line per record on stdout (`src/femforge/common/log.py:388-397`). The parent passes each output line to `relay_record`, which logs a JSON record at its own level with the child's module, function and line patched in, and any other line at `DEBUG` (`src/femforge/common/log.py:408-424`). The mesh worker works this way (`src/femforge/meshing/backend.py:245`).
 
 ## The run and artifact indexes
 
@@ -184,7 +184,7 @@ An index turns directories of self-describing files into rows, and both indexes 
 
 **Rows are append-only, and the reader dedupes.** `RunQuery.frame` sorts by `indexed_at` and keeps the last row per `run_id` (`src/femforge/telemetry/runs.py:278-280`); `ArtifactQuery.frame` keeps the last per `(kind, key)` (`src/femforge/telemetry/artifacts.py:100-102`). A run's second row supersedes its first, and nothing rewrites a shard.
 
-The driver records its own runs. With a root, it appends a row when it first writes the manifest and another once the run has settled, so a running sweep is visible and a later scan finds nothing new (`src/femforge/run/driver.py:316-317`, `src/femforge/run/driver.py:451`). A failed write only warns, because telemetry never fails a solve (`src/femforge/run/driver.py:379-388`). `current_sweep_point()` supplies the sweep and point ids of a driver row (`src/femforge/telemetry/runs.py:145`), and a later scan row inherits them, because only the worker that solved the run knew them (`src/femforge/telemetry/runs.py:390-410`).
+The driver records its own runs. With a root, it appends a row when it first writes the manifest and another once the run has settled, so a running sweep is visible and a later scan finds nothing new (`src/femforge/run/driver.py:324-325`, `src/femforge/run/driver.py:459`). A failed write only warns, because telemetry never fails a solve (`src/femforge/run/driver.py:387-396`). `current_sweep_point()` supplies the sweep and point ids of a driver row (`src/femforge/telemetry/runs.py:145`), and a later scan row inherits them, because only the worker that solved the run knew them (`src/femforge/telemetry/runs.py:390-410`).
 
 `RunQuery` and `ArtifactQuery` are fluent: each method returns a new query, and nothing is collected until `frame()`. `runs()` and `records()` return the real objects and skip whatever retention removed since (`src/femforge/telemetry/runs.py:301-317`). `with_live()` joins [live_runs][femforge.telemetry.live_runs], because the claim files are the truth about what is in flight. `femforge artifacts ls` lists from the artifact index when a root resolves and the index holds rows, and scans the store otherwise (`src/femforge/cli.py:273-276`, `src/femforge/telemetry/cli.py:445-462`).
 
@@ -205,7 +205,7 @@ The parent and every worker own a journal of their own, one flushed line per tra
 
 ## Convergence
 
-[solve_case][femforge.elmer.solve_case] writes `convergence.jsonl` in the bundle, one flushed line per convergence sample, with exactly the keys of the convergence schema (`src/femforge/elmer/runtime/solve.py:124-137`). Immediately before the solve, the driver's `run_solver` stage writes `convergence_targets.json` from the solver stack's `convergence_targets`, the same mapping it hands the terminal renderer (`src/femforge/run/driver.py:700-713`). [ConvergenceTargetsFile][femforge.telemetry.ConvergenceTargetsFile] is that file's model, and a bundle without one reads as having no targets (`src/femforge/telemetry/convergence.py:50-100`). Both files belong to the `logs` retention class (`src/femforge/common/files.py:90`).
+[solve_case][femforge.elmer.solve_case] writes `convergence.jsonl` in the bundle, one flushed line per convergence sample, with exactly the keys of the convergence schema (`src/femforge/elmer/runtime/solve.py:131-144`). Immediately before the solve, the driver's `run_solver` stage writes `convergence_targets.json` from the solver stack's `convergence_targets`, the same mapping it hands the terminal renderer (`src/femforge/run/driver.py:711-724`). [ConvergenceTargetsFile][femforge.telemetry.ConvergenceTargetsFile] is that file's model, and a bundle without one reads as having no targets (`src/femforge/telemetry/convergence.py:50-100`). Both files belong to the `logs` retention class (`src/femforge/common/files.py:90`).
 
 [scan_convergence][femforge.telemetry.scan_convergence] reads the log onto the convergence schema, skipping a malformed line, and derives two columns (`src/femforge/telemetry/convergence.py:111-142`):
 
@@ -214,7 +214,7 @@ The parent and every worker own a journal of their own, one flushed line per tra
 | `first_relc` | the relative change at iteration 1 of each `(solver, loop)`; iteration 1 resets it, so a nonlinear loop that restarts inside a steady-state sweep is measured from its own start |
 | `progress` | the log-scale fraction of the decades between `first_relc` and the loop's tolerance already covered |
 
-`progress` calls `convergence_progress`, the same pure function the terminal renderer uses, so a stored run and a live one report the same number (`src/femforge/elmer/solver_log.py:360-374`, `src/femforge/elmer/solver_log.py:424-426`).
+`progress` calls `convergence_progress`, the same pure function the terminal renderer uses, so a stored run and a live one report the same number (`src/femforge/elmer/solver_log.py:360-374`, `src/femforge/elmer/solver_log.py:420-422`).
 
 ## Tail and tap
 

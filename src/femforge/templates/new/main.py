@@ -4,8 +4,8 @@
 # ///
 """A disc magnet pulls on a steel plate across an air gap: solve four gaps in the background while a workbench shows each run as it lands (``--solve-only`` skips the workbench)."""
 
-import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import build123d as b3d
@@ -84,14 +84,18 @@ def config(gap: float = 1.0) -> ff.SimulationConfig:
     )
 
 
-def solve() -> None:
-    """Solve every gap and log the axial force on the plate, negative toward the magnet; a gap solved before loads from ``runs/``."""
-    driver = ff.Driver(runs_dir=RUNS, telemetry=TELEMETRY)
+def solve(gap: float) -> float:
+    """`F` `[N]`: The axial force on the plate ``gap`` mm above the magnet, negative toward it; a gap solved before loads from ``runs/``."""
+    result = ff.Driver(runs_dir=RUNS, telemetry=TELEMETRY).evaluate(config(gap))
+    newtons = result.axial_force(PLATE).m_as("newton")
+    ff.log.success(f"{gap:g} mm gap: {newtons:.1f} N on the plate, run {result.run_id}")
 
-    for gap in GAPS:
-        result = driver.evaluate(config(gap))
-        newtons = result.axial_force(PLATE).m_as("newton")
-        ff.log.success(f"{gap:g} mm gap: {newtons:.1f} N on the plate, run {result.run_id}")
+    return newtons
+
+
+def solves() -> list[ff.workbench.Task]:
+    """One task per gap, which the workbench solves in the background and lists again on every save of this file."""
+    return [ff.workbench.Task(f"Gap {gap:g} mm", partial(solve, gap)) for gap in GAPS]
 
 
 def viewer() -> ff.workbench.Split:
@@ -103,12 +107,8 @@ def viewer() -> ff.workbench.Split:
 
 if __name__ == "__main__":
     if "--solve-only" in sys.argv[1:]:
-        solve()
+        for task in solves():
+            _ = task.run()
     else:
-        solver = subprocess.Popen([sys.executable, __file__, "--solve-only"])
-        try:
-            # A function, not a built dock, so every save of this file rebuilds the workbench.
-            ff.workbench.show(viewer, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)
-        finally:
-            # Ctrl+C reaches the solver too; waiting lets it release its claim on the run it was solving.
-            _ = solver.wait()
+        # Functions, not a built dock and a list, so every save of this file rebuilds the workbench and solves the edited gaps.
+        ff.workbench.show(viewer, tasks=solves, title="Magnet and Plate", window=ff.workbench.Window.BROWSER)

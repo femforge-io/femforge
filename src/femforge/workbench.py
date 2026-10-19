@@ -16,6 +16,7 @@ try:
     from femforge_workbench.panels.runs import RunBrowserPanel, RunDetailPanel
     from femforge_workbench.panels.table import TablePanel
     from femforge_workbench.serve import show
+    from femforge_workbench.tasks import Task, TaskFactory
 except ModuleNotFoundError as error:
     if find_spec("femforge_workbench") is not None:
         raise
@@ -34,6 +35,8 @@ __all__ = [
     "Split",
     "TablePanel",
     "Tabs",
+    "Task",
+    "TaskFactory",
     "Window",
     "Workbench",
     "artifact_store",

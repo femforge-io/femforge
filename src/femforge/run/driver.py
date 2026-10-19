@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from femforge.artifacts.cache import ArtifactCache, ArtifactHandle
 from femforge.artifacts.keys import ArtifactKey, artifact_key
-from femforge.artifacts.kind import Produced
+from femforge.artifacts.kind import BuiltinKind, Produced
 from femforge.artifacts.lock import HEARTBEAT_S, LOCK_SUFFIX, DirLock, keep_alive
 from femforge.artifacts.sidecar import ArtifactOrigin, ArtifactRef, ToolVersions
 from femforge.common.files import BundleFile, BundleGlob, RunFile
-from femforge.common.log import TELEMETRY_ENV, log, run_log_context, telemetry_scope
+from femforge.common.log import TELEMETRY_ENV, LogKey, log, run_log_context, telemetry_scope
 from femforge.common.names import bundle_name
 from femforge.config import SimulationConfig
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, convergence_targets, linear_targets, needs_halobc
@@ -215,7 +215,14 @@ class Driver:
 
             # One producer per bundle: a second process asking for the same identity waits, then reuses what the first left.
             claim = DirLock(self.runs_dir / f"{run_id}{LOCK_SUFFIX}")
+            waiting = False
             while not claim.try_acquire():
+                if not waiting:
+                    waiting = True
+                    owner = claim.owner()
+                    holder = owner.pid if owner is not None else None
+                    log.bind(**{str(LogKey.RUN_ID): run_id, str(LogKey.HOLDER): holder}).info("Waiting for another process to finish the run.")
+
                 time.sleep(CLAIM_POLL_S)
                 reused = self._reuse(config, key, sim_dir)
                 if reused is not None:
@@ -240,7 +247,7 @@ class Driver:
 
         result: Result | None = self._reusable_local(key, sim_dir)
         if result is not None:
-            log.bind(run_id=sim_dir.name, origin=ArtifactOrigin.LOCAL).info("Reusing bundle.")
+            log.bind(**{str(LogKey.RUN_ID): sim_dir.name, str(LogKey.ORIGIN): ArtifactOrigin.LOCAL}).info("Reusing bundle.")
             return result
 
         if self.artifacts is None:
@@ -254,7 +261,7 @@ class Driver:
         if handle is None:
             return None
 
-        log.bind(run_id=sim_dir.name, origin=handle.origin).info("Reusing bundle.")
+        log.bind(**{str(LogKey.RUN_ID): sim_dir.name, str(LogKey.ORIGIN): handle.origin, str(LogKey.CACHED): BuiltinKind.RUN_BUNDLE}).info("Reusing bundle.")
         return Result.load(sim_dir)
 
     def _reusable_local(self, key: ArtifactKey[RunSpec], sim_dir: Path) -> Result | None:
@@ -306,6 +313,7 @@ class Driver:
                     backend=type(self.backend).__name__,
                     mpi=self.mpi_processes,
                     description=config.meta.description or None,
+                    **{str(LogKey.RUN_DIR): str(sim_dir)},
                 ).info("Beginning evaluation.")
 
                 # A re-used run dir must not leak a previous result or SaveScalars exports into parse_result's glob-all.
@@ -538,12 +546,13 @@ class Driver:
 
         manifest, sim_dir = self._active
 
+        staged = log.bind(**{str(LogKey.STAGE): str(event.stage), str(LogKey.ENDED): event.finished_at is not None})
         if event.finished_at is None:
-            log.info(f"[{event.stage.name}] started.")
+            staged.info(f"[{event.stage.name}] started.")
             manifest.stage_history.append(event)
         else:
             time_taken = (event.finished_at - event.started_at).total_seconds()
-            log.info(f"[{event.stage.name}] completed ({round(time_taken, 2)}s).")
+            staged.info(f"[{event.stage.name}] completed ({round(time_taken, 2)}s).")
 
         write_manifest(sim_dir, manifest)
 
@@ -605,6 +614,8 @@ class Driver:
                 produce=partial(self._produce_mesh, state),
             )
             self._record_artifact(handle)
+            if handle.origin is not ArtifactOrigin.PRODUCED:
+                log.bind(**{str(LogKey.ORIGIN): handle.origin, str(LogKey.CACHED): BuiltinKind.ELMER_MESH}).info("Mesh served from the cache.")
 
         self._adopt_mesh(state, MeshGroupsFile.load(state.sim_dir))
 

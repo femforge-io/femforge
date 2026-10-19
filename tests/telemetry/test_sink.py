@@ -14,7 +14,7 @@ import pytest
 from rich.console import Console
 from rich.tree import Tree
 
-from femforge.common.log import LogLevel, _reset_for_tests, log, setup_logging, telemetry_scope, telemetry_sink
+from femforge.common.log import RELAYED_ROUTE, TELEMETRY_ROUTE, LogLevel, RelayedRecord, _reset_for_tests, emit_relayed, log, log_to_stdout_json, setup_logging, telemetry_scope, telemetry_sink
 from femforge.telemetry.context import sweep_point
 from femforge.telemetry.hive import coerce
 from femforge.telemetry.journal import journal_glob
@@ -590,3 +590,35 @@ def test_run_log_lines_leave_out_the_telemetry_route(tmp_path: Path) -> None:
     assert "'width': 3" in inside and "'run_id': 'run-1'" in inside
     assert "telemetry_root" not in text
     assert "RuntimeError: boom" in text
+
+
+@pytest.mark.usefixtures("clean_logging")
+def test_a_relayed_record_reaches_neither_the_default_nor_a_scoped_sink(tmp_path: Path) -> None:
+    """A record a child already stored is relayed to the terminal only, inside a scope or outside it."""
+    default = _installed(tmp_path / "default")
+    child: RelayedRecord = {"level": "INFO", "message": "from the child", "name": "main", "function": "solve", "line": 1, "extra": {}}
+
+    with telemetry_scope(tmp_path / "own"):
+        log.info("scoped")
+        emit_relayed(child, **{TELEMETRY_ROUTE: RELAYED_ROUTE})
+
+    emit_relayed(child, **{TELEMETRY_ROUTE: RELAYED_ROUTE})
+    log.info("outside")
+    default.flush()
+
+    assert _messages(tmp_path / "own") == ["scoped"]
+    assert _messages(tmp_path / "default") == ["outside"]
+
+
+@pytest.mark.usefixtures("clean_logging")
+def test_a_json_child_stores_its_records_under_the_environment_root_as_its_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv(TELEMETRY_ENV, str(tmp_path))
+
+    log_to_stdout_json(process="Solve 3D")
+    log.info("from the child")
+
+    sink = telemetry_sink()
+    assert sink is not None and sink.process == sanitize_process("Solve 3D")
+    sink.flush()
+    assert _messages(tmp_path) == ["from the child"]
+    assert json.loads(capsys.readouterr().out.splitlines()[0])["message"] == "from the child"

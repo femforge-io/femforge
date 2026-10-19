@@ -24,6 +24,7 @@ from femforge_workbench.app import StateVar, Window, Workbench  # noqa: E402
 from femforge_workbench.demo import Sphere, workbench as demo  # noqa: E402
 from femforge_workbench.panels.scene import SceneViewerPanel  # noqa: E402
 from femforge_workbench.serve import VIEWER_PANEL, NotAWorkbench, build, card, show  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard  # noqa: E402
 from femforge_workbench.theme import Palette  # noqa: E402
 
 
@@ -42,6 +43,10 @@ def sphere() -> Renderable:
 
 def not_a_dock() -> int:
     return 1
+
+
+def solves() -> list[Task]:
+    return [Task("Solve", not_a_dock)]
 
 
 @pytest.fixture
@@ -218,3 +223,44 @@ def test_when_ready_waits_for_the_server_loop_then_calls_at_once(tmp_path: Path)
     before, calls = asyncio.run(run())
 
     assert before == [] and calls == ["queued", "now"]
+
+
+def test_tasks_attach_a_board_on_the_factory_target_that_stops_with_the_server(served: Served, tmp_path: Path) -> None:
+    show(bearing_seat, tasks=solves, persist=tmp_path)
+    show(demo(), tasks=solves, persist=tmp_path)
+
+    [(card_app, _, _), (split_app, _, _)] = served
+    boards = [app.board for app in (card_app, split_app)]
+    assert all(board is not None and board.factory == f"{__name__}:solves" and board.closed for board in boards)
+    assert [row["label"] for row in cast("list[dict[str, object]]", card_app.state[StateVar.TASKS])] == ["Solve"]
+
+
+def test_tasks_must_come_from_a_module_level_function_and_never_go_to_a_script_card(served: Served, tmp_path: Path) -> None:
+    def nested() -> list[Task]:
+        return []
+
+    with pytest.raises(ValueError, match="module attribute"):
+        show(bearing_seat, tasks=nested, persist=tmp_path)
+
+    with pytest.raises(ValueError, match="takes no tasks"):
+        show(script("sweep", "Sweep", target="lab.sweep"), tasks=solves)
+
+    assert served == []
+
+
+def test_the_board_stops_when_the_server_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped: list[TaskBoard] = []
+
+    def run(self: Workbench, *, port: int = 8080, window: Window = Window.BROWSER) -> None:
+        raise OSError("port taken")
+
+    def shutdown(self: TaskBoard, grace: float = 10.0) -> None:
+        stopped.append(self)
+
+    monkeypatch.setattr(Workbench, "run", run)
+    monkeypatch.setattr(TaskBoard, "shutdown", shutdown)
+
+    with pytest.raises(OSError, match="port taken"):
+        show(bearing_seat, tasks=solves, persist=tmp_path)
+
+    assert len(stopped) == 1

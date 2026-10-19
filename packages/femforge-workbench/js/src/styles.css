@@ -293,3 +293,12 @@
     transition: none;
   }
 }
+
+@keyframes ff-slide {
+  from {
+    left: -33%;
+  }
+  to {
+    left: 100%;
+  }
+}

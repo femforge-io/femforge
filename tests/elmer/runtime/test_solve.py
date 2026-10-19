@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from femforge.common.log import log
+from femforge.common.log import LogKey, log
 from femforge.elmer.runtime import solve
 from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.elmer.runtime.solve import solve_case
@@ -223,8 +223,9 @@ def test_a_stalled_linear_solve_is_stopped_and_reported_once(tmp_path: Path) -> 
 
     stalled = [(message, extra) for message, extra in records if message.startswith("stalled:")]
     assert len(stalled) == 1
-    assert stalled[0][1]["iteration"] == 1339
-    assert stalled[0][1]["solver"] == "linear elasticity"
+    assert stalled[0][1][LogKey.ITERATION] == 1339
+    assert stalled[0][1][LogKey.SOLVER] == "linear elasticity"
+    assert stalled[0][1][LogKey.STALL] is StallReason.REPEATED and stalled[0][1][LogKey.RESIDUAL] == run.stall.residual
 
 
 def test_the_backend_sees_the_stall_as_a_cancel(tmp_path: Path) -> None:
@@ -249,3 +250,29 @@ def test_a_long_linear_solve_logs_a_progress_line_with_its_fields(tmp_path: Path
     assert "31/5000" in message
     assert {"solver", "method", "iteration", "max_iterations", "residual", "tolerance", "best_residual", "best_iteration", "started", "elapsed", "fraction"} <= set(extra)
     assert extra["iteration"] == 31 and extra["method"] == "CG" and extra["elapsed"] == 30.0
+
+
+def test_a_solve_lists_its_linear_solvers_and_those_that_factorize(tmp_path: Path) -> None:
+    stack = (*ELASTICITY, LinearTarget(solver="heat equation", iterative=False, method=None, tolerance=None, max_iterations=None))
+
+    _, listed = _records("DEBUG", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path, linear_targets=stack))
+    _, unlisted = _records("DEBUG", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path))
+
+    solvers = [(extra[LogKey.LINEAR_SOLVERS], extra[LogKey.DIRECT_SOLVERS]) for _, extra in listed if LogKey.LINEAR_SOLVERS in extra]
+    assert solvers == [(["linear elasticity", "heat equation"], ["heat equation"])], "the task strip names the solver place and Direct off it"
+    assert not [extra for _, extra in unlisted if LogKey.LINEAR_SOLVERS in extra]
+
+
+def test_the_convergence_and_progress_lines_bind_their_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    targets: ConvergenceTargets = {("mgdyn", "NS"): LoopTargets(max_iterations=50, tolerance=1e-10)}
+    _, converging = _records("INFO", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path, targets=targets))
+
+    monkeypatch.setattr(solve, "SolverLogParser", partial(SolverLogParser, clock=_FakeClock()))
+    lines = [f"{iteration:>8} {1.0 / iteration:.4E}" for iteration in range(1, 40)]
+    _, linear = _records("INFO", lambda: solve_case(_ScriptedBackend(lines), tmp_path, linear_targets=ELASTICITY))
+
+    computed = [extra for message, extra in converging if "Δ = " in message]
+    beats = [extra for message, extra in linear if " r = " in message]
+    assert computed[0][LogKey.PROGRESS] == 0.0 and computed[0][LogKey.SOLVER] == "mgdyn"
+    assert [extra[LogKey.PROGRESS] for extra in beats] == [beats[0]["fraction"]]
+    assert (beats[0][LogKey.ITERATION], beats[0][LogKey.MAX_ITERATIONS], beats[0][LogKey.SOLVER]) == (31, 5000, "linear elasticity"), "the task strip reads the iteration off these keys"

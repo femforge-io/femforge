@@ -412,3 +412,12 @@ def test_heartbeat_pads_an_unknown_cap_and_tolerance() -> None:
     assert known is not None and unknown is not None
     assert unknown.index("best") == known.index("best")
     assert "/" not in unknown
+
+
+def test_progress_sets_the_baseline_at_iteration_one_whether_or_not_a_render_follows() -> None:
+    renderer = ConvergenceRenderer(_MGDYN_TARGETS)
+
+    assert renderer.progress(_sample(1, 1.0)) == 0.0
+    assert renderer.progress(_sample(2, 1e-05)) == pytest.approx(0.5)
+    assert renderer.progress(_sample(1, 1e-02)) == 0.0, "a restarted loop measures from its own first change"
+    assert ConvergenceRenderer().progress(_sample(2, 1e-05)) is None

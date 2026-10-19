@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import IO
 
 from femforge.common.files import BundleFile
-from femforge.common.log import log
+from femforge.common.log import LogKey, log
 from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.elmer.solver_log import (
     ConvergenceRenderer,
@@ -91,15 +91,22 @@ def solve_case(
     samples: list[ConvergenceSample] = []
     messages: list[SolverMessage] = []
     stream: IO[str] | None = (sim_dir / BundleFile.CONVERGENCE).open("w", encoding="utf-8") if convergence_jsonl else None
+    if linear_targets:
+        solvers = [target.solver for target in linear_targets]
+        direct = [target.solver for target in linear_targets if not target.iterative]
+        log.bind(**{str(LogKey.LINEAR_SOLVERS): solvers, str(LogKey.DIRECT_SOLVERS): direct}).debug("Linear solvers listed.")
 
     def watch(residual: LinearResidual) -> None:
         verdict: StallVerdict | None = detector.feed(residual)
         if verdict is not None:
             stalled.set()
             log.bind(
-                solver=verdict.solver,
-                iteration=verdict.iteration,
-                residual=verdict.residual,
+                **{
+                    str(LogKey.STALL): verdict.reason,
+                    str(LogKey.SOLVER): verdict.solver,
+                    str(LogKey.ITERATION): verdict.iteration,
+                    str(LogKey.RESIDUAL): verdict.residual,
+                },
                 best_residual=verdict.best_residual,
                 tolerance=verdict.tolerance,
             ).warning(f"stalled: {verdict.summary}")
@@ -111,7 +118,7 @@ def solve_case(
 
         line: str | None = renderer.heartbeat(progress)
         if line is not None:
-            log.bind(**asdict(progress)).info(line)
+            log.bind(**{**asdict(progress), str(LogKey.PROGRESS): progress.fraction}).info(line)
 
     def handle(line: str) -> None:
         if on_line is not None:
@@ -144,7 +151,7 @@ def solve_case(
             on_event(event)
 
         if isinstance(event, ConvergenceSample):
-            log.info(renderer.render(event))
+            log.bind(**{str(LogKey.PROGRESS): renderer.progress(event), str(LogKey.SOLVER): event.solver}).info(renderer.render(event))
         elif isinstance(event, SolverMessage):
             (log.warning if event.severity == "warning" else log.error)(event.text)
 

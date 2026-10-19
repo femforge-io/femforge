@@ -40,6 +40,7 @@ ff.workbench.show(viewer, title="Field viewer")
 |---|---|
 | a dock `Split` | that dock, as built |
 | a module-level function that returns a `Split` or a `Renderable` | its result, rebuilt on every save of a `.py` file under its source roots |
+| any of these, with `tasks=` a module-level function listing `Task`s | the same, while the tasks run in the background, one at a time |
 | a `WorkbenchSpec` | that catalogue card, as the command opens it by name |
 | nothing | the launcher |
 
@@ -49,7 +50,56 @@ ff.workbench.show(viewer, title="Field viewer")
 | `Window.BROWSER` | a tab in the default browser |
 | `Window.WEBVIEW` | pywebview, from the `app` extra |
 
-`show` also takes `port`, `telemetry`, `persist` and `watch`, which match the command's flags below.
+`show` also takes `port`, `telemetry`, `persist` and `watch`, which match the command's flags below, and `tasks`, which the next section covers.
+
+## Solve in the background
+
+```python
+from functools import partial
+
+import femforge as ff
+
+GAPS = (0.5, 1.0, 2.0)
+
+
+def solve(gap: float) -> None:
+    """Solves one gap."""
+
+
+def solves() -> list[ff.workbench.Task]:
+    """One task per gap."""
+    return [ff.workbench.Task(f"Gap {gap:g} mm", partial(solve, gap)) for gap in GAPS]
+
+
+def viewer() -> ff.workbench.Split:
+    """The field viewer, which opens each run as it lands."""
+    return ff.workbench.field_viewer(telemetry="runs-index")
+
+
+if __name__ == "__main__":
+    ff.workbench.show(viewer, tasks=solves)
+```
+
+`tasks` takes a module-level function that lists `Task`s; the workbench runs them one at a time in child processes while it serves, shows each in the task strip, and lists them again on every save. A [Task][femforge.workbench.Task] pairs a label, unique in the list, with a function that takes no arguments; `Task(export)` labels a named function `Export`, and a `partial` or a lambda needs a label of its own. Each child imports the script by module name, from the script's own directory with the server's `sys.path` behind it, calls the function again and runs the task with the same label, so a `partial` or a lambda works, nothing is pickled, and the `sys.path` edits the script makes hold in the child. Guard the `show` call under `if __name__ == "__main__":`, or every child serves a workbench of its own.
+
+| The strip shows | When |
+|---|---|
+| `Queued`, with its place in line | the task waits for the one before it |
+| `Starting`, `Preparing Geometry`, `Meshing`, `Solving`, `Finishing` | the stage its child reports; `Meshing · Cached` when the artifact cache served the mesh. `Solving` names the solver, its place in a stack of several such as `2/3`, and the percent converged once known, or `Direct` for a solver that factorizes; the sheet adds the linear iteration |
+| `Running` | the task's own code runs between or after its runs |
+| `Waiting · Another Process Is Solving It` | another process holds the claim on the same run; the task reuses that run once it lands |
+| `Done`, `Reused` | the task returned; `Reused` when every run it asked for was solved before, `Reused · From Cache` when the artifact cache served it. The summary counts each apart, and while other tasks still run the strip shows `↺ N Reused` beside it |
+| `Failed`, with the error | the task raised, or its child died; Details shows the traceback |
+| `Stalled`, with the reason | the watchdog stopped a linear solve of the task, `residual flat at 3.14e-08 since it 1000` or `residual not improving`; Log shows the child's last log lines |
+| `Cancelling` | Cancel, pressed twice, is stopping the task; it gets up to 10 s to release its run |
+| `Cancelled` | Cancel, pressed twice within the 3 s it counts down, stopped it |
+| `Script Error` | a save broke the script; the strip and the sheet show why, and the rows of the last good save stay |
+
+- A save while a task runs lets it finish on its old code, then runs it once more. A task the save dropped finishes, then leaves the strip.
+- Retry runs a failed, stalled or cancelled task again; a done one runs again on the next save. Click the summary line or **Tasks** to open the sheet, and press `Escape` anywhere in the page to close it.
+- When a task finishes on a newer run while the viewer shows the run it finished on before, the viewer opens the newer one and says so in the status line.
+- An unchanged task re-runs in about 3 s, the start of a child process: the [Driver][femforge.run.Driver] reuses its finished runs.
+- The child stores its own records in the telemetry root, and the server only relays them to its terminal.
 
 ## The femforge-workbench command
 
@@ -219,3 +269,4 @@ A target is the function itself or its `pkg.module:attr` name, and its module is
 - The terminal panel is interactive on Windows with the `pty` extra. Elsewhere it shows the live log stream, read-only.
 - A `Split` passed to `show` is served as built. Pass the function that builds it to rebuild on save.
 - The `browsers` and `monitors` cards need a telemetry root.
+- Ctrl+C or closing the window stops the running task and waits up to 10 s for it to release its run. A task stuck in a long CAD or meshing call past that is killed, and its claim on the run is broken so the next start need not wait.

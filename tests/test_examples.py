@@ -1,4 +1,4 @@
-"""Every folder under ``examples/`` and the ``femforge new`` template import and build each config they can build from defaults, in a process of their own, without meshing or solving."""
+"""Every folder under ``examples/`` and the ``femforge new`` template import, build each config they can build from defaults and list their background tasks, in a process of their own, without meshing or solving."""
 
 import os
 import subprocess
@@ -30,6 +30,7 @@ from pathlib import Path
 
 import femforge as ff
 from femforge.geometry.step import import_tagged_step
+from femforge_workbench.tasks import plan_of
 
 folder = Path(sys.argv[1])
 sys.path.insert(0, str(folder))
@@ -49,8 +50,13 @@ for builder in builders:
         step = config.geometry.build_step(Path.cwd() / f"{builder.__module__}.{builder.__qualname__}.step")
         config.frame.check_geometry(import_tagged_step(step))
     print(f"{builder.__module__}.{builder.__qualname__}: {config.frame.label}")
+
+factories = [module.solves for module in modules if callable(getattr(module, "solves", None))]
+assert len(factories) == 1, f"{folder.name} lists its background tasks in {len(factories)} solves() functions, not one"
+plan = plan_of(factories[0]())
+print(f"{factories[0].__module__}.solves: {[task.label for task in plan]}")
 """
-"""The program each example's process runs: import every module of the folder, then call each function that returns a SimulationConfig with its defaults and check the model of each sectioned one against its frame."""
+"""The program each example's process runs: import every module of the folder, call each function that returns a SimulationConfig with its defaults, check the model of each sectioned one against its frame, then list the tasks its solves() runs."""
 
 
 def test_the_examples_folder_holds_examples() -> None:

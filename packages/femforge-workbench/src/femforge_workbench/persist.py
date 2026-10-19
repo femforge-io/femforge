@@ -29,6 +29,7 @@ class StateKey(StrEnum):
     LAYOUT = "layout"
     OPENED = "opened"
     TOUR = "tour"
+    TASK_SHEET = "task_sheet"
 
 
 class UiStateStore(Protocol):

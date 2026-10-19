@@ -95,7 +95,7 @@ A claim is a directory, because `mkdir` is atomic on NTFS, POSIX filesystems and
 
 `try_acquire` breaks a stale claim and retries once (`src/femforge/artifacts/lock.py:103-118`). A claim whose owner file is unreadable ages by its directory's modification time (`src/femforge/artifacts/lock.py:84-91`). [keep_alive][femforge.artifacts.keep_alive] beats from a daemon thread for as long as its block runs, in a copy of the caller's context, so a failed beat's warning keeps the run id and the telemetry route (`src/femforge/artifacts/lock.py:134-158`). A holder never needs a timeout sized to its longest job: a live holder never looks stale, and a dead one goes stale in two minutes.
 
-The driver claims runs with the same lock: it takes `runs_dir/<run_id>.lock`, keeps it alive while it solves, and a second process asking for the same run checks every 2 s for a reusable bundle (`src/femforge/run/driver.py:55-56`, `src/femforge/run/driver.py:217-235`). [reap_runs][femforge.run.reap_runs] settles a driver that died: a claim counts as silent when its directory is gone, its heartbeat is stale, or its owner ran on this host under a process id that no longer exists (`src/femforge/run/reap.py:53-69`).
+The driver claims runs with the same lock: it takes `runs_dir/<run_id>.lock`, keeps it alive while it solves, and a second process asking for the same run checks every 2 s for a reusable bundle (`src/femforge/run/driver.py:55-56`, `src/femforge/run/driver.py:217-242`). [reap_runs][femforge.run.reap_runs] settles a driver that died: a claim counts as silent when its directory is gone, its heartbeat is stale, or its owner ran on this host under a process id that no longer exists (`src/femforge/run/reap.py:53-69`).
 
 ## What the driver fetches and publishes
 
@@ -103,15 +103,15 @@ The driver runs its pipeline as the [Stage][femforge.run.Stage] members in order
 
 | Step | Kind | With an artifact cache | Without one | Where |
 |---|---|---|---|---|
-| reuse check | `RUN_BUNDLE` | the local bundle when it is reusable, else the published bundle fetched into the run directory | the local bundle only | `src/femforge/run/driver.py:237-277` |
-| `prepare_geometry` | `STEP` | fetch the solve-frame STEP, or build and publish it; an authored STEP under `Solid()` passes through uncached | build and convert in the run directory | `src/femforge/run/driver.py:568-590` |
-| `mesh` | `ELMER_MESH` | fetch the mesh, or mesh and convert in a staging directory, drop the `.msh` and publish the rest | mesh and convert in the run directory, keeping the `.msh` | `src/femforge/run/driver.py:595-609` |
-| `mesh`, either way | | rebind the groups to this config, take ElmerGrid's ids from `mesh.names`, write `entities.json` | | `src/femforge/run/driver.py:630-649` |
-| `publish` | `RUN_BUNDLE` | the files the bundle policy selects, minus the store-sourced inputs, unless the run ended in `error` | skipped | `src/femforge/run/driver.py:345-357`, `src/femforge/run/driver.py:392-434` |
+| reuse check | `RUN_BUNDLE` | the local bundle when it is reusable, else the published bundle fetched into the run directory | the local bundle only | `src/femforge/run/driver.py:244-284` |
+| `prepare_geometry` | `STEP` | fetch the solve-frame STEP, or build and publish it; an authored STEP under `Solid()` passes through uncached | build and convert in the run directory | `src/femforge/run/driver.py:577-599` |
+| `mesh` | `ELMER_MESH` | fetch the mesh, or mesh and convert in a staging directory, drop the `.msh` and publish the rest | mesh and convert in the run directory, keeping the `.msh` | `src/femforge/run/driver.py:604-620` |
+| `mesh`, either way | | rebind the groups to this config, take ElmerGrid's ids from `mesh.names`, write `entities.json` | | `src/femforge/run/driver.py:641-660` |
+| `publish` | `RUN_BUNDLE` | the files the bundle policy selects, minus the store-sourced inputs, unless the run ended in `error` | skipped | `src/femforge/run/driver.py:353-365`, `src/femforge/run/driver.py:400-442` |
 
-Every store-sourced input lands in `manifest.artifacts` as it arrives (`src/femforge/run/driver.py:551-558`), and `manifest.cached_inputs()` lists their files (`src/femforge/run/manifest.py:138-140`). That list is what lets retention drop the inputs freely, what `rehydrate_bundle` fetches back, and what `prune_store_sourced` removes (`src/femforge/run/artifacts.py:145-169`). The publish stage records `manifest.published` and writes the manifest before it commits, so the published manifest already names its own store entry, and it runs after the run's log context has closed `run.log`, so the logs class can be published and cleaned up too (`src/femforge/run/driver.py:345-346`).
+Every store-sourced input lands in `manifest.artifacts` as it arrives (`src/femforge/run/driver.py:560-567`), and `manifest.cached_inputs()` lists their files (`src/femforge/run/manifest.py:138-140`). That list is what lets retention drop the inputs freely, what `rehydrate_bundle` fetches back, and what `prune_store_sourced` removes (`src/femforge/run/artifacts.py:145-169`). The publish stage records `manifest.published` and writes the manifest before it commits, so the published manifest already names its own store entry, and it runs after the run's log context has closed `run.log`, so the logs class can be published and cleaned up too (`src/femforge/run/driver.py:353-354`).
 
-[BundlePolicy][femforge.run.BundlePolicy] maps to retention classes: `CORE` publishes everything but fields and meshes, `FIELDS` adds the VTU output, and `FULL` publishes every class (`src/femforge/run/artifacts.py:95-117`). It also decides reuse: under `FIELDS` or `FULL`, a local bundle whose field output a cleanup removed no longer counts as reusable (`src/femforge/run/driver.py:274-275`).
+[BundlePolicy][femforge.run.BundlePolicy] maps to retention classes: `CORE` publishes everything but fields and meshes, `FIELDS` adds the VTU output, and `FULL` publishes every class (`src/femforge/run/artifacts.py:95-117`). It also decides reuse: under `FIELDS` or `FULL`, a local bundle whose field output a cleanup removed no longer counts as reusable (`src/femforge/run/driver.py:281-282`).
 
 ## The cache tiers
 
@@ -140,7 +140,7 @@ A bundle's files fall into the retention classes of `RunFile`; each member carri
 3. Glob each class's patterns, skipping links, protected files and paths an earlier class already claimed.
 4. Escalate the rule of a store-sourced path by `cached_inputs`, and keep the paths whose rule applies to the run's status.
 
-`apply_cleanup` never raises: a path it cannot remove lands in `failed`. It only reports a planned run directory, because the caller must write the manifest one last time first (`src/femforge/run/retention.py:406-434`). The driver's `cleanup` stage applies the plan and appends a `CleanupRecord` to the manifest; the directory itself goes after the stage's finish event (`src/femforge/run/driver.py:436-501`).
+`apply_cleanup` never raises: a path it cannot remove lands in `failed`. It only reports a planned run directory, because the caller must write the manifest one last time first (`src/femforge/run/retention.py:406-434`). The driver's `cleanup` stage applies the plan and appends a `CleanupRecord` to the manifest; the directory itself goes after the stage's finish event (`src/femforge/run/driver.py:444-509`).
 
 ## Purge
 
@@ -181,7 +181,7 @@ Each pass that removes something appends a `CleanupRecord` with trigger `purge` 
 
 Conditions, material properties, physics and metadata stay out, so configs that differ only there share one mesh ([mesh_key][femforge.run.mesh_key], `src/femforge/run/kinds.py:145-187`).
 
-The artifact keeps ElmerGrid's files, never the `.msh`, plus `groups.json`, a `MeshGroupsFile` of body and boundary group records and the element count (`src/femforge/meshing/groups.py:156-258`). `rebind_groups` turns the records back into groups against the current domain: materials by tag, tags by selector, and each body's name composed again with `compose_group_name`. Any mismatch raises `MeshRebindError`, so a condition never lands on the wrong boundary (`src/femforge/run/artifacts.py:35-92`). The driver then sets each group's id from `mesh.names`, because ElmerGrid renumbers the groups, boundary ids after body ids (`src/femforge/run/driver.py:634-643`, `src/femforge/elmer/mesh_names.py`).
+The artifact keeps ElmerGrid's files, never the `.msh`, plus `groups.json`, a `MeshGroupsFile` of body and boundary group records and the element count (`src/femforge/meshing/groups.py:156-258`). `rebind_groups` turns the records back into groups against the current domain: materials by tag, tags by selector, and each body's name composed again with `compose_group_name`. Any mismatch raises `MeshRebindError`, so a condition never lands on the wrong boundary (`src/femforge/run/artifacts.py:35-92`). The driver then sets each group's id from `mesh.names`, because ElmerGrid renumbers the groups, boundary ids after body ids (`src/femforge/run/driver.py:645-654`, `src/femforge/elmer/mesh_names.py`).
 
 The boundary groups come from body adjacency. `partition_boundary_faces` sorts every boundary face into an interface `A__B`, an external shell `A__EXT` or, for a single body on the symmetry axis, `A__AXIS` (`src/femforge/meshing/boundary.py:126-157`). The partition is total: once a model defines physical groups, gmsh saves only the elements that belong to one, so a face outside every group would vanish from the mesh. It is also sorted, so gmsh assigns the same ids on every run. A face that borders no known body is skipped, because it has no name to take (`src/femforge/meshing/boundary.py:134-135`).
 
