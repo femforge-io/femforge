@@ -565,21 +565,11 @@ class Sim:
 
         return any(isinstance(cond, FixedDisplacement) for cond in resolved)
 
-    def _boundary_specs(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[tuple[str, dict[str, SifValue]]]:
-        """
-        The ``(kind, sif-data)`` specs one surface group resolves, in [`_boundary_emissions`][] order. Kept free of sif
-        objects so the projection rule is unit-testable.
-
-        Returns:
-            A list of ``(kind, sif-data)`` tuples, one per resolved condition. The ``kind`` is the condition's
-            discriminator (the same string the config's solver stack uses to select the solver for that condition).
-        """
-        return [(emission.kind, emission.keywords) for emission in self._boundary_emissions(bg, tags_by_body)]
-
     def _boundary_emissions(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[_Emission]:
         """
         The emissions one surface group resolves: its conditions in ``_boundary_conditions`` order, so a face tag's keyword
-        wins a clash with a body's, then the auto-emitted magnetic blocks.
+        wins a clash with a body's, then the auto-emitted magnetic blocks. Kept free of sif objects so the projection rule
+        is unit-testable.
         """
         specs: list[_Emission] = []
         site: BoundarySite = BoundarySite(name=bg.name, measure=bg.measure, frame=self.frame)
