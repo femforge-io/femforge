@@ -20,8 +20,17 @@ export function nextFocus(key: string, index: number, count: number): number | n
   }
 }
 
-/** The action a key takes on the focused row, or null for a key the grid leaves alone. */
-export function action(key: string): RowAction | null {
+/** The modifier keys held with a key press. */
+export interface Modifiers {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}
+
+/** The action a key takes on the focused row, or null for a key the grid leaves alone, a chord with Ctrl, Meta or Alt included so the browser keeps its shortcuts. */
+export function action(key: string, held: Modifiers): RowAction | null {
+  if (held.ctrlKey || held.metaKey || held.altKey) return null;
+
   switch (key) {
     case "Enter":
     case " ":

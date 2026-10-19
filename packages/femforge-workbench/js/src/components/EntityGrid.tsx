@@ -11,7 +11,7 @@ const ROW_PX = 24;
 const LINE_PX = 18;
 const OVERSCAN = 12;
 const TOOLTIP_DELAY_MS = 300;
-const COLUMNS = "grid grid-cols-[minmax(0,1fr)_5.5rem_1.5rem] items-center gap-x-2";
+const COLUMNS = "grid grid-cols-[minmax(0,1fr)_5.5rem_2.25rem] items-center gap-x-2";
 const ROW_KEYS = "Enter G F S Escape";
 
 /** One run of text in a condition line; a muted part reads dimmer and may carry its own tooltip. */
@@ -261,7 +261,7 @@ function RowView({
         <div key={number} aria-hidden className={cn("pb-0.5 text-label leading-4 text-muted-foreground", indent)}>
           {line.parts.map((part, at) =>
             part.tip || part.muted ? (
-              <Tipped key={at} tip={part.tip}>
+              <Tipped key={at} tip={part.tip} className={part.muted ? "opacity-60" : undefined}>
                 {part.text}
               </Tipped>
             ) : (
@@ -414,7 +414,7 @@ export function EntityGrid({
       return;
     }
 
-    const taken = action(event.key);
+    const taken = action(event.key, event);
     const row = rows[shown];
     if (taken === null || row === undefined || row.group) return;
 

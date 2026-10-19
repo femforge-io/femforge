@@ -255,7 +255,8 @@ def test_the_frame_section_reads_the_frame_the_check_and_how_a_revolve_is_shown(
     assert [row["label"] for row in frame_facts(model, Expansion.SECTION, 360.0)] == ["Normal", "Plane Origin", "Solve X, Y", "Thickness", "Plane State"]
     assert frame_facts(revolved, Expansion.REVOLVE, 90.0)[-1] == {"label": "Shown As", "value": "Revolved 90°"}
     assert frame_facts(revolved, Expansion.MIRROR, 90.0)[-1] == {"label": "Shown As", "value": "Mirrored"}
-    assert check_line(toroid, FLEXURE_FRAME) == (["Flexure Fails Prism Test (Mismatch 3.2 %)", "Air Fails Depth Test (Mismatch 2 %)"], True), "every failing body and test, worst first"
+    expected = ["Flexure Fails Prism Test (Mismatch\u00a03.2\u00a0%)", "Air Fails Depth Test (Mismatch\u00a02\u00a0%)"]
+    assert check_line(toroid, FLEXURE_FRAME) == (expected, True), "every failing body and test, worst first, the share never split across lines"
     assert check_line(toroid.model_copy(update={"measured": ()}), FLEXURE_FRAME) == (["Passed"], False)
     assert check_line(None, FLEXURE_FRAME) == (["Not Recorded"], False) and check_line(None, Solid()) == ([], False)
     assert frame_facts(SetupModel(run_id="x", frame=None, entities=model.entities, conditions=None), Expansion.SECTION, 360.0) == []
@@ -266,6 +267,8 @@ def test_the_measure_reads_the_area_the_length_or_a_dash() -> None:
 
     assert measure_cell(face, Solid()) == ("200 mm²", "")
     assert measure_cell(face, Axisymmetric()) == ("20 mm", "Revolved Area 2π·r̄·L = 1260 mm²")
+    on_axis = replace(face, name="AIR", kind=BoundaryKind.AXIS, centroid=Vec3(0, 0.03, 0))
+    assert measure_cell(on_axis, Axisymmetric()) == ("20 mm", ""), "the symmetry axis sweeps no surface, so it carries no tooltip"
     assert measure_cell(Boundary(name="A__B", mesh_id=5, bodies=("A", "B"), kind=BoundaryKind.INTERFACE), FLEXURE_FRAME) == ("", ""), "an unmeasured group leaves the cell empty"
     assert measure_cell(Boundary(name="A__B", mesh_id=5, bodies=("A", "B"), kind=BoundaryKind.INTERFACE), None) == ("", "")
 
@@ -443,6 +446,7 @@ def test_the_tab_builds_its_switches_sections_and_grids(tmp_path: Path, monkeypa
     assert [prop(node, "columns") for node in find(template, "ff-entity-grid")][:2] == [["Tag", "", "Glyph"], ["Name", "Material", "Glyph"]]
     assert _bound(find(template, "ff-entity-grid")[2], "columns") == str(SetupVar.BOUNDARY_COLUMNS)
     assert "Undeformed; the solved body is warped " in json.dumps(template), "the ghost names the warp the solved body shows"
+    assert f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && " in json.dumps(template), "the warp caption shows only while the ghost is drawn"
 
 
 def test_a_run_without_conditions_lists_every_boundary_and_never_counts_more(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -476,14 +480,29 @@ def test_opening_a_run_publishes_it_and_a_new_run_resets_the_toggles_but_keeps_t
         dock = app.dock
         assert dock is not None
         monkeypatch.setattr(dock, "active_panel", revealed.append)
+        def restored(_: object) -> None:
+            revealed.append("layout")
+
+        monkeypatch.setattr(dock, "restore_layout", restored)
 
         assert app.state[SetupVar.STATE] == str(SetupState.NONE)
 
-        await controller.load(_flexure(tmp_path / "first"))
+        first = _flexure(tmp_path / "first")
+        await controller.load(first)
         await controller.settle()
 
         assert app.state[SetupVar.STATE] == str(SetupState.GROUPS) and app.state[SetupVar.BOUNDARY_COUNT] == "3"
-        assert revealed == [str(FieldPanel.SETUP)], "a run without fields brings Setup forward"
+        assert revealed == [], "a dock not yet ready drops an activation"
+
+        app.on_dock_ready()
+
+        assert revealed == ["layout", str(FieldPanel.SETUP)], "a run without fields opened at launch brings Setup forward over the restored layout"
+
+        revealed.clear()
+        await controller.load(first)
+        await controller.settle()
+
+        assert revealed == [str(FieldPanel.SETUP)], "a run without fields opened later brings Setup forward at once"
         assert app.state[SetupVar.CAPTION] == "Glyphs need the mesh; re-solve to restore it."
         assert app.state[SetupVar.HAS_SCENE] is False, "the scene switches hide while the view draws nothing"
         assert all(row.get("dimmed") for row in cast("list[dict[str, object]]", app.state[SetupVar.BOUNDARY_ROWS])), "nothing has cells without fields or mesh"

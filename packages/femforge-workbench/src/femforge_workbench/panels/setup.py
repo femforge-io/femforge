@@ -52,7 +52,7 @@ FILTER_ABOVE = 12
 """The boundary-group count above which the Boundaries table starts on the groups that received a condition."""
 
 SEARCH_ID = "ff-setup-search"
-NO_RUN = "No run open. Pick one in the Run list or paste a bundle path above."
+NO_RUN = "No run open. Pick one in the Run picker in the app bar."
 NO_CONDITIONS = "No Conditions"
 NO_GLYPHS = "No glyphs in this run."
 NO_GLYPHS_AUTHORED = "Glyphs need a mesh; this run failed before meshing."
@@ -68,6 +68,7 @@ GLYPH_HIDDEN = "Glyph Hidden"
 HIDDEN_BY_LEGEND = "Glyph hidden by the legend"
 HIDDEN_BY_SWITCH = "Glyph hidden by Show Glyphs"
 DROPPED = "–"
+NBSP = "\u00a0"
 SEPARATOR = " · "
 AUTOMATIC = "(Set by femforge)"
 OVERRIDDEN = "(Overridden)"
@@ -310,13 +311,13 @@ def read_setup(run: Run, *, solving: bool = False) -> SetupModel:
     try:
         manifest: RunManifest | None = run.manifest
     except (FileNotFoundError, ValueError):
-        log.bind(run_id=run.path.name).info("Run manifest unreadable; the Setup tab shows the groups without the frame and the tags.")
+        log.bind(run_id=run.path.name).info("Run manifest unreadable.")
         manifest = None
 
     try:
         conditions: ConditionsFile | None = run.conditions()
     except (OSError, ValueError):
-        log.bind(run_id=run.path.name).opt(exception=True).warning("Conditions sidecar unreadable; the Setup tab lists no conditions.")
+        log.bind(run_id=run.path.name).opt(exception=True).warning("Conditions sidecar unreadable.")
         conditions = None
 
     domain = manifest.config.domain if manifest is not None else None
@@ -811,7 +812,9 @@ def check_line(check: GeometryCheck | None, frame: Frame | None) -> tuple[list[s
     def line(mismatch: BodyMismatch) -> str:
         body = parse_tags(mismatch.body).get(TagKey.NAME, mismatch.body)
 
-        return f"{body} Fails {title(mismatch.check.value)} Test (Mismatch {100.0 * mismatch.fraction:.3g} %)"
+        share = f"(Mismatch {100.0 * mismatch.fraction:.3g} %)".replace(" ", NBSP)
+
+        return f"{body} Fails {title(mismatch.check.value)} Test {share}"
 
     return [line(mismatch) for mismatch in mismatches], True
 
@@ -1178,7 +1181,7 @@ class SetupPanel(PanelComponent):
             with react.If(f"!{SetupVar.HAS_GHOST}"):
                 html.Span(NO_GHOST, classes=str(Cls.CAPTION))
 
-            with react.If(f"{SetupVar.HAS_GHOST} && {FieldVar.HAS_DISPLACEMENT} && {FieldVar.WARP}"):
+            with react.If(f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && {FieldVar.HAS_DISPLACEMENT} && {FieldVar.WARP}"):
                 html.Span([react.Bind(warped)], classes=str(Cls.CAPTION))
 
     def grid(self, rows: SetupVar, label: str, columns: Sequence[str] | react.Bind) -> None:

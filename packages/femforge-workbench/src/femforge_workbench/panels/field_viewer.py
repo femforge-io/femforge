@@ -768,7 +768,7 @@ def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) ->
     try:
         return frozenset(ref.id for ref in refs if layer.group_cells(ref, host) is not None)
     except Exception:  # noqa: BLE001 - a group whose cells fail to read costs the highlight, never the tab
-        log.bind(run_id=run.path.name).opt(exception=True).warning("Group cells unreadable; the Setup tab dims every row.")
+        log.bind(run_id=run.path.name).opt(exception=True).warning("Group cells unreadable.")
 
         return None
 
@@ -1330,10 +1330,7 @@ class FieldViewerController(TrameComponent):
 
     def reveal_setup(self) -> None:
         """Brings the Setup tab to the front for a run without fields, the one panel with something to show."""
-        if self.app.dock is None:
-            return
-
-        self.app.dock.active_panel(str(FieldPanel.SETUP))
+        self.app.activate(str(FieldPanel.SETUP))
 
     def frame_entity(self, ref: EntityRef) -> None:
         """Fits the camera to a body or boundary group of the shown run, padded so its surroundings stay in view; a group without bounds leaves the camera."""
