@@ -59,7 +59,7 @@ For a conduction solve, `Run.electrode_currents` gives the terminal current per 
 
 ## Run setup
 
-**A run records what the solver received.** [Run.conditions][femforge.run.Run.conditions] reads `conditions.json`, a [ConditionsFile][femforge.run.ConditionsFile] that lists every body and boundary group with each emission it received: the condition and its authoring tag, the sif block it landed in, its keywords in the solve frame, such as `Force 1 = 500000.0` for a 100 N pull on a 20 mm by 10 mm face, and the authored fields the frame drops, such as `z` under a Cartesian 2D frame normal to Z. A keyword a later emission into the same block overrides is marked `shadowed`.
+**A run records what the solver received.** [Run.conditions][femforge.run.Run.conditions] reads `conditions.json`, a [ConditionsFile][femforge.run.ConditionsFile] that lists every body and boundary group with each emission it received: the condition and its authoring tag, the sif block it landed in, its keywords in the solve frame, such as `Force 1 = 500000.0` for a 100 N pull on a 20 mm by 10 mm face, and the authored fields the frame drops, such as `z` under a Cartesian 2D frame normal to Z. A keyword a later emission for the same group overrides in the same block is marked `shadowed`.
 
 ```python
 from pathlib import Path
