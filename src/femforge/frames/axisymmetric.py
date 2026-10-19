@@ -12,11 +12,12 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import Axis, Frame, SolvePlane, in_plane, least_aligned_world_axis
+from femforge.frames.base import Axis, Frame, GeometryCheck, SolvePlane, in_plane, least_aligned_world_axis
 
 
 if TYPE_CHECKING:
     from femforge.elmer.config.common.simulation import CoordinateSystem
+    from femforge.geometry.tags import TaggedCompound
 
 
 class Axisymmetric(Frame):
@@ -83,14 +84,25 @@ class Axisymmetric(Frame):
         """True: the section stands for the model revolved about ``axis``."""
         return True
 
+    def measure_geometry(self, compound: TaggedCompound) -> GeometryCheck:
+        """How far every body and named face of ``compound`` changes when turned about ``axis``."""
+        from femforge.geometry.conformance import MISMATCH_TOLERANCE, revolution_mismatches
+
+        return GeometryCheck(frame=self.label, tolerance=MISMATCH_TOLERANCE, measured=tuple(revolution_mismatches(compound, self.axis)))
+
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
-        """``step_out``, written with the section of ``step_in`` on ``plane``."""
+        """``step_out``, written with the section of ``step_in`` on ``plane`` once the model passes the geometry check, which is recorded beside it."""
         from femforge.common.log import log
         from femforge.geometry.section import axisymmetric_cross_section, export_section
         from femforge.geometry.step import import_tagged_step
 
-        section = axisymmetric_cross_section(import_tagged_step(step_in), self.plane)
+        compound = import_tagged_step(step_in)
+        check: GeometryCheck = self.measure_geometry(compound)
+        check.raise_for_mismatch()
+
+        section = axisymmetric_cross_section(compound, self.plane)
         export_section(section, step_out)
+        check.write(step_out)
         log.bind(step=str(step_out), axis=self.axis.model_dump(mode="json")).info("Axisymmetric section written.")
 
         return step_out

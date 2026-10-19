@@ -23,6 +23,7 @@ DOCUMENTED_MODULES: tuple[str, ...] = (
     "femforge.materials.neodymium",
     "femforge.physical.conditions",
     "femforge.geometry.winding",
+    "femforge.geometry.conformance",
     "femforge.optimize.max_current",
     "femforge.run.result",
     "femforge.run.convergence",

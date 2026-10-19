@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
+import build123d as b3d
 import pytest
 
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.config import CoordinateSystem
 from femforge.elmer.physics import Physics
 from femforge.frames import Axis, Solid
+from femforge.geometry.tags import TaggedCompound, TaggedPart
 
 
 def test_a_solid_frame_is_a_whole_3d_cartesian_solve() -> None:
@@ -26,6 +28,13 @@ def test_a_solid_frame_meshes_the_authored_step(tmp_path: Path) -> None:
 
     assert Solid().prepare_geometry(authored, tmp_path / "out.step") == authored
     assert not (tmp_path / "out.step").exists()
+
+
+def test_a_solid_frame_takes_any_model() -> None:
+    box = TaggedCompound(children=[TaggedPart([b3d.Box(20, 20, 30)], name="Box")])
+
+    assert Solid().measure_geometry(box) is None
+    Solid().check_geometry(box)
 
 
 def test_every_physics_but_the_2d_magnetostatic_stack_solves_as_itself() -> None:

@@ -14,7 +14,7 @@ from femforge.common.tags import parse_tags
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.config import CoordinateSystem
 from femforge.elmer.physics import Physics
-from femforge.frames import Axis, Axisymmetric
+from femforge.frames import Axis, Axisymmetric, FrameCheck, FrameGeometryError, GeometryCheck
 from femforge.geometry import Build123dGeometry
 from femforge.geometry.tags import TaggedCompound, TaggedPart
 
@@ -218,6 +218,37 @@ def test_prepare_geometry_carries_compound_locations_and_tags_into_the_section(t
     rod = bodies["Group=A,_Material=Steel316,_Name=Rod"]
     ring = bodies["Group=A,_Material=N42"]
     assert (rod.min.Y, rod.max.Y, ring.min.Y, ring.max.Y) == pytest.approx((15.0, 25.0, 10.0, 14.0), abs=1e-6)
+
+
+class _BoxedRod(Build123dGeometry):
+    """A rod on the Z axis inside a box of air."""
+
+    def model(self) -> TaggedCompound:
+        rod = TaggedPart([b3d.Cylinder(radius=2.0, height=10.0)], tags={"Material": "Steel316"}, name="Rod")
+        air = TaggedPart([b3d.Box(20, 20, 30)], tags={"Material": "Air"})
+
+        return TaggedCompound(children=[rod, air])
+
+
+def test_prepare_geometry_rejects_a_box_of_air_before_writing_the_section(tmp_path: Path) -> None:
+    authored = _BoxedRod().build_step(tmp_path / "authored.step")
+
+    with pytest.raises(FrameGeometryError) as raised:
+        _ = Axisymmetric().prepare_geometry(authored, tmp_path / "solve.step")
+
+    assert isinstance(raised.value, ValueError)
+    assert [(mismatch.body, mismatch.check, mismatch.fraction) for mismatch in raised.value.mismatches] == [("Material=Air", FrameCheck.TURNED, pytest.approx(0.3336, rel=1e-3))]
+    assert not (tmp_path / "solve.step").exists()
+    assert GeometryCheck.load(tmp_path / "solve.step") is None
+
+
+def test_prepare_geometry_records_the_passing_check_beside_the_section(tmp_path: Path) -> None:
+    out = Axisymmetric().prepare_geometry(_Rig().build_step(tmp_path / "authored.step"), tmp_path / "solve.step")
+    check = GeometryCheck.load(out)
+
+    assert check is not None
+    assert check.passed
+    assert [(measured.body, measured.check) for measured in check.measured] == [("Material=Steel316, Name=Rod", FrameCheck.TURNED), ("Material=N42", FrameCheck.TURNED)]
 
 
 def test_prepare_geometry_rejects_an_already_2d_step(tmp_path: Path) -> None:

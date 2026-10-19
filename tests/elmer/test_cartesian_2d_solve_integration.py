@@ -204,7 +204,7 @@ def test_plane_strain_stiffens_the_bar_by_one_minus_nu_squared(tmp_path: Path) -
 def test_doubling_the_thickness_halves_the_stretch_under_the_same_total_force(tmp_path: Path) -> None:
     """Observed on Elmer 26.2: a ratio of 0.49999999."""
     thin = _bar(tmp_path / "thin", _planar(), Vec3(1000, 0, 0))
-    thick = _bar(tmp_path / "thick", Cartesian2D(normal=_planar().normal, thickness=2 * DEPTH * U.mm), Vec3(1000, 0, 0))
+    thick = _bar(tmp_path / "thick", _planar(2 * DEPTH), Vec3(1000, 0, 0), geometry=_Prism(depth=2 * DEPTH))
 
     assert thick[0] / thin[0] == pytest.approx(0.5, rel=1e-6)
 

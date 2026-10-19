@@ -19,10 +19,18 @@ from .common.vector import Direction as Direction, Vec3 as Vec3
 from .config import RunMeta as RunMeta, SimulationConfig as SimulationConfig
 from .elmer.config.common.selection import PhysicsSelection as PhysicsSelection
 from .elmer.physics import Physics as Physics
-from .frames import Axis as Axis, Axisymmetric as Axisymmetric, Cartesian2D as Cartesian2D, Frame as Frame, PlaneState as PlaneState, Solid as Solid
+from .frames import (
+    Axis as Axis,
+    Axisymmetric as Axisymmetric,
+    Cartesian2D as Cartesian2D,
+    Frame as Frame,
+    FrameGeometryError as FrameGeometryError,
+    PlaneState as PlaneState,
+    Solid as Solid,
+)
 from .geometry.build123d_geometry import Build123dGeometry as Build123dGeometry
 from .geometry.tags import TaggedCompound as TaggedCompound, TaggedEdge as TaggedEdge, TaggedFace as TaggedFace, TaggedPart as TaggedPart
-from .geometry.utils import boundary_box as boundary_box
+from .geometry.utils import boundary_box as boundary_box, boundary_cylinder as boundary_cylinder
 from .meshing.backend import GmshMesher as GmshMesher, WorkerMesher as WorkerMesher
 from .meshing.config import MeshConfig as MeshConfig
 from .meshing.gmsh_options import GmshOptions as GmshOptions

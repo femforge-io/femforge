@@ -12,12 +12,13 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import ALIGNMENT_TOLERANCE, Axis, Frame, SolvePlane, in_plane, least_aligned_world_axis
+from femforge.frames.base import ALIGNMENT_TOLERANCE, Axis, Frame, GeometryCheck, SolvePlane, in_plane, least_aligned_world_axis
 from femforge.physical.units import Length
 
 
 if TYPE_CHECKING:
     from femforge.elmer.config.common.simulation import CoordinateSystem
+    from femforge.geometry.tags import TaggedCompound
 
 
 class PlaneState(StrEnum):
@@ -115,14 +116,25 @@ class Cartesian2D(Frame):
         """`t` `[m]`: The thickness in metres, the factor between a per-metre result and its whole-model total."""
         return self.thickness.m_as("m")
 
+    def measure_geometry(self, compound: TaggedCompound) -> GeometryCheck:
+        """How far every body and named face of ``compound`` is from a prism through ``thickness`` along the normal."""
+        from femforge.geometry.conformance import MISMATCH_TOLERANCE, prism_mismatches
+
+        return GeometryCheck(frame=self.label, tolerance=MISMATCH_TOLERANCE, measured=tuple(prism_mismatches(compound, self.plane, self.thickness)))
+
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
-        """``step_out``, written with the section of ``step_in`` on ``plane``."""
+        """``step_out``, written with the section of ``step_in`` on ``plane`` once the model passes the geometry check, which is recorded beside it."""
         from femforge.common.log import log
         from femforge.geometry.section import export_section, planar_cross_section
         from femforge.geometry.step import import_tagged_step
 
-        section = planar_cross_section(import_tagged_step(step_in), self.plane)
+        compound = import_tagged_step(step_in)
+        check: GeometryCheck = self.measure_geometry(compound)
+        check.raise_for_mismatch()
+
+        section = planar_cross_section(compound, self.plane)
         export_section(section, step_out)
+        check.write(step_out)
         log.bind(step=str(step_out), normal=self.normal.model_dump(mode="json"), thickness=self.thickness_m).info("Planar section written.")
 
         return step_out

@@ -5,7 +5,7 @@ from typing import Annotated, cast, get_args
 from pydantic import Field, ValidationError
 
 from femforge.frames.axisymmetric import Axisymmetric
-from femforge.frames.base import Axis, Frame, SolvePlane
+from femforge.frames.base import Axis, BodyMismatch, Frame, FrameCheck, FrameGeometryError, GeometryCheck, SolvePlane
 from femforge.frames.cartesian_2d import Cartesian2D, PlaneState
 from femforge.frames.solid import Solid
 
@@ -35,4 +35,19 @@ def default_frame(model_dim: int) -> Frame:
     raise ValueError(f"no shipped frame solves on {model_dim} dimensions")
 
 
-__all__ = ["Axis", "Axisymmetric", "Cartesian2D", "Frame", "FrameUnion", "PlaneState", "SolvePlane", "Solid", "default_frame", "shipped_frames"]
+__all__ = [
+    "Axis",
+    "Axisymmetric",
+    "BodyMismatch",
+    "Cartesian2D",
+    "Frame",
+    "FrameCheck",
+    "FrameGeometryError",
+    "FrameUnion",
+    "GeometryCheck",
+    "PlaneState",
+    "SolvePlane",
+    "Solid",
+    "default_frame",
+    "shipped_frames",
+]
