@@ -144,14 +144,9 @@ def measure_groups(physical_groups: Sequence[PhysicalGroup], boundary_groups: Se
 
         return (votes > 0) - (votes < 0)
 
-    entities_of: dict[str, list[int]] = {}
-    diagonal_of: dict[str, float] = {}
-
     for group in physical_groups:
         group.centroid, group.measure = combine([extract_entity_geometry(body_dim, tag) for tag in group.entity_tags])
         group.bbox = group_bounds(body_dim, group.entity_tags)
-        entities_of[group.name] = list(group.entity_tags)
-        diagonal_of[group.name] = group.bbox.diagonal if group.bbox is not None else 0.0
 
     for boundary in boundary_groups:
         pieces: list[EntityGeometry] = [extract_entity_geometry(boundary_dim, tag) for tag in boundary.entity_tags]
@@ -163,8 +158,10 @@ def measure_groups(physical_groups: Sequence[PhysicalGroup], boundary_groups: Se
         boundary.bbox = group_bounds(boundary_dim, boundary.entity_tags)
         boundary.length = extent if boundary_dim == 1 else None
 
-        owner: list[int] = entities_of.get(boundary.bodies[0], [])
-        step: float = ORIENTATION_STEP * diagonal_of.get(boundary.bodies[0], 0.0)
+        first: PhysicalGroup | None = next((group for group in physical_groups if group.name == boundary.bodies[0]), None)
+        owner: list[int] = list(first.entity_tags) if first is not None else []
+        diagonal: float = first.bbox.diagonal if first is not None and first.bbox is not None else 0.0
+        step: float = ORIENTATION_STEP * diagonal
         vectors: list[FloatArray] = []
         sides: list[int] = []
 
@@ -174,6 +171,18 @@ def measure_groups(physical_groups: Sequence[PhysicalGroup], boundary_groups: Se
             upward: Sequence[int] = gmsh.model.getAdjacencies(boundary_dim, face)[0]
             body: int | None = next((tag for tag in upward if tag in owner), None)
             vectors.append(element_vectors.sum(axis=0))
-            sides.append(0 if body is None else side(face, corners, element_vectors, body, step))
+            if body is None:
+                sides.append(0)
+
+                continue
+
+            orientation: int = side(
+                face,
+                corners,
+                element_vectors,
+                body,
+                step,
+            )
+            sides.append(orientation)
 
         boundary.normal = mean_normal(np.array(vectors).reshape(-1, 3), sides, extent)
