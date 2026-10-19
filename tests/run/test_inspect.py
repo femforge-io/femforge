@@ -307,7 +307,7 @@ def _loaded_tip() -> FieldMesh:
     ],
 )
 def test_clapeyron_energy_takes_the_solve_share_of_the_authored_face_force(tmp_path: Path, frame: FrameUnion, force: Vec3, expected: float) -> None:
-    run = Run(_bundle(tmp_path, Result(frame=frame, status="ok"), frame=frame))
+    run = Run(_bundle(tmp_path, Result(frame=frame, status=RunStatus.OK), frame=frame))
     run._mesh = _loaded_tip()
 
     assert run.clapeyron_energy("Tip", quantity(force, "N")).to(U.J).magnitude == pytest.approx(expected)
@@ -315,7 +315,7 @@ def test_clapeyron_energy_takes_the_solve_share_of_the_authored_face_force(tmp_p
 
 def test_clapeyron_energy_raises_for_a_force_the_frame_cannot_carry(tmp_path: Path) -> None:
     frame = Cartesian2D(normal=Axis.X, thickness=10 * U.mm)
-    run = Run(_bundle(tmp_path, Result(frame=frame, status="ok"), frame=frame))
+    run = Run(_bundle(tmp_path, Result(frame=frame, status=RunStatus.OK), frame=frame))
     run._mesh = _loaded_tip()
 
     with pytest.raises(ValueError, match="plane normal"):
