@@ -12,7 +12,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.physical.units import U, quantity
 from femforge.run.bundle import load_manifest, load_result, write_bundle, write_manifest
 from femforge.run.manifest import RunManifest
-from femforge.run.result import MeshStats, Result
+from femforge.run.result import MeshStats, Result, RunStatus
 
 FIXED_DT = datetime(2026, 6, 14, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -21,13 +21,13 @@ def test_bundle_write_then_load_round_trips(tmp_path: Path) -> None:
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"))
     result = Result(
         frame=Solid(),
-        status="ok",
+        status=RunStatus.OK,
         force=quantity(Vec3(1.0, 2.0, 3.0), U.N),
         flux_density_max=1.1 * U.T,
     )
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         mesh_stats=MeshStats(element_count=10, min_element_size=0.1, max_element_size=1.0),
         code_sha="sha1",
         created_at=FIXED_DT,
@@ -54,10 +54,10 @@ def test_bundle_copies_geometry_when_step_exists(tmp_path: Path) -> None:
     step = tmp_path / "geo.step"
     step.write_text("ISO-10303-21; fake step", encoding="utf-8")
     config = SimulationConfig(mesh=MeshConfig(step=str(step)))
-    result = Result(frame=Solid(), status="ok")
+    result = Result(frame=Solid(), status=RunStatus.OK)
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -74,22 +74,22 @@ def test_bundle_keeps_the_solve_frame_step_the_run_meshed(tmp_path: Path) -> Non
     (run / "geometry.step").write_text("ISO-10303-21; section", encoding="utf-8")
     manifest = RunManifest.build(
         SimulationConfig(mesh=MeshConfig(step=str(step))),
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
 
-    bundle = write_bundle(run, manifest, Result(frame=Solid(), status="ok"))
+    bundle = write_bundle(run, manifest, Result(frame=Solid(), status=RunStatus.OK))
     assert (bundle / "geometry.step").read_text(encoding="utf-8") == "ISO-10303-21; section"
 
 
 def test_load_result_stamps_the_bundle_dir(tmp_path: Path) -> None:
     # run_dir is never serialized (a baked absolute path would go stale on move); the loader stamps where it actually read from.
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"))
-    result = Result(frame=Solid(), status="ok", run_id="abc123", run_dir=tmp_path / "elsewhere")
+    result = Result(frame=Solid(), status=RunStatus.OK, run_id="abc123", run_dir=tmp_path / "elsewhere")
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )

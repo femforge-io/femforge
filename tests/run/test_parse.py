@@ -14,6 +14,7 @@ from femforge.meshing.config import MeshConfig
 from femforge.physical.units import U
 from femforge.run.manifest import RunManifest
 from femforge.run.parse import parse_result, result_vtu
+from femforge.run.result import RunStatus
 
 FIXTURES: Path = Path(__file__).parent / "fixtures"
 
@@ -36,7 +37,7 @@ def test_result_vtu_serial_and_empty(tmp_path: Path) -> None:
 def test_parse_fixture_yields_expected_force_field_and_residual() -> None:
     result = parse_result(FIXTURES)
 
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
 
     # Net force reassembled from the three nodal-force component columns as a pint vector in newtons.
     assert result.force is not None and result.force.check("[force]")
@@ -48,8 +49,8 @@ def test_parse_fixture_yields_expected_force_field_and_residual() -> None:
     assert result.flux_density_max is not None
     assert result.flux_density_max.to(U.T).magnitude == pytest.approx(1.483)
 
-    # Final RELC from the last ComputeChange line; REAL time from SOLVER TOTAL TIME.
-    assert result.residual == pytest.approx(7.240e-9)
+    # The relative change of the last NS step, not the SS line after it; REAL time from SOLVER TOTAL TIME.
+    assert result.residual == pytest.approx(1.102e-6)
     assert result.wall_time == pytest.approx(5.12)
 
     # The solver version from the log banner reaches the Result (and from there the manifest).
@@ -140,7 +141,7 @@ def test_parse_max_temperature_column_maps_to_kelvin(tmp_path: Path) -> None:
     )
     (tmp_path / "elmersolver.log").write_text("*** Elmer Solver: ALL DONE ***\n", encoding="utf-8")
     result = parse_result(tmp_path)
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert result.temperature_max is not None
     assert result.temperature_max.to(U.K).magnitude == pytest.approx(309.93)
 
@@ -170,7 +171,7 @@ def _write_axisym_outputs(tmp_path: Path) -> None:
 
 def _write_manifest(tmp_path: Path, frame: FrameUnion) -> None:
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), frame=frame)
-    manifest = RunManifest.build(config, status="ok", code_sha="sha1", created_at=datetime(2026, 6, 14, tzinfo=timezone.utc))
+    manifest = RunManifest.build(config, status=RunStatus.OK, code_sha="sha1", created_at=datetime(2026, 6, 14, tzinfo=timezone.utc))
     (tmp_path / "manifest.json").write_text(manifest.model_dump_json(), encoding="utf-8")
 
 
@@ -257,7 +258,7 @@ def test_parse_without_a_manifest_is_a_bare_solid_parse(tmp_path: Path) -> None:
 def test_parse_reports_error_status_when_log_has_error(tmp_path: Path) -> None:
     (tmp_path / "elmersolver.log").write_text("MAIN: starting\nERROR:: Something blew up\n", encoding="utf-8")
     result = parse_result(tmp_path)
-    assert result.status == "error"
+    assert result.status == RunStatus.ERROR
 
 
 def test_parse_reports_diverged_when_marker_present_and_done(tmp_path: Path) -> None:
@@ -268,13 +269,13 @@ def test_parse_reports_diverged_when_marker_present_and_done(tmp_path: Path) -> 
         encoding="utf-8",
     )
     result = parse_result(tmp_path)
-    assert result.status == "diverged"
+    assert result.status == RunStatus.DIVERGED
 
 
 def test_parse_missing_log_is_error(tmp_path: Path) -> None:
     # No log means the solve can't be confirmed finished, so treat as error not a silent ok.
     result = parse_result(tmp_path)
-    assert result.status == "error"
+    assert result.status == RunStatus.ERROR
     assert result.force is None
 
 
@@ -335,3 +336,43 @@ def test_parse_blank_only_dat_yields_no_columns(tmp_path: Path) -> None:
     result = parse_result(tmp_path)
     assert result.raw == {}
     assert result.force is None
+
+
+def test_parse_residual_of_a_one_step_elasticity_solve_is_its_last_cg_residual(tmp_path: Path) -> None:
+    (tmp_path / "elmersolver.log").write_text(
+        "       1 0.6138E+00\n"
+        "       2 0.8327E-08\n"
+        "       2 0.8327E-08\n"
+        "NS (ITER=1) (NRM,RELC): ( 0.59256258E-04  2.0000000     ) :: linear elasticity\n"
+        "StressSolver: Solving for Stress(1,1)\n"
+        "       1 0.1000E-09\n"
+        "ComputeChange: SS (ITER=1) (NRM,RELC): ( 0.59256258E-04  2.0000000     ) :: linear elasticity\n"
+        "*** Elmer Solver: ALL DONE ***\n",
+        encoding="utf-8",
+    )
+
+    assert parse_result(tmp_path).residual == pytest.approx(8.327e-9)
+
+
+def test_parse_residual_skips_the_field_calculator_named_by_the_manifest(tmp_path: Path) -> None:
+    _write_manifest(tmp_path, Axisymmetric())
+    (tmp_path / "elmersolver.log").write_text(
+        "ComputeChange: NS (ITER=4) (NRM,RELC): ( 0.21148424E-03 0.62238737E-05 ) :: mgdyn2d\n"
+        "ComputeChange: NS (ITER=5) (NRM,RELC): ( 0.21148424E-03 0.13653605E-08 ) :: mgdyn2d\n"
+        "ComputeChange: SS (ITER=1) (NRM,RELC): ( 0.21148424E-03  2.0000000     ) :: mgdyn2d\n"
+        "       1 0.1601E-01\n"
+        "ComputeChange: NS (ITER=5) (NRM,RELC): (  66301.354     0.84682826     ) :: mgdyncalc\n"
+        "*** Elmer Solver: ALL DONE ***\n",
+        encoding="utf-8",
+    )
+
+    assert parse_result(tmp_path).residual == pytest.approx(1.365e-9, rel=1e-3)
+
+
+def test_parse_residual_of_a_direct_one_step_solve_is_none(tmp_path: Path) -> None:
+    (tmp_path / "elmersolver.log").write_text(
+        "ComputeChange: NS (ITER=1) (NRM,RELC): ( 0.1E+01 2.0 ) :: heat equation\n*** Elmer Solver: ALL DONE ***\n",
+        encoding="utf-8",
+    )
+
+    assert parse_result(tmp_path).residual is None

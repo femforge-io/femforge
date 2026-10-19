@@ -13,7 +13,7 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 | The mesher always emits `Mesh.RecombineAll = 0`, because WhitneyAVSolver needs tetrahedra and a persisted gmsh options file can turn recombination on. | `src/femforge/meshing/gmsh_options.py:92-94` | `tests/meshing/test_gmsh_options.py::test_recombine_all_is_pinned_off` |
 | The global element size applies first, then each region takes the finest `EntityTag.mesh_size` among its tags. | `src/femforge/meshing/mesh_sizing.py:30-44`, `src/femforge/meshing/mesh_sizing.py:62-64` | `tests/meshing/test_mesh_sizing.py::test_resolve_finest_requested_size_wins` |
 | `MeshConfig.deterministic` pins gmsh to one thread, whatever `num_threads` says, so the same STEP and sizes yield the identical mesh. | `src/femforge/meshing/config.py:28-35` | `tests/meshing/test_gmsh_options.py::test_deterministic_pins_meshing_to_one_thread` |
-| ElmerGrid renumbers the groups, so `reconcile_ids` rewrites each group's id from `mesh.names` before the sif targets it. | `src/femforge/elmer/mesh_names.py:64-83`, `src/femforge/run/driver.py:617-623` | `tests/elmer/test_mesh_names.py::test_reconcile_overwrites_gmsh_tags_with_elmer_ids` |
+| ElmerGrid renumbers the groups, so `reconcile_ids` rewrites each group's id from `mesh.names` before the sif targets it. | `src/femforge/elmer/mesh_names.py:64-83`, `src/femforge/run/driver.py:619-625` | `tests/elmer/test_mesh_names.py::test_reconcile_overwrites_gmsh_tags_with_elmer_ids` |
 | The axisymmetric frame puts the radial direction on X and the symmetry axis on Y, and a section that reaches X < 0 raises, since Elmer rejects it silently. | `src/femforge/frames/axisymmetric.py:67-74`, `src/femforge/geometry/section.py:166-170` | `tests/geometry/test_section.py::test_a_section_leaking_below_x_zero_raises` |
 
 ## Solver input
@@ -57,8 +57,8 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 
 | Rule | Code | Test |
 | --- | --- | --- |
-| An MPI solve's scalars are read from rank 0 and never summed, since every rank writes the globally reduced row. | `src/femforge/run/parse.py:98-122` | `tests/run/test_parse.py::test_parse_mpi_rank_dats_read_rank_zero` |
-| An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:117-119`, `src/femforge/run/parse.py:213-216` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
+| An MPI solve's scalars are read from rank 0 and never summed, since every rank writes the globally reduced row. | `src/femforge/run/parse.py:94-118` | `tests/run/test_parse.py::test_parse_mpi_rank_dats_read_rank_zero` |
+| An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:117-119`, `src/femforge/run/parse.py:224-227` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
 | The field display's automatic range is the union of every body's own robust range, hidden or styled bodies included. | `src/femforge/viz/field_display.py:535-577`, `src/femforge/viz/field_display.py:935-939` | `tests/viz/test_field_display.py::test_the_color_range_covers_every_body_however_it_is_shown` |
 | A field line ends at its first sharp reversal, where the cosine between consecutive steps drops below -0.5. | `src/femforge/viz/field_lines.py:222-259` | `tests/viz/test_field_lines.py::test_a_line_ends_at_its_first_sharp_reversal_and_a_straight_one_stays_whole` |
 

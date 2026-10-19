@@ -40,7 +40,7 @@ from femforge.run.bundle import load_manifest, write_manifest
 from femforge.run.driver import Driver, SolveState
 from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, MeshSpec, RunSpec, StepSpec, cache_key
 from femforge.run.manifest import RunManifest
-from femforge.run.result import MeshStats, Result
+from femforge.run.result import MeshStats, Result, RunStatus
 from femforge.run.retention import RetentionPolicy
 from femforge.run.stages import Stage
 
@@ -94,7 +94,7 @@ def test_reuse_returns_the_finished_bundle_without_solving(tmp_path: Path) -> No
     second = driver.evaluate(config)
 
     assert solver.calls == 1
-    assert second.status == "ok"
+    assert second.status == RunStatus.OK
     assert second.run_id == first.run_id
     assert second.run_dir == tmp_path / _run_name(config)
     assert not list(tmp_path.glob("*" + LOCK_SUFFIX))
@@ -125,7 +125,7 @@ def test_reuse_survives_a_re_export_of_the_authored_step(tmp_path: Path) -> None
     second = driver.evaluate(config)
 
     assert solver.calls == 1
-    assert second.status == "ok"
+    assert second.status == RunStatus.OK
     assert second.run_id == first.run_id
 
 
@@ -151,7 +151,7 @@ def test_reuse_skips_error_bundles_and_accepts_diverged_ones(tmp_path: Path) -> 
     )
     assert diverged.evaluate(config).status == "diverged"
     again = Driver(runs_dir=diverged_dir, code_sha="sha1", solver=solver).evaluate(config)
-    assert again.status == "diverged"
+    assert again.status == RunStatus.DIVERGED
     assert solver.calls == 1
 
 
@@ -213,7 +213,7 @@ def test_evaluate_waits_for_a_claim_held_elsewhere(tmp_path: Path, monkeypatch: 
     result = Driver(runs_dir=tmp_path, code_sha="sha1", solver=solver).evaluate(config)
     thread.join()
 
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert solver.calls == 1
     assert not lock.path.exists()
 
@@ -246,7 +246,7 @@ def test_a_waiting_driver_reuses_what_the_holder_produced(tmp_path: Path, monkey
     result = Driver(runs_dir=tmp_path, code_sha="sha1", solver=waiter_solver).evaluate(config)
     thread.join()
 
-    assert result.status == "ok"
+    assert result.status == RunStatus.OK
     assert holder_solver.calls == 1
     assert waiter_solver.calls == 0
 
@@ -333,13 +333,13 @@ def test_an_error_run_is_not_published(tmp_path: Path) -> None:
 
 def test_publish_requires_a_cache(tmp_path: Path) -> None:
     config = _config()
-    manifest = RunManifest.build(config, status="ok", code_sha="sha1")
+    manifest = RunManifest.build(config, status=RunStatus.OK, code_sha="sha1")
     with pytest.raises(RuntimeError, match="artifact cache"):
         _ = Driver(runs_dir=tmp_path).publish(
             manifest,
             tmp_path,
             config,
-            Result(frame=Solid(), status="ok"),
+            Result(frame=Solid(), status=RunStatus.OK),
         )
 
 
@@ -547,7 +547,7 @@ def test_a_cached_mesh_is_produced_once_and_rebound_per_config(tmp_path: Path) -
 
     first = driver.evaluate(up)
     second = driver.evaluate(down)
-    assert first.status == "ok" and second.status == "ok"
+    assert first.status == RunStatus.OK and second.status == RunStatus.OK
     assert len(PRODUCTIONS) == 1
 
     for config, expected_origin in ((up, ArtifactOrigin.PRODUCED), (down, ArtifactOrigin.LOCAL)):
@@ -584,7 +584,7 @@ def test_a_cached_mesh_that_no_longer_binds_fails_at_the_mesh_stage(tmp_path: Pa
     with pytest.raises(MeshRebindError, match="material tag"):
         _ = driver.evaluate(other)
     manifest = load_manifest(tmp_path / "runs" / _run_name(other))
-    assert manifest.status == "error"
+    assert manifest.status == RunStatus.ERROR
     assert manifest.current_stage is Stage.MESH
     assert len(PRODUCTIONS) == 1
 
@@ -597,7 +597,7 @@ def test_a_manifest_without_a_result_is_not_reusable(tmp_path: Path) -> None:
         bundle,
         RunManifest.build(
             config,
-            status="ok",
+            status=RunStatus.OK,
             run_id=bundle.name,
             code_sha="sha1",
         ),

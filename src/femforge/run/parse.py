@@ -8,6 +8,8 @@ from pathlib import Path
 from femforge.common.files import BundleFile, BundleGlob
 from femforge.common.log import log
 from femforge.common.vector import Vec3
+from femforge.elmer.config import NonlinearSystem
+from femforge.elmer.solver_log import ConvergenceSample, LinearResidual, SolveFinished, SolverEvent, SolverLogParser, normalize_solver_key
 from femforge.elmer.variables import ElmerVariable
 from femforge.frames import FrameUnion, Solid
 from femforge.physical.units import quantity
@@ -16,14 +18,8 @@ from femforge.run.manifest import RunManifest
 from femforge.run.result import Result, RunStatus
 
 
-# A signed integer / float / scientific-notation number, e.g. "12.5", "-3.4", "0.1483E+01".
-_NUM = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 # The trailing component index on a vector column name, e.g. "... force 3".
 _COMPONENT_RE = re.compile(r"(.*?)(?:\s+([123]))\s*$")
-# A parenthesized (NRM, RELC) pair on a ComputeChange line; we want the RELC (second) value.
-_NRM_RELC_RE = re.compile(rf"\(\s*({_NUM})\s+({_NUM})\s*\)")
-# "SOLVER TOTAL TIME(CPU,REAL):   4.55   5.12" → the REAL (second) time.
-_TOTAL_TIME_RE = re.compile(rf"SOLVER TOTAL TIME\(CPU,REAL\):\s*({_NUM})\s+({_NUM})")
 
 
 def result_vtu(sim_dir: str | Path) -> Path | None:
@@ -123,22 +119,25 @@ def _parse_scalars(sim_dir: Path) -> dict[str, float]:
     return columns
 
 
-def _parse_log(sim_dir: Path) -> tuple[RunStatus, float | None, float | None, str | None]:
+def _parse_log(sim_dir: Path, nonlinear: frozenset[str] | None) -> tuple[RunStatus, float | None, float | None, str | None]:
     """
-    Scan ``elmersolver.log`` for status, final residual, wall time, and Elmer version.
+    Scan ``elmersolver.log`` for status, the residual of the last NS step of a solver in ``nonlinear`` (any for None), wall time and Elmer version.
 
     Status: ``error`` if any ERROR line appears or the run never reached "ALL DONE"; ``diverged`` on a non-convergence marker; otherwise ``ok``.
     """
     log_path: Path = sim_dir / BundleFile.SOLVER_LOG
     if not log_path.is_file():
-        return "error", None, None, None
+        return RunStatus.ERROR, None, None, None
 
     lines: list[str] = log_path.read_text().splitlines()
+    parser = SolverLogParser(capture_linear=True)
 
     has_error: bool = False
     diverged: bool = False
     done: bool = False
-    residual: float | None = None
+    last_linear: float | None = None
+    final_step: ConvergenceSample | None = None
+    final_linear: float | None = None
     wall_time: float | None = None
     elmer_version: str | None = None
 
@@ -161,16 +160,24 @@ def _parse_log(sim_dir: Path) -> tuple[RunStatus, float | None, float | None, st
             if version_match:
                 elmer_version = version_match.group(1)
 
-        if "RELC" in line:
-            relc_match: re.Match[str] | None = _NRM_RELC_RE.search(line)
-            if relc_match:
-                residual = float(relc_match.group(2))
+        event: SolverEvent | None = parser.feed(line)
+        if isinstance(event, LinearResidual):
+            last_linear = event.relative_residual
+        elif isinstance(event, ConvergenceSample):
+            counted: bool = nonlinear is None or event.solver is None or normalize_solver_key(event.solver) in nonlinear
+            if event.loop == "NS" and counted:
+                final_step = event
+                final_linear = last_linear
 
-        time_match: re.Match[str] | None = _TOTAL_TIME_RE.search(line)
-        if time_match:
-            wall_time = float(time_match.group(2))
+            last_linear = None
+        elif isinstance(event, SolveFinished):
+            wall_time = event.wall_time
 
-    status: RunStatus = "error" if (has_error or not done) else ("diverged" if diverged else "ok")
+    residual: float | None = None
+    if final_step is not None:
+        residual = final_step.relative_change if final_step.iteration > 1 else final_linear
+
+    status: RunStatus = RunStatus.ERROR if (has_error or not done) else (RunStatus.DIVERGED if diverged else RunStatus.OK)
     return status, residual, wall_time, elmer_version
 
 
@@ -181,7 +188,12 @@ def parse_result(sim_dir: str | Path, frame: FrameUnion | None = None) -> Result
     """
     sim_path: Path = Path(sim_dir)
     columns: dict[str, float] = _parse_scalars(sim_path)
-    status, residual, wall_time, elmer_version = _parse_log(sim_path)
+    manifest: RunManifest | None = RunManifest.load(sim_path) if (sim_path / BundleFile.MANIFEST).is_file() else None
+    nonlinear: frozenset[str] | None = None
+    if manifest is not None:
+        nonlinear = frozenset(normalize_solver_key(solver.equation) for solver in manifest.physics_config.solvers if isinstance(solver, NonlinearSystem))
+
+    status, residual, wall_time, elmer_version = _parse_log(sim_path, nonlinear)
 
     # Narrowed to the global CalcFields sums so per-Component force/torque triples can never silently absorb into
     # Result.force/.torque (run.magnetic reads those from Result.raw).
@@ -207,8 +219,7 @@ def parse_result(sim_dir: str | Path, frame: FrameUnion | None = None) -> Result
         torque_by_component = component_torques(columns, names_by_component)
 
     if frame is None:
-        has_manifest: bool = (sim_path / BundleFile.MANIFEST).is_file()
-        frame = RunManifest.load(sim_path).config.frame if has_manifest else Solid()
+        frame = manifest.config.frame if manifest is not None else Solid()
 
     force_vec = frame.total(force_vec) if force_vec is not None else None
     torque_vec = frame.total(torque_vec) if torque_vec is not None else None

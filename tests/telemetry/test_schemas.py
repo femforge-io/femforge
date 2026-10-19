@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 import polars as pl
 
 from femforge.common.log import LogLevel
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, RunStatus
 from femforge.telemetry.schemas import (
     ARTIFACT_INDEX_PARTITIONS,
     ARTIFACT_INDEX_SCHEMA,
@@ -26,7 +24,6 @@ from femforge.telemetry.schemas import (
     RunColumn,
     SweepState,
     categories,
-    literal_categories,
 )
 
 
@@ -36,24 +33,13 @@ def test_categories_are_plain_strings() -> None:
     assert all(type(value) is str for value in categories(LogLevel))
 
 
-def test_literal_categories_flattens_a_union_of_literals() -> None:
-    """A status alias built as one Literal or-ed with another reads as a single vocabulary."""
-    alias = Literal["running"] | Literal["ok", "error"]
-
-    assert literal_categories(alias) == ["running", "ok", "error"]
-
-
-def test_literal_categories_keeps_a_bare_union_member() -> None:
-    """A union arm that is not itself a Literal contributes its own string."""
-    assert literal_categories(Literal["ok", "error"]) == ["ok", "error"]
-
-
 def test_the_run_status_vocabulary_is_the_manifest_status() -> None:
     """The stored status column can hold exactly what a manifest can say."""
     status = RUN_INDEX_SCHEMA[RunColumn.STATUS]
 
     assert isinstance(status, pl.Enum)
-    assert status.categories.to_list() == literal_categories(ManifestStatus)
+    assert status.categories.to_list() == [*categories(LifecycleStatus), *categories(RunStatus)]
+    assert "stalled" in status.categories.to_list()
 
 
 def test_every_partition_key_is_a_column_of_its_table() -> None:

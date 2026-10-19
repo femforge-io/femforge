@@ -16,6 +16,7 @@ from femforge.common.files import BundleFile
 from femforge.common.log import log
 from femforge.run.bundle import write_manifest
 from femforge.run.manifest import RunManifest
+from femforge.run.result import LifecycleStatus
 
 
 if TYPE_CHECKING:
@@ -74,7 +75,7 @@ def reap_runs(runs_dir: str | Path, *, alive: Alive = psutil.pid_exists, host: s
         except (OSError, ValueError):
             return False
 
-        return isinstance(data, dict) and cast("dict[str, object]", data).get("status") == "running"
+        return isinstance(data, dict) and cast("dict[str, object]", data).get("status") == LifecycleStatus.RUNNING
 
     def settle(sim_dir: Path) -> ManifestStatus | None:
         try:
@@ -82,10 +83,10 @@ def reap_runs(runs_dir: str | Path, *, alive: Alive = psutil.pid_exists, host: s
         except (OSError, ValueError):
             return None
 
-        if manifest.status != "running":
+        if manifest.status is not LifecycleStatus.RUNNING:
             return manifest.status
 
-        manifest.status = "abandoned"
+        manifest.status = LifecycleStatus.ABANDONED
         _ = write_manifest(sim_dir, manifest)
 
         return manifest.status

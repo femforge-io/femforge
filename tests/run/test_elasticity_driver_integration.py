@@ -31,6 +31,7 @@ from femforge.physical.units import U, quantity
 from femforge.run.driver import Driver
 from femforge.run.inspect import Run
 from femforge.run.retention import RetentionPolicy
+from femforge.run.result import RunStatus
 
 from tests.elmer.test_thermal_solve_integration import _gated_elmer, _native_backend
 
@@ -103,7 +104,7 @@ def test_a_tagged_cantilever_solves_through_the_driver_to_timoshenko(tmp_path: P
     result = driver.evaluate(config)
     run = Run.from_result(result)
 
-    assert result.status == "ok", (run.path / "elmersolver.log").read_text(encoding="utf-8")[-3000:]
+    assert result.status == RunStatus.OK, (run.path / "elmersolver.log").read_text(encoding="utf-8")[-3000:]
 
     tip = run.boundaries.face("TIP")
     tip_displacement: list[float] = cast("list[float]", np.asarray(run.mesh().get(ElmerVariable.DISPLACEMENT).where_boundary(tip).surface_mean()).tolist())

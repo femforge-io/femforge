@@ -85,6 +85,7 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     similar_bounds,
     workbench,
 )
+from femforge.run.result import RunStatus
 
 
 MAX_LABEL = 23
@@ -147,7 +148,7 @@ def _manifested(root: Path, grid: pv.UnstructuredGrid, physics: Physics = Physic
     bundle = _bundle(root, grid)
     loads = [EntityTag(selector={TagKey.NAME: "TIP"}, conditions=[SurfaceForce(force=quantity(force, "N"))])] if force is not None else []
     config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), domain=DomainConfig(tags=loads), physics=PhysicsSelection(selected=physics))
-    _ = write_manifest(bundle, RunManifest.build(config, status="ok", run_id=root.name))
+    _ = write_manifest(bundle, RunManifest.build(config, status=RunStatus.OK, run_id=root.name))
 
     return bundle
 
@@ -644,7 +645,7 @@ def test_a_finished_run_without_fields_says_so_and_waits_for_nothing(tmp_path: P
         assert str(app.state[viewer.key(SceneVar.NOTICE)]).startswith("FileNotFoundError")
 
         fieldless = tmp_path / "fieldless"
-        manifest = RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step")), status="ok", run_id="fieldless")
+        manifest = RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step")), status=RunStatus.OK, run_id="fieldless")
         _ = write_manifest(fieldless, manifest)
         await controller.load(fieldless)
 
@@ -1003,7 +1004,7 @@ def test_the_picker_keeps_bundles_opened_by_path_the_open_run_and_the_run_being_
 def test_a_run_reads_as_its_description_with_its_id_or_physics_muted_beside_it(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path / "hex", _hex_grid())
     plain = bundle_entry(Run(bundle), str(bundle), None)
-    _ = write_manifest(bundle, RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), meta=RunMeta(description="4 mm gap")), status="ok", run_id="hex"))
+    _ = write_manifest(bundle, RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), meta=RunMeta(description="4 mm gap")), status=RunStatus.OK, run_id="hex"))
     described = bundle_entry(Run(bundle), "hex", RunFlag.SOLVING)
 
     assert plain == RunEntry(str(bundle), "hex") and plain.by_path and not described.by_path

@@ -14,7 +14,7 @@ from femforge.physical.conditions import FixedPotential
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import Quantity, U, quantity
 from femforge.run.convergence import EvaluateFn, QuantityOf
-from femforge.run.result import Result
+from femforge.run.result import Result, RunStatus
 
 
 @dataclass(frozen=True)
@@ -80,9 +80,9 @@ class SolveFailedError(RuntimeError):
 
 def _classify_failed(result: Result, target_current: float) -> None:
     """Raise [`SolveFailedError`][] unless the failure is a divergence (the physics signature of no steady state)."""
-    if result.status != "diverged":
+    if result.status is not RunStatus.DIVERGED:
         raise SolveFailedError(
-            f"solve at {target_current:.4f} A failed with status {result.status!r} (run {result.run_id}, {result.run_dir}); "
+            f"solve at {target_current:.4f} A failed with status {result.status.value!r} (run {result.run_id}, {result.run_dir}); "
             "a solver error is not a physics outcome — fix the solve before trusting any bracket."
         )
 
@@ -256,7 +256,7 @@ class VoltageDrive:
             scaled_config: SimulationConfig = scale_fixed_potentials(base_config, scale)
             result: Result = evaluate(scaled_config)
 
-            if result.status != "ok":
+            if result.status is not RunStatus.OK:
                 _classify_failed(result, target_current)
                 return SearchStep(
                     target_current=target,
@@ -331,7 +331,7 @@ class DirectDrive:
         target: Quantity = quantity(target_current, "ampere")
         result: Result = evaluate(self.configure(base_config, target_current))
 
-        if result.status != "ok":
+        if result.status is not RunStatus.OK:
             _classify_failed(result, target_current)
             return SearchStep(target_current=target, outcome="runaway", drive_scale=None, measured_current=None, result=result, evaluations=1)
 

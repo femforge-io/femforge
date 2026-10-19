@@ -112,7 +112,7 @@ class FakeDriver:
 
     def evaluate(self, config: ff.SimulationConfig) -> ff.Result:
         force = ff.quantity(ff.Vec3(1.0 / config.mesh.global_mesh_size.m_as("m"), 0.0, 0.0), ff.U.N)
-        return ff.Result(frame=ff.Solid(), status="ok", force=force)
+        return ff.Result(frame=ff.Solid(), status=ff.run.RunStatus.OK, force=force)
 
 
 parameterization = ff.optimize.Parameterization(

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,12 +13,34 @@ from femforge.frames import Axis, FrameUnion
 from femforge.physical.units import FluxDensity, Force, Quantity, Temperature, Torque, quantity
 
 
-RunStatus = Literal["ok", "diverged", "error"]
-"""The terminal state of a solve: completed cleanly, failed to converge, or errored out."""
+class RunStatus(StrEnum):
+    """The terminal state of a solve."""
+
+    OK = "ok"
+    """The solve completed cleanly."""
+
+    DIVERGED = "diverged"
+    """The solve finished without converging."""
+
+    ERROR = "error"
+    """The solve or its pipeline failed."""
+
+    STALLED = "stalled"
+    """The driver's watchdog stopped a linear solve whose residual stopped improving."""
 
 
-ManifestStatus = Literal["running", "abandoned"] | RunStatus
-"""A manifest's lifecycle status: ``"running"`` while the pipeline executes, then the terminal [`RunStatus`][], or ``"abandoned"`` when its claim went silent first."""
+class LifecycleStatus(StrEnum):
+    """A manifest's status before its solve reached a terminal [`RunStatus`][]."""
+
+    RUNNING = "running"
+    """The pipeline is executing."""
+
+    ABANDONED = "abandoned"
+    """The run's claim went silent before it finished."""
+
+
+ManifestStatus = RunStatus | LifecycleStatus
+"""A manifest's status: a [`LifecycleStatus`][] while it runs or after it was abandoned, else the terminal [`RunStatus`][]."""
 
 
 class MeshStats(BaseModel):
@@ -68,7 +90,7 @@ class Result(BaseModel):
     """`T_max` `[K]`: Peak temperature in the domain, from the thermal or coupled joule-heating solve — the max-current search observable."""
 
     residual: float | None = None
-    """`Δ_rel` `[-]`: Final linear/nonlinear relative change reported by the solver."""
+    """`r` `[-]`: How far the last nonlinear solver stopped from converging: its final relative change, or its last linear residual when its loop took one step."""
 
     wall_time: float | None = None
     """`t_wall` `[s]`: Solver wall-clock time."""

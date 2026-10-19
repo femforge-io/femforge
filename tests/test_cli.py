@@ -29,6 +29,7 @@ from femforge.telemetry import cli as telemetry_cli
 from femforge.telemetry.paths import Telemetry
 from femforge.telemetry.schemas import SweepState
 from femforge.telemetry.sweep import SweepJournal
+from femforge.run.result import LifecycleStatus, RunStatus
 
 
 class _StubGeometry(GeometryArea):
@@ -83,7 +84,7 @@ def _fixture(tmp_path: Path) -> _Fixture:
     )
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         run_id="run123",
         code_sha="sha1",
     )
@@ -371,7 +372,7 @@ def test_runs_reap_breaks_silent_claims_and_re_indexes_their_bundles(tmp_path: P
     runs = tmp_path / "runs-dir"
     manifest = RunManifest.build(
         SimulationConfig(),
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id="killed-3333",
         code_sha="sha1",
     )

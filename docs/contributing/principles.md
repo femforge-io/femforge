@@ -64,13 +64,13 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 | Rule | Why | Example |
 | --- | --- | --- |
 | A blank line after every guard, `return` or `raise` | each exit stands out | `src/femforge/run/kinds.py:43-45` |
-| A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:425-430` |
+| A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:427-432` |
 | A named intermediate instead of a nested comprehension | the name says what the step yields | `tests/test_release.py:111-112` |
 | A single-use helper nested in its caller | its scope shows where it is used | `src/femforge/meshing/mesher.py:137-141` |
 
 ## Logging
 
-**A log call has a short static message, and its data goes in `log.bind()`.** A static message groups and searches well, and the telemetry log store keeps the bound fields as queryable data (`src/femforge/telemetry/schemas.py:179`). Bind keys are snake_case field names without unit suffixes. `src/femforge/common/log.py` is the only logging configuration site.
+**A log call has a short static message, and its data goes in `log.bind()`.** A static message groups and searches well, and the telemetry log store keeps the bound fields as queryable data (`src/femforge/telemetry/schemas.py:163`). Bind keys are snake_case field names without unit suffixes. `src/femforge/common/log.py` is the only logging configuration site.
 
 ```python
 import femforge as ff

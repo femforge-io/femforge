@@ -14,7 +14,7 @@ from trame.widgets import client, html, react
 from femforge.common.files import BundleFile
 from femforge.common.utils import title
 from femforge.run.manifest import RunManifest
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, ManifestStatus
 from femforge.run.stages import StageEvent
 from femforge.telemetry.convergence import ConvergenceTargetsFile, frame_schema, scan_convergence
 from femforge.telemetry.paths import Telemetry
@@ -45,7 +45,7 @@ CHART_SUFFIX = "chart"
 TAIL_SUFFIX = "tail"
 LIVE_MARK = "●"
 GONE = "gone"
-RUNNING: ManifestStatus = "running"
+RUNNING: ManifestStatus = LifecycleStatus.RUNNING
 TOLERANCE_DASH = "dash"
 RELC_AXIS = "relc"
 WALL_AXIS = "wall time [s]"

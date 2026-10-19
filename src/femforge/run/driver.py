@@ -24,11 +24,11 @@ from femforge.common.files import BundleFile, BundleGlob, RunFile
 from femforge.common.log import TELEMETRY_ENV, log, run_log_context, telemetry_scope
 from femforge.common.names import bundle_name
 from femforge.config import SimulationConfig
-from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, convergence_targets, needs_halobc
+from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, convergence_targets, linear_targets, needs_halobc
 from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.elmer.runtime.docker import DockerElmer
 from femforge.elmer.runtime.native import NativeElmer
-from femforge.elmer.runtime.solve import solve_case
+from femforge.elmer.runtime.solve import SolveRun, solve_case
 from femforge.elmer.runtime.tools import native_elmer_installed
 from femforge.elmer.sim import Sim
 from femforge.execution.docker.image import DockerImage
@@ -39,7 +39,7 @@ from femforge.run.entities import write_entities
 from femforge.run.kinds import ELMER_MESH, RUN_BUNDLE, STEP, MeshSpec, RunSpec, StepSpec, mesh_spec, step_spec
 from femforge.run.manifest import RunManifest, cache_key, git_sha
 from femforge.run.parse import parse_result
-from femforge.run.result import MeshStats, Result
+from femforge.run.result import LifecycleStatus, MeshStats, Result, RunStatus
 from femforge.run.retention import CleanupRecord, CleanupReport, CleanupTrigger, RetentionPolicy, apply_cleanup, plan_cleanup, remove_run_dir
 from femforge.run.stages import Stage, StageEvent
 
@@ -53,8 +53,8 @@ if TYPE_CHECKING:
 CLAIM_POLL_S: float = 2.0
 """`t_poll` `[s]`: How long a driver waits between checks while another process holds the claim on its run directory."""
 
-REUSABLE_STATUSES: frozenset[str] = frozenset({"ok", "diverged"})
-"""Bundle statuses a re-evaluation returns as-is: divergence is a physics outcome, an error is a pipeline failure worth retrying."""
+REUSABLE_STATUSES: frozenset[RunStatus] = frozenset({RunStatus.OK, RunStatus.DIVERGED, RunStatus.STALLED})
+"""Bundle statuses a re-evaluation returns as-is: divergence and a stall are outcomes of the config, an error is a pipeline failure worth retrying."""
 
 
 SolverFn = Callable[[SimulationConfig, Path], MeshStats]
@@ -289,7 +289,7 @@ class Driver:
         # Built from the ORIGINAL config: materialization repoints mesh.step, and the geometry key would then digest the derived STEP.
         manifest: RunManifest = RunManifest.build(
             config,
-            status="running",
+            status=LifecycleStatus.RUNNING,
             run_id=run_id,
             code_sha=self.code_sha,
             created_at=datetime.now(timezone.utc),
@@ -317,6 +317,8 @@ class Driver:
                 mesh_stats: MeshStats = self._solver(config, sim_dir)
 
                 result: Result = parse_result(sim_dir, frame=config.frame)
+                if manifest.stall is not None:
+                    result.status = RunStatus.STALLED
 
                 # Stamp the run identity before the bundle is written, so result.json self-identifies alongside the manifest.
                 result.run_id = run_id
@@ -329,7 +331,7 @@ class Driver:
                 write_bundle(sim_dir, manifest, result)
         except Exception:
             # A crashed solve or parse: the bundle self-describes as an error, and the ALWAYS rules still apply.
-            manifest.status = "error"
+            manifest.status = RunStatus.ERROR
             write_manifest(sim_dir, manifest)
             _ = self._finish(manifest, sim_dir, policy)
             raise
@@ -340,7 +342,7 @@ class Driver:
 
         # Publish and retention run after the log context closed its run.log handle, so the logs class can go too.
         try:
-            if self.artifacts is not None and result.status != "error":
+            if self.artifacts is not None and result.status is not RunStatus.ERROR:
                 _ = self._run_stage(
                     Stage.PUBLISH,
                     partial(
@@ -683,12 +685,15 @@ class Driver:
         targets = convergence_targets(state.sim.config)
         _ = ConvergenceTargetsFile.of(targets).write(state.sim_dir)
 
-        _ = solve_case(
+        run: SolveRun = solve_case(
             self.backend,
             state.sim_dir,
             n_procs=self.mpi_processes,
             targets=targets,
+            linear_targets=linear_targets(state.sim.config),
         )
+        if run.stall is not None and self._active is not None:
+            self._active[0].stall = run.stall
 
     def mesh_stats(self, state: SolveState) -> MeshStats:
         """The built mesh's [`MeshStats`][]: the meshed element count plus the config's size settings."""

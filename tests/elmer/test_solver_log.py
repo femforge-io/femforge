@@ -11,7 +11,9 @@ from femforge.elmer.solver_log import (
     ConvergenceRenderer,
     ConvergenceSample,
     ConvergenceTargets,
+    LinearProgress,
     LinearResidual,
+    LinearTarget,
     LoopTargets,
     SolveFinished,
     SolverEvent,
@@ -265,3 +267,148 @@ def test_render_lines_are_width_stable() -> None:
     lines = [renderer.render(_sample(i, relc)) for i, relc in ((2, 1.1e-05), (3, 4.0e-06), (10, 9.9e-08))]
     positions = [(line.index("L₂ Norm"), line.index("Δ ="), line.index("%")) for line in lines]
     assert len(set(positions)) == 1
+
+
+# --- one-value residual lines, unprefixed NS lines and solver attribution ---
+
+
+MGDYN_3D: tuple[LinearTarget, ...] = (
+    LinearTarget(solver="mgdyn", iterative=True, method="BiCGStabl", tolerance=1e-6, max_iterations=500),
+    LinearTarget(solver="mgdyncalc", iterative=True, method="CG", tolerance=1e-8, max_iterations=500),
+)
+
+MGDYN_2D: tuple[LinearTarget, ...] = (
+    LinearTarget(solver="mgdyn2d", iterative=False, method=None, tolerance=1e-8, max_iterations=None),
+    LinearTarget(solver="mgdyncalc", iterative=True, method="CG", tolerance=1e-8, max_iterations=500),
+)
+
+ELASTICITY: tuple[LinearTarget, ...] = (LinearTarget(solver="linear elasticity", iterative=True, method="CG", tolerance=1e-8, max_iterations=5000),)
+
+MGDYN_2D_LINES: list[str] = [
+    "ComputeChange: NS (ITER=1) (NRM,RELC): ( 0.23508438E-03  2.0000000     ) :: mgdyn2d",
+    "ComputeChange: NS (ITER=2) (NRM,RELC): ( 0.23363571E-03 0.33435978E-01 ) :: mgdyn2d",
+    "ComputeChange: SS (ITER=1) (NRM,RELC): ( 0.23367298E-03  2.0000000     ) :: mgdyn2d",
+    "       1 0.1400E-01",
+    "       2 0.2080E-08",
+    "       2 0.2080E-08",
+    "ComputeChange: NS (ITER=1) (NRM,RELC): ( 0.90068768E-01  2.0000000     ) :: mgdyncalc",
+    "       1 0.1601E-01",
+    "       2 0.4283E-08",
+    "ComputeChange: SS (ITER=1) (NRM,RELC): (  0.0000000      0.0000000     ) :: mgdyncalc",
+]
+
+
+def _residuals(lines: list[str], targets: tuple[LinearTarget, ...]) -> list[LinearResidual]:
+    parser = SolverLogParser(clock=FakeClock(), capture_linear=True, linear_targets=targets)
+    return [event for line in lines if isinstance(event := parser.feed(line), LinearResidual)]
+
+
+@pytest.mark.parametrize(
+    ("line", "iteration", "relative_residual"),
+    [
+        ("       1 0.7730E-02", 1, 0.7730e-02),
+        ("    1089 0.3138E-07", 1089, 0.3138e-07),
+    ],
+)
+def test_one_value_residual_lines(line: str, iteration: int, relative_residual: float) -> None:
+    event = SolverLogParser(clock=FakeClock(), capture_linear=True).feed(line)
+    assert event == LinearResidual(iteration=iteration, relative_residual=relative_residual, wall_time=1.0)
+
+
+def test_an_ns_line_whose_prefix_the_progress_bar_ate_still_parses() -> None:
+    event = SolverLogParser(clock=FakeClock()).feed("NS (ITER=1) (NRM,RELC): ( 0.59256258E-04  2.0000000     ) :: linear elasticity")
+    assert isinstance(event, ConvergenceSample)
+    assert event.solver == "linear elasticity"
+    assert event.relative_change == pytest.approx(2.0)
+
+
+def test_without_targets_residuals_carry_no_solver() -> None:
+    assert {residual.solver for residual in _residuals(MGDYN_2D_LINES, ())} == {None}
+
+
+def test_the_3d_fixture_puts_every_residual_on_mgdyn() -> None:
+    residuals = _residuals(FIXTURE.read_text().splitlines(), MGDYN_3D)
+    assert len(residuals) == 106
+    assert {residual.solver for residual in residuals} == {"mgdyn"}
+
+
+def test_a_direct_2d_solve_hands_the_residuals_to_mgdyncalc() -> None:
+    residuals = _residuals(MGDYN_2D_LINES, MGDYN_2D)
+    assert len(residuals) == 5
+    assert {residual.solver for residual in residuals} == {"mgdyncalc"}
+
+
+def test_stress_recovery_after_the_ns_step_stays_on_its_solver() -> None:
+    lines = [
+        "       1 0.6138E+00",
+        "       2 0.8327E-08",
+        "NS (ITER=1) (NRM,RELC): ( 0.59256258E-04  2.0000000     ) :: linear elasticity",
+        "StressSolver: Solving for Stress(1,1)",
+        "       1 0.1000E+00",
+        "ComputeChange: SS (ITER=1) (NRM,RELC): ( 0.59256258E-04  2.0000000     ) :: linear elasticity",
+        "       1 0.2000E+00",
+    ]
+    assert [residual.solver for residual in _residuals(lines, ELASTICITY)] == ["linear elasticity"] * 4
+
+
+def test_untagged_and_unknown_compute_change_lines_steer_the_cursor() -> None:
+    lines = [
+        "ComputeChange: SS (ITER=1) (NRM,RELC): ( 1.0 2.0 ) :: mgdyn",
+        "       1 0.1000E+00",
+        "ComputeChange: NS (ITER=1) (NRM,RELC): ( 1.0 2.0 )",
+        "       1 0.2000E+00",
+        "ComputeChange: SS (ITER=1) (NRM,RELC): ( 1.0 2.0 )",
+        "       1 0.3000E+00",
+        "ComputeChange: NS (ITER=1) (NRM,RELC): ( 1.0 2.0 ) :: heat equation",
+        "       1 0.4000E+00",
+    ]
+    assert [residual.solver for residual in _residuals(lines, MGDYN_3D)] == ["mgdyncalc", "mgdyncalc", "mgdyn", "mgdyn"]
+
+
+# --- heartbeat ---
+
+
+def _progress(elapsed: float, *, started: float = 0.0, max_iterations: int | None = 5000, tolerance: float | None = 1e-8) -> LinearProgress:
+    return LinearProgress(
+        solver="linear elasticity",
+        method="CG",
+        iteration=1339,
+        max_iterations=max_iterations,
+        residual=3.138e-08,
+        tolerance=tolerance,
+        best_residual=2.698e-08,
+        best_iteration=658,
+        started=started,
+        elapsed=elapsed,
+        fraction=None,
+    )
+
+
+def test_heartbeat_beats_every_thirty_seconds_of_a_solve() -> None:
+    renderer = ConvergenceRenderer()
+    beats = [renderer.heartbeat(_progress(elapsed)) for elapsed in (29.0, 30.0, 45.0, 60.0)]
+
+    assert [beat is not None for beat in beats] == [False, True, False, True]
+    line = beats[1]
+    assert line is not None
+    assert "1339/5000" in line
+    assert "r = 3.138e-08 / 1e-08" in line
+    assert "best 2.698e-08 @ 658" in line
+    assert line.endswith("30 s")
+
+
+def test_heartbeat_restarts_its_throttle_for_a_new_solve() -> None:
+    renderer = ConvergenceRenderer()
+    assert renderer.heartbeat(_progress(50.0)) is not None
+    assert renderer.heartbeat(_progress(10.0, started=100.0)) is None
+    assert renderer.heartbeat(_progress(30.0, started=100.0)) is not None
+
+
+def test_heartbeat_pads_an_unknown_cap_and_tolerance() -> None:
+    renderer = ConvergenceRenderer()
+    known = renderer.heartbeat(_progress(30.0))
+    unknown = ConvergenceRenderer().heartbeat(_progress(30.0, max_iterations=None, tolerance=None))
+
+    assert known is not None and unknown is not None
+    assert unknown.index("best") == known.index("best")
+    assert "/" not in unknown

@@ -83,7 +83,7 @@ With `mpi_processes` above 1, ElmerGrid partitions the mesh in a container, then
 
 ### Timeouts
 
-Every backend command takes `timeout_s` and a cancel token, and [solve_case][femforge.elmer.solve_case] passes them through. A timed-out Docker command kills its container by name, since stopping the `docker` client alone leaves the container running. The image is fetched before the clock starts, so a build never counts against a timeout. A pull stops after 30 minutes and logs each finished layer and a heartbeat every 15 s. The driver sets no timeout, so its solves run until Elmer exits.
+Every backend command takes `timeout_s` and a cancel token, and [solve_case][femforge.elmer.solve_case] passes them through. A timed-out Docker command kills its container by name, since stopping the `docker` client alone leaves the container running. The image is fetched before the clock starts, so a build never counts against a timeout. A pull stops after 30 minutes and logs each finished layer and a heartbeat every 15 s. The driver sets no timeout; its watchdog stops a linear solve that stopped converging ([Stalled solves](driver.md#stalled-solves)).
 
 ### Another image
 

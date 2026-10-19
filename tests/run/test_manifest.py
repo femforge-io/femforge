@@ -25,7 +25,7 @@ from femforge.physical.property_functions import Static
 from femforge.physical.units import Quantity, U, quantity
 from femforge.run.manifest import RunManifest, cache_key, git_sha, mesh_key
 from femforge.common.names import bundle_name
-from femforge.run.result import MeshStats
+from femforge.run.result import LifecycleStatus, MeshStats, RunStatus
 from femforge.run.stages import Stage, StageEvent
 
 FIXED_DT = datetime(2026, 6, 14, 10, 0, 0, tzinfo=timezone.utc)
@@ -68,12 +68,12 @@ def test_cache_key_changes_with_physics_but_not_with_the_code_version() -> None:
     assert (
         RunManifest.build(
             _config(),
-            status="ok",
+            status=RunStatus.OK,
             code_sha="sha1",
         ).cache_key
         == RunManifest.build(
             _config(),
-            status="ok",
+            status=RunStatus.OK,
             code_sha="sha2",
         ).cache_key
     )
@@ -141,7 +141,7 @@ def test_manifest_run_id_is_the_named_cache_key() -> None:
     config = _config()
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -151,7 +151,7 @@ def test_manifest_run_id_is_the_named_cache_key() -> None:
     assert manifest.run_id == bundle_name(key)
     assert manifest.mesh_key == mesh_key(config)
     assert manifest.mesh_name == bundle_name(manifest.mesh_key)
-    assert manifest.status == "ok"
+    assert manifest.status == RunStatus.OK
 
     payload = cast("dict[str, object]", json.loads(manifest.model_dump_json()))
     keys = list(payload)
@@ -164,7 +164,7 @@ def test_manifest_physics_is_read_from_config() -> None:
     # The recorded provenance physics is sourced from config.physics.selected.
     manifest = RunManifest.build(
         _config(physics=Physics.THERMAL),
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -176,13 +176,13 @@ def test_manifest_notes_do_not_change_run_id() -> None:
     config = _config()
     bare = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
     noted = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
         notes="a trial run",
@@ -195,7 +195,7 @@ def test_manifest_round_trips_through_json() -> None:
     config = _config(materials=[MaterialProperties(name="N52")], tags=[EntityTag(selector={"Region": "gap"}, mesh_size=0.1 * U.mm)])
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         mesh_stats=MeshStats(element_count=1234, min_element_size=0.05, max_element_size=1.0),
         code_sha="sha1",
         created_at=FIXED_DT,
@@ -215,7 +215,7 @@ def test_manifest_round_trips_nonlinear_steel() -> None:
     steel = Steel_1080()
     manifest = RunManifest.build(
         _config(materials=[steel, N42()]),
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -233,12 +233,12 @@ def test_manifest_builds_running_with_an_injected_run_id() -> None:
     config = _config()
     manifest = RunManifest.build(
         config,
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id="feedc0de",
         code_sha="sha1",
         created_at=FIXED_DT,
     )
-    assert manifest.status == "running"
+    assert manifest.status == LifecycleStatus.RUNNING
     assert manifest.run_id == "feedc0de"
     # The content hash is still recorded, independent of the injected name.
     assert manifest.cache_key == cache_key(config)
@@ -249,14 +249,14 @@ def test_manifest_injected_run_id_matches_the_computed_name() -> None:
     name = bundle_name(cache_key(config))
     injected = RunManifest.build(
         config,
-        status="running",
+        status=LifecycleStatus.RUNNING,
         run_id=name,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
     computed = RunManifest.build(
         config,
-        status="running",
+        status=LifecycleStatus.RUNNING,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -268,7 +268,7 @@ def test_manifest_load_from_dir_file_and_missing(tmp_path: Path) -> None:
 
     manifest = RunManifest.build(
         _config(),
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -289,7 +289,7 @@ def test_manifest_without_stage_history_still_validates() -> None:
         json.loads(
             RunManifest.build(
                 _config(),
-                status="ok",
+                status=RunStatus.OK,
                 code_sha="sha1",
                 created_at=FIXED_DT,
             ).model_dump_json()
@@ -304,7 +304,7 @@ def test_manifest_without_stage_history_still_validates() -> None:
 def test_manifest_current_stage_is_the_first_unfinished_event() -> None:
     manifest = RunManifest.build(
         _config(),
-        status="running",
+        status=LifecycleStatus.RUNNING,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -330,7 +330,7 @@ def test_manifest_without_cleanups_still_validates_and_has_no_cached_inputs() ->
         json.loads(
             RunManifest.build(
                 _config(),
-                status="ok",
+                status=RunStatus.OK,
                 code_sha="sha1",
                 created_at=FIXED_DT,
             ).model_dump_json()
@@ -345,7 +345,7 @@ def test_manifest_without_cleanups_still_validates_and_has_no_cached_inputs() ->
 def test_manifest_stage_history_round_trips_through_json() -> None:
     manifest = RunManifest.build(
         _config(),
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )
@@ -454,7 +454,7 @@ def test_manifest_records_the_resolved_physics_config() -> None:
 
     manifest = RunManifest.build(
         config,
-        status="ok",
+        status=RunStatus.OK,
         code_sha="sha1",
         created_at=FIXED_DT,
     )

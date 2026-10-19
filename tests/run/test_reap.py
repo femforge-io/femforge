@@ -12,14 +12,14 @@ from femforge.meshing.config import MeshConfig
 from femforge.run.bundle import write_manifest
 from femforge.run.manifest import RunManifest
 from femforge.run.reap import reap_runs
-from femforge.run.result import ManifestStatus
+from femforge.run.result import LifecycleStatus, ManifestStatus, RunStatus
 
 
 HOST = "box"
 CREATED = datetime(2026, 9, 5, 13, 20, tzinfo=timezone.utc)
 
 
-def _bundle(runs_dir: Path, run_id: str, status: ManifestStatus = "running") -> Path:
+def _bundle(runs_dir: Path, run_id: str, status: ManifestStatus = LifecycleStatus.RUNNING) -> Path:
     sim_dir = runs_dir / run_id
     manifest = RunManifest.build(
         SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step")),
@@ -103,9 +103,9 @@ def test_live_claims_and_another_hosts_fresh_claim_are_left_alone(tmp_path: Path
 
 
 def test_a_settled_bundle_keeps_its_status_and_only_a_lingering_claim_on_it_goes(tmp_path: Path) -> None:
-    bundle = _bundle(tmp_path, "done-5555", status="ok")
+    bundle = _bundle(tmp_path, "done-5555", status=RunStatus.OK)
     lock = _claim(tmp_path, "done-5555", pid=4242, silent_for=timedelta(minutes=10))
-    untouched = _bundle(tmp_path, "quiet-0000", status="error")
+    untouched = _bundle(tmp_path, "quiet-0000", status=RunStatus.ERROR)
 
     reaped = reap_runs(tmp_path, alive=lambda _: True, host=HOST)
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from femforge.common.config import ConfigArea
 from femforge.common.files import RunFile, remove_path, tree_size
 from femforge.common.pydantic import Map, mapped_items
-from femforge.run.result import ManifestStatus
+from femforge.run.result import ManifestStatus, RunStatus
 
 
 class Cleanup(StrEnum):
@@ -35,7 +35,7 @@ class Cleanup(StrEnum):
             case Cleanup.NEVER:
                 return False
             case Cleanup.ON_SUCCESS:
-                return status == "ok"
+                return status is RunStatus.OK
             case Cleanup.ALWAYS:
                 return True
 

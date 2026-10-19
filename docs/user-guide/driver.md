@@ -177,7 +177,8 @@ The [RunManifest][femforge.run.RunManifest] in `manifest.json` describes the run
 | `physics`, `physics_config` | The physics solved and the resolved solver stack. |
 | `mesh_key`, `mesh_name` | The mesh artifact key and its store directory name. |
 | `mesh_stats` | Element count and size range. |
-| `status` | `running`, then `ok`, `diverged` or `error`, or `abandoned` when its claim went silent first. |
+| `status` | `running`, then `ok`, `diverged`, `stalled` or `error`, or `abandoned` when its claim went silent first. |
+| `stall` | The watchdog's verdict when it stopped a linear solve; None otherwise. |
 | `stage_history` | One timed event per stage. |
 | `artifacts`, `published` | The store-sourced inputs and the bundle's own store entry. |
 | `cleanups` | Every retention pass applied to the bundle. |
@@ -200,9 +201,33 @@ Quantities enter the key in base units, so `0.5 mm` and `0.0005 m` name the same
 
 ## Claims and reuse
 
-With `reuse=True`, `evaluate()` returns the local bundle when its manifest has the same `cache_key`, its status is `ok` or `diverged`, it holds `result.json`, and, unless `bundle_policy` is `CORE`, retention has not purged its field output. Otherwise, with an artifact cache, it fetches the published bundle into the run directory. A run that ended in `error` solves again; divergence is a physics outcome and is reused. `reuse=False` always solves.
+With `reuse=True`, `evaluate()` returns the local bundle when its manifest has the same `cache_key`, its status is `ok`, `diverged` or `stalled`, it holds `result.json`, and, unless `bundle_policy` is `CORE`, retention has not purged its field output. Otherwise, with an artifact cache, it fetches the published bundle into the run directory. A run that ended in `error` solves again; divergence is a physics outcome and is reused, and so is a stall, because the same config stalls again. To retry a stalled run, change a solver setting or purge the bundle. `reuse=False` always solves.
 
 One process produces each bundle. The driver claims `runs_dir/<run_id>.lock/` and refreshes the claim every 10 s while it solves. Another process asking for the same run checks every 2 s and reuses the bundle once the first one finishes with a reusable status. A claim silent for 120 s is stale, and the next claimant breaks it.
+
+## Stalled solves
+
+A linear solve that stops converging prints residuals until Elmer's iteration cap, often 5000 iterations later. The driver watches every linear residual line and stops the solve once one of two tests fires:
+
+- **Repeated**: the residual prints one value for 250 iterations. A Krylov method that broke down prints the same value again and again.
+- **No progress**: the best residual is still more than 10 times the solver's tolerance, and it improved by less than 10 % over the last `max(500, 0.9 × iteration)` iterations. The window is that long because a CG residual can rise for about 250 iterations before it falls, and a BiCGStab residual can sit on a plateau for 1100 iterations and still converge.
+
+The thresholds are constants in `femforge.elmer.solver_log`:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `STALL_REPEAT_ITERATIONS` | 250 | Iterations one residual may repeat. |
+| `STALL_WINDOW_MIN` | 500 | The shortest no-progress window, in iterations. |
+| `STALL_WINDOW_FRACTION` | 0.9 | The window as a share of the iterations so far, when that is longer. |
+| `STALL_IMPROVEMENT` | 0.1 | The gain the best residual must make over the window. |
+| `STALL_TOLERANCE_FACTOR` | 10 | A best residual within this factor of the tolerance never counts as no progress. |
+| `STALL_TAIL` | 20 | The residuals the verdict keeps. |
+
+When a test fires, the driver cancels the solve, logs one `stalled:` warning, marks the run `stalled`, and writes the verdict to the manifest's `stall` record: the test, the solver and its method, the iteration, the residual, the best residual and its iteration, the tolerance, and the last 20 residuals.
+
+A linear solve also logs a progress line every 30 s, with the iteration against the cap, the residual against the tolerance, and the best residual so far. The line's bound fields carry the same values for a log sink. The line comes from residual lines, so the assembly and a direct factorization stay silent.
+
+The stacks keep Elmer's `Linear System Abort Not Converged` default. Setting it to `False` would let a solve that missed its tolerance carry on and write an unconverged solution without a word, which is worse than a stall the driver reports.
 
 ## Reaping stale runs
 

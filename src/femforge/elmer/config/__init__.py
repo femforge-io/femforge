@@ -6,7 +6,7 @@ from femforge.elmer.config.common.constants import STEFAN_BOLTZMANN, Constants
 from femforge.elmer.config.common.generic import GenericSolver
 from femforge.elmer.config.common.keywords import SifKeywordModel, SifValue
 from femforge.elmer.config.common.operating_point import OperatingPoint
-from femforge.elmer.config.common.physics_config import PhysicsConfig, SolverUnion, convergence_targets, needs_halobc, prepare_for_mpi
+from femforge.elmer.config.common.physics_config import PhysicsConfig, SolverUnion, convergence_targets, linear_targets, needs_halobc, prepare_for_mpi
 from femforge.elmer.config.common.presets import physics_config, solved_stack
 from femforge.elmer.config.common.selection import PhysicsSelection
 from femforge.elmer.config.common.simulation import CoordinateSystem, SimulationSettings, SimulationType, TimesteppingMethod
@@ -40,6 +40,7 @@ __all__ = [
     "prepare_for_mpi",
     "needs_halobc",
     "convergence_targets",
+    "linear_targets",
     "OperatingPoint",
     "SimulationSettings",
     "Constants",
