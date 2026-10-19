@@ -6,7 +6,7 @@
 
 `resolve_root` is the on and off switch: an explicit path, else `FEMFORGE_TELEMETRY`, else None, and None means telemetry is off and nothing is created (`src/femforge/telemetry/paths.py:55-64`). A reader that needs a root calls `require_root`, which raises `TelemetryRootMissing` naming both ways to give one (`src/femforge/telemetry/paths.py:67-73`).
 
-With telemetry off, a process never imports polars. The logging setup and the driver check the explicit root and the variable before they import `femforge.telemetry` (`src/femforge/common/log.py:206-211`, `src/femforge/run/driver.py:367-376`).
+With telemetry off, a process never imports polars. The logging setup and the driver check the explicit root and the variable before they import `femforge.telemetry` (`src/femforge/common/log.py:206-211`, `src/femforge/run/driver.py:368-377`).
 
 [Telemetry][femforge.telemetry.Telemetry] addresses a root and hands out one cached [HiveStore][femforge.telemetry.HiveStore] per table (`src/femforge/telemetry/paths.py:76-115`). `TelemetryDir` names the directories (`src/femforge/telemetry/paths.py:33-52`):
 
@@ -184,7 +184,7 @@ An index turns directories of self-describing files into rows, and both indexes 
 
 **Rows are append-only, and the reader dedupes.** `RunQuery.frame` sorts by `indexed_at` and keeps the last row per `run_id` (`src/femforge/telemetry/runs.py:278-280`); `ArtifactQuery.frame` keeps the last per `(kind, key)` (`src/femforge/telemetry/artifacts.py:100-102`). A run's second row supersedes its first, and nothing rewrites a shard.
 
-The driver records its own runs. With a root, it appends a row when it first writes the manifest and another once the run has settled, so a running sweep is visible and a later scan finds nothing new (`src/femforge/run/driver.py:315-316`, `src/femforge/run/driver.py:450`). A failed write only warns, because telemetry never fails a solve (`src/femforge/run/driver.py:378-387`). `current_sweep_point()` supplies the sweep and point ids of a driver row (`src/femforge/telemetry/runs.py:145`), and a later scan row inherits them, because only the worker that solved the run knew them (`src/femforge/telemetry/runs.py:390-410`).
+The driver records its own runs. With a root, it appends a row when it first writes the manifest and another once the run has settled, so a running sweep is visible and a later scan finds nothing new (`src/femforge/run/driver.py:316-317`, `src/femforge/run/driver.py:451`). A failed write only warns, because telemetry never fails a solve (`src/femforge/run/driver.py:379-388`). `current_sweep_point()` supplies the sweep and point ids of a driver row (`src/femforge/telemetry/runs.py:145`), and a later scan row inherits them, because only the worker that solved the run knew them (`src/femforge/telemetry/runs.py:390-410`).
 
 `RunQuery` and `ArtifactQuery` are fluent: each method returns a new query, and nothing is collected until `frame()`. `runs()` and `records()` return the real objects and skip whatever retention removed since (`src/femforge/telemetry/runs.py:301-317`). `with_live()` joins [live_runs][femforge.telemetry.live_runs], because the claim files are the truth about what is in flight. `femforge artifacts ls` lists from the artifact index when a root resolves and the index holds rows, and scans the store otherwise (`src/femforge/cli.py:273-276`, `src/femforge/telemetry/cli.py:445-462`).
 
@@ -205,7 +205,7 @@ The parent and every worker own a journal of their own, one flushed line per tra
 
 ## Convergence
 
-[solve_case][femforge.elmer.solve_case] writes `convergence.jsonl` in the bundle, one flushed line per convergence sample, with exactly the keys of the convergence schema (`src/femforge/elmer/runtime/solve.py:124-137`). Immediately before the solve, the driver's `run_solver` stage writes `convergence_targets.json` from the solver stack's `convergence_targets`, the same mapping it hands the terminal renderer (`src/femforge/run/driver.py:684-697`). [ConvergenceTargetsFile][femforge.telemetry.ConvergenceTargetsFile] is that file's model, and a bundle without one reads as having no targets (`src/femforge/telemetry/convergence.py:50-100`). Both files belong to the `logs` retention class (`src/femforge/common/files.py:89`).
+[solve_case][femforge.elmer.solve_case] writes `convergence.jsonl` in the bundle, one flushed line per convergence sample, with exactly the keys of the convergence schema (`src/femforge/elmer/runtime/solve.py:124-137`). Immediately before the solve, the driver's `run_solver` stage writes `convergence_targets.json` from the solver stack's `convergence_targets`, the same mapping it hands the terminal renderer (`src/femforge/run/driver.py:700-713`). [ConvergenceTargetsFile][femforge.telemetry.ConvergenceTargetsFile] is that file's model, and a bundle without one reads as having no targets (`src/femforge/telemetry/convergence.py:50-100`). Both files belong to the `logs` retention class (`src/femforge/common/files.py:90`).
 
 [scan_convergence][femforge.telemetry.scan_convergence] reads the log onto the convergence schema, skipping a malformed line, and derives two columns (`src/femforge/telemetry/convergence.py:111-142`):
 

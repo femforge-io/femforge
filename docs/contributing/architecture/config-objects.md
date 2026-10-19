@@ -162,7 +162,7 @@ stack.solver(MagnetoDynamicsSolver).linear_system_max_iterations = 2000
 assert ff.run.cache_key(config) != before
 ```
 
-An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:653-657`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
+An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:669-673`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
 
 ## The JSON schema export
 
@@ -194,4 +194,4 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 | Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:165`, `src/femforge/meshing/gmsh_options.py:58` |
 | The geometry interface names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
 | `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
-| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:367-376`, `src/femforge/common/log.py:206-211` |
+| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:368-377`, `src/femforge/common/log.py:206-211` |
