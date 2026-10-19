@@ -72,7 +72,7 @@ The interface has three rules:
 
 ## The frame area
 
-The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-163`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`), [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`) and [Cartesian2D][femforge.frames.Cartesian2D] (`src/femforge/frames/cartesian_2d.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
+The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:245-335`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`), [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`) and [Cartesian2D][femforge.frames.Cartesian2D] (`src/femforge/frames/cartesian_2d.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
 
 `FrameUnion`, the discriminated union on `kind`, types every serialized frame field: `SimulationConfig.frame`, `Result.frame`, `StepSpec.frame` and `MeshJob.frame` (`src/femforge/frames/__init__.py:13`). Every function and attribute that only calls the hooks takes the base `Frame`. `default_frame(model_dim)`, the frame of a bundle whose manifest names none, takes the first shipped frame of that dimension that builds from defaults alone, so `Cartesian2D`, whose `thickness` is required, follows `Axisymmetric` in the union and a 2D bundle without a manifest reads as axisymmetric.
 
@@ -83,7 +83,9 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 | `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-35`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-82`) |
 | `plane` | the solve plane in the authored model, None for a whole-model solve; its `x_dir` and `y_dir` are the authored solve +X and +Y, and `normal` their cross product | `axisymmetric_cross_section`, `planar_cross_section`, the workbench's symmetry expansion, `FixedDisplacement.on_boundary` and `check_frame` |
 | `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:70-91`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:96-99`) |
-| `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:102-118`) |
+| `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:102-121`) |
+| `measure_geometry` | every body's and named face's mismatch against the frame's rule, as a `GeometryCheck`; None for a frame that takes any model | `check_geometry`, each sectioning frame's `prepare_geometry` |
+| `check_geometry` | raises `FrameGeometryError` when the authored model does not fit the frame; concrete on the base | each sectioning frame's `prepare_geometry`, through the check's `raise_for_mismatch` |
 | `solves` | the form a physics solves as, raising when it has none | `SimulationConfig.solved_physics`, `PhysicsSelection.check_frame`, `solved_stack`, `Sim` |
 | `supports` | whether `solves` has a form; concrete on the base | `CurrentDensity.check_frame` |
 | `lumps_torque` | whether Elmer's force lumping yields a torque | `CalculateMagneticForce.check_frame` |

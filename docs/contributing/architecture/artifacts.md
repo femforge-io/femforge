@@ -45,7 +45,7 @@ A kind is a module-level [ArtifactKind][femforge.artifacts.ArtifactKind] constan
 
 | Kind | Spec | Files | Produced by |
 |---|---|---|---|
-| [STEP][femforge.run.STEP] | `StepSpec`: the geometry source and the frame | `geometry.step` | the kind's own producer: build the geometry, then convert it into the frame (`src/femforge/run/kinds.py:102-118`) |
+| [STEP][femforge.run.STEP] | `StepSpec`: the geometry source and the frame | `geometry.step` | the kind's own producer: build the geometry, then convert it into the frame (`src/femforge/run/kinds.py:102-121`) |
 | [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | the four ElmerGrid mesh files, `mesh.names`, `groups.json` | the driver, which owns gmsh and ElmerGrid (`src/femforge/run/kinds.py:173-179`) |
 | [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec]: the config | `manifest.json`, `result.json`, and what the bundle policy adds | the run itself, in place (`src/femforge/run/kinds.py:216-224`) |
 
@@ -104,10 +104,10 @@ The driver runs its pipeline as the [Stage][femforge.run.Stage] members in order
 | Step | Kind | With an artifact cache | Without one | Where |
 |---|---|---|---|---|
 | reuse check | `RUN_BUNDLE` | the local bundle when it is reusable, else the published bundle fetched into the run directory | the local bundle only | `src/femforge/run/driver.py:236-276` |
-| `prepare_geometry` | `STEP` | fetch the solve-frame STEP, or build and publish it; an authored STEP under `Solid()` passes through uncached | build and convert in the run directory | `src/femforge/run/driver.py:559-575` |
-| `mesh` | `ELMER_MESH` | fetch the mesh, or mesh and convert in a staging directory, drop the `.msh` and publish the rest | mesh and convert in the run directory, keeping the `.msh` | `src/femforge/run/driver.py:580-612` |
-| `mesh`, either way | | rebind the groups to this config, take ElmerGrid's ids from `mesh.names`, write `entities.json` | | `src/femforge/run/driver.py:614-633` |
-| `publish` | `RUN_BUNDLE` | the files the bundle policy selects, minus the store-sourced inputs, unless the run ended in `error` | skipped | `src/femforge/run/driver.py:344-356`, `src/femforge/run/driver.py:391-433` |
+| `prepare_geometry` | `STEP` | fetch the solve-frame STEP, or build and publish it; an authored STEP under `Solid()` passes through uncached | build and convert in the run directory | `src/femforge/run/driver.py:566-588` |
+| `mesh` | `ELMER_MESH` | fetch the mesh, or mesh and convert in a staging directory, drop the `.msh` and publish the rest | mesh and convert in the run directory, keeping the `.msh` | `src/femforge/run/driver.py:593-607` |
+| `mesh`, either way | | rebind the groups to this config, take ElmerGrid's ids from `mesh.names`, write `entities.json` | | `src/femforge/run/driver.py:612-631` |
+| `publish` | `RUN_BUNDLE` | the files the bundle policy selects, minus the store-sourced inputs, unless the run ended in `error` | skipped | `src/femforge/run/driver.py:342-354`, `src/femforge/run/driver.py:389-431` |
 
 Every store-sourced input lands in `manifest.artifacts` as it arrives (`src/femforge/run/driver.py:550-557`), and `manifest.cached_inputs()` lists their files (`src/femforge/run/manifest.py:134-136`). That list is what lets retention drop the inputs freely, what `rehydrate_bundle` fetches back, and what `prune_store_sourced` removes (`src/femforge/run/artifacts.py:145-169`). The publish stage records `manifest.published` and writes the manifest before it commits, so the published manifest already names its own store entry, and it runs after the run's log context has closed `run.log`, so the logs class can be published and cleaned up too (`src/femforge/run/driver.py:344-345`).
 
