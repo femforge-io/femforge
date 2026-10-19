@@ -20,21 +20,28 @@ def test_a_solid_has_no_frame_rows_and_no_face_measure() -> None:
 def test_a_cartesian_2d_frame_reads_its_plane_thickness_and_state() -> None:
     frame = Cartesian2D(normal=Axis(origin=Vec3(0, 0, 5), direction=Direction(0, 0, 1)), thickness=quantity(10, "mm"))
 
-    assert _read(frame.facts()) == [("Plane Origin", "(0, 0, 5) mm"), ("Solve X, Y", "+X, +Y"), ("Thickness", "10 mm"), ("Plane State", "Plane Stress")]
+    assert _read(frame.facts()) == [("Normal", "(0, 0, 1)"), ("Plane Origin", "(0, 0, 5) mm"), ("Solve X, Y", "+X, +Y"), ("Thickness", "10 mm"), ("Plane State", "Plane Stress")]
     assert frame.face_measure(0.02, Vec3(0.05, 0, 0)) == FrameFact(label="Face Area", value="200 mm² at 10 mm Thickness")
 
 
 def test_a_plane_strain_frame_off_the_world_axes_reads_its_axes_in_component_form() -> None:
     frame = Cartesian2D(normal=Axis(direction=Direction(1, 1, 0)), thickness=quantity(10, "mm"), state=PlaneState.STRAIN)
 
-    assert _read(frame.facts())[1:] == [("Solve X, Y", "+Z, (0.707, -0.707, 0)"), ("Thickness", "10 mm"), ("Plane State", "Plane Strain")]
+    assert _read(frame.facts()) == [
+        ("Normal", "(0.707, 0.707, 0)"),
+        ("Plane Origin", "(0, 0, 0) mm"),
+        ("Solve X, Y", "+Z, (0.707, -0.707, 0)"),
+        ("Thickness", "10 mm"),
+        ("Plane State", "Plane Strain"),
+    ]
 
 
 def test_an_axisymmetric_frame_reads_its_axis_and_the_revolved_area() -> None:
     frame = Axisymmetric(axis=Axis.Z)
     fact = frame.face_measure(0.0314, Vec3(0.01, 0.0, 0.0))
 
-    assert _read(frame.facts()) == [("Axis Origin", "(0, 0, 0) mm"), ("Radial, Axial", "+X, +Z")]
+    assert _read(frame.facts()) == [("Axis", "(0, 0, 1)"), ("Axis Origin", "(0, 0, 0) mm"), ("Radial, Axial", "+X, +Z")]
+    assert frame.axis_names == ("Radial", "Axial") and Solid().axis_names == ("X", "Y")
     assert fact is not None and fact.label == "Revolved Area" and fact.value == "2π·r̄·L = 1970 mm²"
 
 

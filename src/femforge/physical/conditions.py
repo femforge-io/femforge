@@ -20,7 +20,7 @@ from femforge.elmer.physics import Physics
 from femforge.elmer.sections import SifSection
 from femforge.elmer.variables import ElmerVariable
 from femforge.frames.base import ALIGNMENT_TOLERANCE
-from femforge.physical.readout import along, readout, vector_readout
+from femforge.physical.readout import along, components_readout, readout, vector_readout
 from femforge.physical.units import (
     Current,
     CurrentDensity as CurrentDensityQuantity,
@@ -179,12 +179,12 @@ type SummaryLine = tuple[SummaryPart, ...]
 """One line of a condition's summary, its parts in reading order."""
 
 
-def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[float]:
-    """The numeric values of the ``stem 1`` to ``stem 3`` keywords in ``emitted``, in index order, skipping any that are absent or not numbers."""
+def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[tuple[int, float]]:
+    """The 1-based index and numeric value of each ``stem 1`` to ``stem 3`` keyword in ``emitted``, in solve order, skipping any that are absent or not numbers."""
     if emitted is None:
         return []
 
-    found: list[float] = []
+    found: list[tuple[int, float]] = []
 
     for index in range(1, 4):
         value: float | str | None = emitted.get(f"{stem} {index}")
@@ -193,7 +193,7 @@ def _numbers(emitted: Mapping[str, float | str] | None, stem: str) -> list[float
             continue
 
         try:
-            found.append(float(value))
+            found.append((index, float(value)))
         except ValueError:
             continue
 
@@ -334,7 +334,7 @@ class Magnetization(Condition):
         return tuple(enumerate(components, start=1))
 
     def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """The authored direction, then the remanence ``Br = μ₀·|M|`` of the emitted ``Magnetization i`` components.
+        """The authored direction, then the remanence ``Br = μ₀·M`` of the emitted ``Magnetization i`` components in solve order.
 
         Args:
             emitted: The keywords the magnet's Material block received, by name.
@@ -342,15 +342,16 @@ class Magnetization(Condition):
         if self.direction is None:
             return ((SummaryPart("No Direction"),),)
 
-        direction = SummaryPart(f"Along {along(self.direction)}")
-        components: list[float] = _numbers(emitted, "Magnetization")
+        direction: SummaryLine = (SummaryPart(f"Along {along(self.direction)}"),)
+        components: list[tuple[int, float]] = _numbers(emitted, "Magnetization")
 
         if not components:
-            return ((direction,),)
+            return (direction,)
 
-        remanence: Quantity = (quantity(math.hypot(*components), "A/m") * U.mu_0).to(U.T)
+        mu_0: float = quantity(1.0, "mu_0").m_as("T*m/A")
+        remanence: list[float] = [mu_0 * value for _, value in components]
 
-        return ((direction, SummaryPart(readout(remanence), label="Br")),)
+        return (direction, (SummaryPart(components_readout(remanence, "T"), label="Br"),))
 
 
 class CurrentDensity(Condition):
@@ -780,21 +781,30 @@ class FixedDisplacement(Condition):
         return tuple(dropped)
 
     def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """``X 0 · Y 0 · Z 0``: each authored axis at its prescribed displacement, or ``Free``; ``emitted`` is ignored.
+        """``X 0 · Y 0``: each solve coordinate an emitted ``Displacement i`` holds, then each authored axis left ``Free``; without ``emitted``, every authored axis as authored.
 
         Args:
-            emitted: The keywords the boundary's sif block received, by name.
+            emitted: The keywords the boundary's sif block received, by name; None reads the authored axes.
         """
+
+        def shown(value: float) -> str:
+            return "0" if value == 0.0 else readout(quantity(value, "m"))
 
         def part(component: Component, value: Length | None) -> SummaryPart:
             if value is None:
                 return SummaryPart("Free", label=component.upper(), component=component)
 
-            text: str = "0" if value.m_as("m") == 0.0 else readout(value)
+            return SummaryPart(shown(value.m_as("m")), label=component.upper(), component=component)
 
-            return SummaryPart(text, label=component.upper(), component=component)
+        axes: tuple[tuple[Component, Length | None], ...] = (("x", self.x), ("y", self.y), ("z", self.z))
 
-        return ((part("x", self.x), part("y", self.y), part("z", self.z)),)
+        if emitted is None:
+            return (tuple(part(component, value) for component, value in axes),)
+
+        held: list[SummaryPart] = [SummaryPart(shown(value), label="XYZ"[index - 1]) for index, value in _numbers(emitted, str(ElmerVariable.DISPLACEMENT))]
+        free: list[SummaryPart] = [part(component, None) for component, value in axes if value is None]
+
+        return (tuple(sorted([*held, *free], key=lambda candidate: candidate.label)),)
 
 
 class SurfaceForce(Condition):
@@ -854,20 +864,20 @@ class SurfaceForce(Condition):
         return tuple(enumerate(components, start=1))
 
     def summary(self, emitted: Mapping[str, float | str] | None = None) -> tuple[SummaryLine, ...]:
-        """The authored total and its direction, then the traction the emitted ``Force i`` components hold on the face.
+        """The authored total and its direction, then the signed traction the emitted ``Force i`` components hold on the face, in solve order.
 
         Args:
             emitted: The keywords the face's sif block received, by name.
         """
         total: SummaryLine = (SummaryPart(vector_readout(self.force)),)
-        components: list[float] = _numbers(emitted, "Force")
+        components: list[tuple[int, float]] = _numbers(emitted, "Force")
 
         if not components:
             return (total,)
 
-        traction: Quantity = quantity(math.hypot(*components), "Pa")
+        traction: str = components_readout([value for _, value in components], "Pa")
 
-        return (total, (SummaryPart(readout(traction), label="Traction"),))
+        return (total, (SummaryPart(traction, label="Traction"),))
 
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.

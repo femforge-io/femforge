@@ -577,8 +577,19 @@ def test_every_shipped_condition_reads_as_at_least_one_line() -> None:
 def test_a_surface_force_reads_its_total_then_the_traction_the_face_received() -> None:
     pull = SurfaceForce(force=quantity(Vec3(100, 0, 0), "N"))
 
-    assert _read(pull.summary({"Force 1": 500000.0, "Force 2": 0.0})) == [["100 N Along (1, 0, 0)"], ["Traction", "500 kPa"]]
+    assert _read(pull.summary({"Force 1": 500000.0, "Force 2": 0.0})) == [["100 N Along (1, 0, 0)"], ["Traction", "(500, 0) kPa"]]
+    assert _read(pull.summary({"Force 1": 1.0, "Force 2": -2.0, "Force 3": 0.5})) == [["100 N Along (1, 0, 0)"], ["Traction", "(1, -2, 0.5) Pa"]]
     assert _read(pull.summary()) == [["100 N Along (1, 0, 0)"]], "without the emitted keywords there is no traction to read"
+
+
+def test_a_traction_reads_the_sign_the_frame_mapping_gave_it() -> None:
+    sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
+    pull = SurfaceForce(force=quantity(Vec3(0, -100, 0), "N"))
+    emitted = pull.on_boundary(BoundarySite(name="TIP", measure=2e-2, frame=sideways))
+    share = dict(pull.solve_components(sideways))
+
+    assert share[1] < 0.0, "authored -Y runs along the solve +X of a plane normal to X"
+    assert _read(pull.summary(emitted)) == [["100 N Along (0, -1, 0)"], ["Traction", "(-500, 0) kPa"]]
 
 
 def test_a_fixed_displacement_reads_each_axis_with_its_component() -> None:
@@ -587,6 +598,14 @@ def test_a_fixed_displacement_reads_each_axis_with_its_component() -> None:
 
     assert [(part.label, part.value, part.component) for part in clamp] == [("X", "0", "x"), ("Y", "0", "y"), ("Z", "0", "z")]
     assert [part.value for part in roller] == ["0.1 mm", "Free", "0"]
+
+
+def test_a_fixed_displacement_reads_what_each_solve_coordinate_received() -> None:
+    clamp = FixedDisplacement().summary({"Displacement 1": 0.0, "Displacement 2": 0.0})[0]
+    roller = FixedDisplacement(y=None, z=None).summary({"Displacement 1": -0.002})[0]
+
+    assert [(part.label, part.value, part.component) for part in clamp] == [("X", "0", None), ("Y", "0", None)]
+    assert [(part.label, part.value, part.component) for part in roller] == [("X", "-2 mm", None), ("Y", "Free", "y"), ("Z", "Free", "z")]
 
 
 def test_a_condition_with_several_values_labels_each_with_its_glyph() -> None:
@@ -601,7 +620,7 @@ def test_a_magnet_reads_its_direction_and_the_remanence_it_was_emitted_with() ->
     magnet = Magnetization(direction=Direction(0, 0, 1))
     emitted = {"Magnetization 1": "0", "Magnetization 2": f"{1.32 / MU0:.6g}", "Magnetization 3": "Real MATC"}
 
-    assert _read(magnet.summary(emitted)) == [["Along (0, 0, 1)", "Br", "1.32 T"]]
+    assert _read(magnet.summary(emitted)) == [["Along (0, 0, 1)"], ["Br", "(0, 1.32) T"]]
     assert _read(magnet.summary()) == [["Along (0, 0, 1)"]]
     assert _read(Magnetization(direction=None).summary()) == [["No Direction"]]
 
