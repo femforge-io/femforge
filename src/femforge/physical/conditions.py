@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ConditionTarget",
+    "ConditionGlyph",
     "BoundarySite",
     "Condition",
     "Magnetization",
@@ -68,6 +69,49 @@ class ConditionTarget(StrEnum):
 
     BOUNDARY = "boundary"
     """Attach to a boundary surface."""
+
+
+class ConditionGlyph(StrEnum):
+    """The kind of scene glyph and legend row a condition draws as."""
+
+    SURFACE_FORCE = "surface_force"
+    """A load arrow on a face."""
+
+    FIXED_DISPLACEMENT = "fixed_displacement"
+    """A held face."""
+
+    MAGNETIZATION = "magnetization"
+    """A magnet's direction arrow."""
+
+    CURRENT_DENSITY = "current_density"
+    """A coil drive's current marker."""
+
+    THERMAL = "thermal"
+    """A thermal source or boundary value."""
+
+    VOLTAGE = "voltage"
+    """A voltage potential or coil terminal."""
+
+
+def _solve_axes(frame: Frame) -> tuple[Vec3, ...]:
+    """The authored directions of the solve coordinates of ``frame``: the world axes, or the solve plane's X and Y."""
+    plane: SolvePlane | None = frame.plane
+
+    if plane is None:
+        return (Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0), Vec3(0.0, 0.0, 1.0))
+
+    return (plane.x_dir, plane.y_dir)
+
+
+def _snapped(cosine: float) -> float:
+    """``cosine`` snapped to 0 or ±1 within ``ALIGNMENT_TOLERANCE``."""
+    if abs(cosine) <= ALIGNMENT_TOLERANCE:
+        return 0.0
+
+    if abs(abs(cosine) - 1.0) <= ALIGNMENT_TOLERANCE:
+        return math.copysign(1.0, cosine)
+
+    return cosine
 
 
 def _si(quantity: Quantity, unit: Any) -> float:  # pyright: ignore[reportExplicitAny, reportAny]  # unit is any pint unit expression (registry under-typed)
@@ -117,6 +161,9 @@ class Condition(BaseModel):
     section: ClassVar[SifSection]
     """The sif section this condition's keywords land in; ``BOUNDARY_CONDITION`` exactly when ``target`` is ``BOUNDARY``."""
 
+    glyph: ClassVar[ConditionGlyph | None]
+    """The scene glyph this condition draws as; None for an output that draws nothing."""
+
     physics: Physics
     """The physics whose solve this condition feeds."""
 
@@ -147,6 +194,14 @@ class Condition(BaseModel):
     def check_frame(self, frame: Frame) -> None:
         """Raise when this condition cannot drive a ``frame`` solve."""
 
+    def solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
+        """The 1-based solve coordinates and values of this condition's vector in ``frame``; the default has none."""
+        return ()
+
+    def dropped_fields(self, frame: Frame) -> tuple[str, ...]:
+        """The authored fields ``frame`` has no solve coordinate for; the default drops none."""
+        return ()
+
 
 class Magnetization(Condition):
     """The magnetization direction of a permanent magnet.
@@ -164,6 +219,8 @@ class Magnetization(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.MATERIAL
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.MAGNETIZATION
 
     direction: DirectionField | None
     """Magnetization direction in the authored model's frame, None for an unmagnetized body; magnitude comes from the material."""
@@ -190,6 +247,15 @@ class Magnetization(Condition):
         except ValueError as error:
             raise ValueError(f"Magnetization direction {self.direction} has no form in the {frame.label} frame: {error}") from None
 
+    def solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
+        """The solve components of the unit direction in ``frame``; none without a direction."""
+        if self.direction is None:
+            return ()
+
+        components: tuple[float, ...] = frame.solve_vector(self.direction)
+
+        return tuple(enumerate(components, start=1))
+
 
 class CurrentDensity(Condition):
     """A uniform signed out-of-plane current density J = N·I/A over a winding window, the homogenized drive of a stranded coil in a 2D solve."""
@@ -204,6 +270,8 @@ class CurrentDensity(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.BODY_FORCE
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.CURRENT_DENSITY
 
     value: Annotated[CurrentDensityQuantity, ElmerKeyword("Current Density", U.A / U.m**2)]
     """`J` `[A/m²]`: Signed out-of-plane current density imposed uniformly over the body: azimuthal under Axisymmetric, along +normal under Cartesian2D."""
@@ -228,6 +296,8 @@ class FixedTemperature(Condition):
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
+
     value: Annotated[Temperature, ElmerKeyword(ElmerVariable.TEMPERATURE, U.K)]
     """`T` `[K]`: Fixed temperature imposed on the boundary."""
 
@@ -245,6 +315,8 @@ class HeatFlux(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
 
     value: Annotated[HeatFluxQuantity, ElmerKeyword("Heat Flux", U.W / U.m**2)]
     """`q_s` `[W/m²]`: Heat flux through the boundary."""
@@ -266,6 +338,8 @@ class Convection(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
 
     external_only: ClassVar[bool] = True
 
@@ -292,6 +366,8 @@ class HeatSource(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.BODY_FORCE
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
 
     power_density: Annotated[PowerDensity, ElmerKeyword("Volumetric Heat Source", U.W / U.m**3)]
     """`q` `[W/m³]`: Heat generation density at ``reference_temperature`` when a coefficient is set, else the constant source."""
@@ -331,6 +407,8 @@ class FixedVoltage(Condition):
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.VOLTAGE
+
     value: Annotated[Voltage, ElmerKeyword(ElmerVariable.POTENTIAL, U.V)]
     """`V` `[V]`: The voltage potential held on the boundary."""
 
@@ -359,6 +437,8 @@ class JouleHeat(Condition):
 
     section: ClassVar[SifSection] = SifSection.BODY_FORCE
 
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
+
     def to_elmer(self) -> dict[str, float | str]:
         """The ``Joule Heat`` flag."""
         return {"Joule Heat": "Logical True"}
@@ -380,6 +460,8 @@ class CoilDrive(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.COMPONENT
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.CURRENT_DENSITY
 
     current: Annotated[Current, ElmerKeyword("Desired Coil Current", U.A)]
     """`I_coil` `[A]`: The total coil current CoilSolver normalizes this coil's solved distribution to."""
@@ -410,6 +492,8 @@ class CoilTerminal(Condition):
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.VOLTAGE
+
     external_only: ClassVar[bool] = True
 
     role: Literal["start", "end"]
@@ -433,6 +517,8 @@ class CalculateMagneticForce(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.COMPONENT
+
+    glyph: ClassVar[ConditionGlyph | None] = None
 
     label: str | None = None
     """The Component's ``Name``; None uses the authoring tag's name."""
@@ -484,6 +570,8 @@ class FixedDisplacement(Condition):
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.FIXED_DISPLACEMENT
+
     x: Length | None = Field(default_factory=lambda: quantity(0.0, "m"))
     """`u_x` `[m]`: Prescribed displacement along the authored X axis; None leaves it free."""
 
@@ -505,21 +593,9 @@ class FixedDisplacement(Condition):
             ("z", Vec3(0.0, 0.0, 1.0), z),
         )
 
-    def _solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
+    def solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
         """Each 1-based solve coordinate the constrained axes run along in ``frame``, with its signed prescribed value; raises when the mapping is ill posed."""
-
-        def snapped(cosine: float) -> float:
-            if abs(cosine) <= ALIGNMENT_TOLERANCE:
-                return 0.0
-
-            if abs(abs(cosine) - 1.0) <= ALIGNMENT_TOLERANCE:
-                return math.copysign(1.0, cosine)
-
-            return cosine
-
-        plane: SolvePlane | None = frame.plane
-        world: tuple[Vec3, ...] = (Vec3(1.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0), Vec3(0.0, 0.0, 1.0))
-        solve_axes: tuple[Vec3, ...] = world if plane is None else (plane.x_dir, plane.y_dir)
+        solve_axes: tuple[Vec3, ...] = _solve_axes(frame)
         constraints: tuple[tuple[str, Vec3, float | None], ...] = self._constraints()
 
         for name, axis, value in constraints:
@@ -539,7 +615,7 @@ class FixedDisplacement(Condition):
             free: list[str] = []
 
             for name, axis, value in constraints:
-                cosine: float = snapped(axis.dot(solve_axis))
+                cosine: float = _snapped(axis.dot(solve_axis))
 
                 if cosine == 0.0:
                     continue
@@ -569,13 +645,27 @@ class FixedDisplacement(Condition):
 
     def on_boundary(self, site: BoundarySite) -> dict[str, float | str]:
         """The ``Displacement i`` keywords of the solve coordinates the constrained axes run along in the frame of ``site``, signed by their alignment; an axis off the solve plane adds none."""
-        components: tuple[tuple[int, float], ...] = self._solve_components(site.frame)
+        components: tuple[tuple[int, float], ...] = self.solve_components(site.frame)
 
         return {f"{ElmerVariable.DISPLACEMENT} {index}": value for index, value in components}
 
     def check_frame(self, frame: Frame) -> None:
         """Raise when a nonzero component leaves the solve plane or a constrained axis runs oblique to a free one in ``frame``."""
-        _ = self._solve_components(frame)
+        _ = self.solve_components(frame)
+
+    def dropped_fields(self, frame: Frame) -> tuple[str, ...]:
+        """The constrained authored axes that run along no solve coordinate of ``frame``, such as ``("z",)`` under a Cartesian 2D frame normal to Z."""
+        solve_axes: tuple[Vec3, ...] = _solve_axes(frame)
+        dropped: list[str] = []
+
+        for name, axis, value in self._constraints():
+            if value is None:
+                continue
+
+            if all(_snapped(axis.dot(solve_axis)) == 0.0 for solve_axis in solve_axes):
+                dropped.append(name)
+
+        return tuple(dropped)
 
 
 class SurfaceForce(Condition):
@@ -594,6 +684,8 @@ class SurfaceForce(Condition):
     """Whether the condition attaches to a body or a boundary."""
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
+
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.SURFACE_FORCE
 
     force: Force
     """`F⃗` `[N]`: Total force spread uniformly over the face, in the authored frame."""
@@ -625,6 +717,12 @@ class SurfaceForce(Condition):
             _ = self._solve_force(frame)
         except ValueError as error:
             raise ValueError(f"SurfaceForce has no form in the {frame.label} frame: {error}") from None
+
+    def solve_components(self, frame: Frame) -> tuple[tuple[int, float], ...]:
+        """The solve components, in N, of the share of the force the solve domain carries in ``frame``: per metre of depth in Cartesian 2D."""
+        components: tuple[float, ...] = self._solve_force(frame)
+
+        return tuple(enumerate(components, start=1))
 
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.

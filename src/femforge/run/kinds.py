@@ -24,13 +24,13 @@ from femforge.meshing.spec import MeshSpec, TagSelectorSpec
 from femforge.physical.units import CANONICAL_UNITS, Quantity, quantity
 
 
-RUN_PRODUCER_VERSION = 2
+RUN_PRODUCER_VERSION = 3
 """Bump when the pipeline (emitter, mesher, parser) changes what a solve of the same config yields; invalidates bundle reuse."""
 
-MESH_PRODUCER_VERSION = 2
+MESH_PRODUCER_VERSION = 3
 """Bump when meshing or ElmerGrid conversion changes what the same mesh spec yields."""
 
-STEP_PRODUCER_VERSION = 4
+STEP_PRODUCER_VERSION = 5
 """Bump when STEP export or frame conversion changes what the same geometry parameters and frame yield."""
 
 # ISO-10303-21 stamps the export time into the HEADER's FILE_NAME entity, which the bytes fallback masks.
@@ -117,6 +117,9 @@ def _build_step(spec: StepSpec, workdir: Path) -> Produced:
 
     if (workdir / BundleFile.GEOMETRY_CHECK).is_file():
         files.append(BundleFile.GEOMETRY_CHECK)
+
+    if (workdir / BundleFile.GEOMETRY_AUTHORED).is_file():
+        files.append(BundleFile.GEOMETRY_AUTHORED)
 
     return Produced(files=tuple(files))
 

@@ -16,6 +16,7 @@ from femforge.physical.conditions import (
     CoilDrive,
     CoilTerminal,
     Condition,
+    ConditionGlyph,
     ConditionTarget,
     ConditionUnion,
     Convection,
@@ -500,3 +501,44 @@ def test_a_magnetization_under_a_cartesian_2d_frame_emits_its_plane_components()
 
 def test_a_current_density_drives_a_cartesian_2d_magnetostatic_solve() -> None:
     CurrentDensity(value=1e6 * U.A / U.m**2).check_frame(Cartesian2D(thickness=10 * U.mm))
+
+
+# --- setup hooks: glyph, solve components, dropped fields --------------------
+
+
+def test_every_shipped_condition_but_the_force_output_draws_a_glyph() -> None:
+    without = [condition for condition in shipped_conditions() if condition.glyph is None]
+
+    assert without == [CalculateMagneticForce]
+    assert {condition.glyph for condition in shipped_conditions()} == {*ConditionGlyph, None}
+
+
+def test_the_coil_conditions_share_the_current_and_voltage_glyphs() -> None:
+    assert (CoilDrive.glyph, CurrentDensity.glyph) == (ConditionGlyph.CURRENT_DENSITY, ConditionGlyph.CURRENT_DENSITY)
+    assert (CoilTerminal.glyph, FixedVoltage.glyph) == (ConditionGlyph.VOLTAGE, ConditionGlyph.VOLTAGE)
+    assert {JouleHeat.glyph, Convection.glyph, HeatSource.glyph} == {ConditionGlyph.THERMAL}
+
+
+@pytest.mark.parametrize(
+    ("condition", "frame", "expected"),
+    [
+        (FixedDisplacement(), Cartesian2D(normal=_axis(0, 0, 1), thickness=_THICKNESS), ("z",)),
+        (FixedDisplacement(z=None), Cartesian2D(normal=_axis(0, 0, 1), thickness=_THICKNESS), ()),
+        (FixedDisplacement(), Solid(), ()),
+        (FixedDisplacement(), Cartesian2D(normal=_axis(1, 1, 0), thickness=_THICKNESS), ()),
+        (FixedDisplacement(), Axisymmetric(), ("y",)),
+        (FixedTemperature(value=300 * U.K), Cartesian2D(thickness=_THICKNESS), ()),
+    ],
+)
+def test_the_dropped_fields_are_the_held_axes_without_a_solve_coordinate(condition: Condition, frame: Frame, expected: tuple[str, ...]) -> None:
+    assert condition.dropped_fields(frame) == expected
+
+
+def test_the_solve_components_follow_the_frame() -> None:
+    flexure = Cartesian2D(normal=_axis(0, 0, 1), thickness=10 * U.mm)
+
+    assert SurfaceForce(force=quantity(Vec3(100, 0, 0), "N")).solve_components(flexure) == ((1, pytest.approx(10000.0)), (2, 0.0))
+    assert FixedDisplacement(x=None).solve_components(flexure) == ((2, 0.0),)
+    assert Magnetization(direction=Direction(0, 0, 1)).solve_components(Axisymmetric()) == ((1, 0.0), (2, 1.0))
+    assert Magnetization(direction=None).solve_components(Solid()) == ()
+    assert FixedTemperature(value=300 * U.K).solve_components(flexure) == ()

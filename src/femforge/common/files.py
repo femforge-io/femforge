@@ -25,10 +25,12 @@ class BundleFile(StrEnum):
     GEOMETRY_STEP = "geometry.step"
     GEOMETRY_BOUNDARIES = "geometry.boundaries.json"
     GEOMETRY_CHECK = "geometry.check.json"
+    GEOMETRY_AUTHORED = "geometry.authored.vtp"
     GEOMETRY_MSH = "geometry.msh"
     ENTITIES = "entities.json"
     BOUNDARIES = "boundaries.yml"
     COMPONENTS = "components.yml"
+    CONDITIONS = "conditions.json"
     MESH_NAMES = "mesh.names"
     ENTITIES_SIF = "entities.sif"
     GROUPS = "groups.json"
@@ -81,7 +83,7 @@ class RunFile(StrEnum):
         member.patterns = patterns
         return member
 
-    GEOMETRY = ("geometry", BundleFile.GEOMETRY_STEP, BundleFile.GEOMETRY_BOUNDARIES, BundleFile.GEOMETRY_CHECK)
+    GEOMETRY = ("geometry", BundleFile.GEOMETRY_STEP, BundleFile.GEOMETRY_BOUNDARIES, BundleFile.GEOMETRY_CHECK, BundleFile.GEOMETRY_AUTHORED)
     GMSH_MESH = ("gmsh_mesh", BundleGlob.MSH)
     ELMER_MESH = ("elmer_mesh", BundleFile.MESH_HEADER, BundleFile.MESH_NODES, BundleFile.MESH_ELEMENTS, BundleFile.MESH_BOUNDARY)
     PARTITIONING = ("partitioning", BundleGlob.PARTITIONING, BundleFile.PARTITION_LOG)
@@ -89,7 +91,7 @@ class RunFile(StrEnum):
     FIELDS = ("fields", BundleGlob.PVTU, BundleGlob.VTU)
     SCALARS = ("scalars", BundleGlob.DAT, BundleGlob.DAT_NAMES, BundleGlob.DAT_RANK)
     LOGS = ("logs", BundleFile.ELMERGRID_LOG, BundleFile.SOLVER_LOG, BundleFile.CONVERGENCE, BundleFile.CONVERGENCE_TARGETS, BundleFile.RUN_LOG)
-    SIDECARS = ("sidecars", BundleFile.ENTITIES, BundleFile.BOUNDARIES, BundleFile.COMPONENTS, BundleFile.MESH_NAMES, BundleFile.ENTITIES_SIF, BundleFile.GROUPS)
+    SIDECARS = ("sidecars", BundleFile.ENTITIES, BundleFile.BOUNDARIES, BundleFile.COMPONENTS, BundleFile.MESH_NAMES, BundleFile.ENTITIES_SIF, BundleFile.GROUPS, BundleFile.CONDITIONS)
     BUNDLE = ("bundle", BundleFile.MANIFEST, BundleFile.RESULT)
     """The bundle's identity; protected — no retention policy can name it."""
     RUN_DIR = ("run_dir",)

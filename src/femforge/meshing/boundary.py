@@ -11,6 +11,8 @@ from femforge.meshing.geometry_utils import extract_entity_geometry
 
 
 if TYPE_CHECKING:
+    from femforge.common.vector import Vec3
+    from femforge.meshing.groups import Bounds
     from femforge.physical.domain import EntityTag
 
 
@@ -47,6 +49,10 @@ class BoundaryGroup:
         tags: list[EntityTag] | None = None,
         measure: float | None = None,
         named: bool = False,
+        centroid: Vec3 | None = None,
+        normal: Vec3 | None = None,
+        bbox: Bounds | None = None,
+        length: float | None = None,
     ):
         """Record one boundary group.
 
@@ -60,6 +66,10 @@ class BoundaryGroup:
             tags: The region overrides the group's own entities match; None for an adjacency group.
             measure: The group's measured size; None for an adjacency group.
             named: Whether the group is a tagged face's own group.
+            centroid: The centre of mass of the group; None until measured.
+            normal: The mean outward normal out of the first bordering body; None until measured or when ill defined.
+            bbox: The bounds of the mesh nodes of the group; None until measured.
+            length: The summed curve length of a group of a 2D model; None in 3D or until measured.
         """
         self.dim = dim
         """Topological dimension of the group -- one below the bodies it separates (2 = surface in a 3D model, 1 = curve in a 2D one), mirroring ``PhysicalGroup.dim``."""
@@ -87,6 +97,18 @@ class BoundaryGroup:
 
         self.named = named
         """True for a tagged face's own group."""
+
+        self.centroid = centroid
+        """`[m]`: The centre of mass of the group in the meshed frame; None until measured."""
+
+        self.normal = normal
+        """`[-]`: The mean outward normal out of ``bodies[0]``, into ``bodies[1]`` for an interface; None until measured or when the faces cancel."""
+
+        self.bbox = bbox
+        """The bounds of the mesh nodes of the group in the meshed frame; None until measured."""
+
+        self.length = length
+        """`L` `[m]`: The summed length of the boundary curves of a 2D model; None in 3D or until measured."""
 
     @property
     def is_external(self) -> bool:

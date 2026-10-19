@@ -57,6 +57,39 @@ The solver log supplies the rest. The residual comes from the last NS step of th
 
 For a conduction solve, `Run.electrode_currents` gives the terminal current per named electrode boundary and `Run.phase_currents` the current per phase.
 
+## Run setup
+
+**A run records what the solver received.** [Run.conditions][femforge.run.Run.conditions] reads `conditions.json`, a [ConditionsFile][femforge.run.ConditionsFile] that lists every body and boundary group with each emission it received: the condition and its authoring tag, the sif block it landed in, its keywords in the solve frame, such as `Force 1 = 500000.0` for a 100 N pull on a 20 mm by 10 mm face, and the authored fields the frame drops, such as `z` under a Cartesian 2D frame normal to Z. A keyword a later emission for the same group overrides in the same block is marked `shadowed`.
+
+```python
+from pathlib import Path
+
+import femforge as ff
+
+run = ff.Run(Path("runs") / "calm-avocet-3f9a1c07")
+conditions = run.conditions()
+
+if conditions is not None:
+    right = conditions.boundary("RIGHTFACE")
+    print(right)
+
+print(run.boundaries["RIGHTFACE"].normal, run.boundaries["RIGHTFACE"].length)
+```
+
+Each [Body][femforge.run.Body] and [Boundary][femforge.run.Boundary] carries its measured geometry in metres, in the solve frame:
+
+| Field | On | Holds |
+|---|---|---|
+| `centroid` | both | The centre of mass. |
+| `bbox` | both | The bounds of the group's mesh nodes. |
+| `measure` | both | A body's volume, or its section area times one metre of depth in 2D; a named face's area, or its length times one metre in 2D. |
+| `length` | boundary | The summed curve length of a 2D group. |
+| `normal` | boundary | The mean outward normal out of the first bordering body, into the second for an interface; None when the faces cancel, as on a closed shell. |
+
+Under a Cartesian 2D frame a face's area is `length` times the thickness, and under an axisymmetric frame the revolved area is 2π times the centroid radius times `length`.
+
+[Run.mesh_groups][femforge.run.Run.mesh_groups] reads the Elmer mesh files as pyvista grids, one cell per element with its group's `mesh_id` in the `MeshIds` cell array, so a run without field output still shows its groups. [Run.authored_geometry][femforge.run.Run.authored_geometry] reads the authored bodies a 2D frame sectioned, in mesh units. Each returns None when its file is absent, as after a store-backed cleanup.
+
 ## Field output
 
 [result_vtu][femforge.run.result_vtu] and `Run.vtu_path` return the run's ParaView output: the `.pvtu` master when the solve was partitioned, else the newest `.vtu`. Use them instead of a `*.vtu` glob, which also matches a partitioned run's per-rank pieces. Open the file in ParaView, or read it with pyvista. Its `GeometryIds` cell array holds each cell's mesh id, and `Run.bodies` maps those ids to body names.

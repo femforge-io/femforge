@@ -155,3 +155,18 @@ def test_an_edge_file_that_names_a_missing_edge_raises(tmp_path: Path) -> None:
 
     with pytest.raises(MeshError, match="'Name=Left' is missing from the imported STEP"):
         Mesher(config).generate()
+
+
+def test_a_named_curve_group_records_its_centroid_length_and_outward_normal(end_edges: Mesher) -> None:
+    by_name: dict[str, BoundaryGroup] = {group.name: group for group in end_edges.boundary_groups}
+    left: BoundaryGroup = by_name["LEFT"]
+    body = end_edges.physical_groups[0]
+
+    assert left.normal is not None and left.normal.isclose(Direction(-1, 0, 0), tolerance=1e-9)
+    assert by_name["RIGHT"].normal is not None and by_name["RIGHT"].normal.isclose(Direction(1, 0, 0), tolerance=1e-9)
+    assert left.centroid is not None and left.centroid.isclose(Vec3(0.0, 0.01, 0.0), tolerance=1e-9)
+    assert left.length == pytest.approx(0.02, rel=1e-9)
+    assert by_name["PRISM__EXT"].normal is None
+    assert by_name["PRISM__EXT"].length == pytest.approx(0.2, rel=1e-9)
+    assert body.measure == pytest.approx(2e-3, rel=1e-9)
+    assert body.bbox is not None and body.bbox.high.isclose(Vec3(0.1, 0.02, 0.0), tolerance=1e-9)

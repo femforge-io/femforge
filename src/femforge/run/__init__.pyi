@@ -7,6 +7,13 @@ from .artifacts import (
     rehydrate_bundle as rehydrate_bundle,
 )
 from .bundle import load_manifest as load_manifest, load_result as load_result, write_atomic as write_atomic, write_bundle as write_bundle, write_manifest as write_manifest
+from .conditions import (
+    ConditionRecord as ConditionRecord,
+    ConditionsFile as ConditionsFile,
+    GroupConditions as GroupConditions,
+    SifKeyword as SifKeyword,
+    SolveComponent as SolveComponent,
+)
 from .convergence import ConvergencePoint as ConvergencePoint, RichardsonEstimate as RichardsonEstimate, convergence_ladder as convergence_ladder, richardson as richardson
 from .driver import Driver as Driver, SolverFn as SolverFn
 from .electrical import (
@@ -39,6 +46,7 @@ from .magnetic import (
 )
 from .manifest import RunManifest as RunManifest, cache_key as cache_key, git_sha as git_sha, mesh_key as mesh_key, step_key as step_key
 from .mechanical import clapeyron_energy as clapeyron_energy, strain_energy as strain_energy, strain_energy_density as strain_energy_density
+from .mesh_groups import MESH_IDS_ARRAY as MESH_IDS_ARRAY, MeshGroups as MeshGroups
 from .parse import parse_result as parse_result, result_vtu as result_vtu
 from .reap import ReapedRun as ReapedRun, reap_runs as reap_runs
 from .result import LifecycleStatus as LifecycleStatus, ManifestStatus as ManifestStatus, MeshStats as MeshStats, Result as Result, RunStatus as RunStatus

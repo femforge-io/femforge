@@ -18,6 +18,7 @@ from femforge.meshing.boundary import BoundaryGroup, axis_entity_tags, partition
 from femforge.meshing.config import SupportsMeshing
 from femforge.meshing.gmsh_options import GmshOptions
 from femforge.meshing.groups import PhysicalGroup, format_boundary_groups, format_physical_groups, raise_on_duplicate_names
+from femforge.meshing.measure import measure_groups
 from femforge.meshing.mesh_entity import MeshEntity
 from femforge.meshing.mesh_sizing import apply_mesh_sizing, gmsh_set_global_size, gmsh_set_region_size, resolve_region_sizes
 from femforge.meshing.naming import compose_group_name, face_group_name, name_fragment
@@ -254,6 +255,7 @@ class Mesher:
             set_region=lambda tags, size: gmsh_set_region_size(tags, size, body_dim),
         )
         gmsh.model.mesh.generate(body_dim)
+        measure_groups(self.physical_groups, self.boundary_groups, body_dim)
 
         # Sanity-check the meshed extent: far larger than a metre-scale motor flags a likely mm->m slip.
         # Warn rather than fail -- a large air box can be legitimate.

@@ -7,13 +7,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Protocol, Sequence
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.files import BundleFile
 from femforge.common.tags import TagDict, TagKey
+from femforge.common.vector import Direction, DirectionField, Vec3, Vec3Field
 from femforge.elmer.mesh_names import parse_mesh_names
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.boundary import AXIS_SUFFIX, BOUNDARY_SEP, EXTERNAL_SUFFIX
+from femforge.meshing.groups import Bounds
 from femforge.meshing.naming import name_fragment
 from femforge.physical.domain import EntityTag
 from femforge.run.bundle import write_atomic
@@ -28,20 +30,60 @@ from femforge.run.manifest import RunManifest
 
 
 class BodyRecord(BaseModel):
-    """One body group in ``entities.json``: its Elmer name plus the material tag and merged selector tags it was grouped by."""
+    """One body group in ``entities.json``: its Elmer name, the material tag and merged selector tags it was grouped by, and its measured geometry."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True)
 
     name: str
+    """The body group name, shared by the mesh and the sif."""
+
     material: str | None = None
+    """The material tag the body was grouped by; None when unknown."""
+
     tags: TagDict = Field(default_factory=dict)
+    """The selector tags the body was grouped by, merged into one mapping."""
+
+    centroid: Vec3Field | None = None
+    """`[m]`: The centre of mass of the body in the meshed frame; None when unmeasured."""
+
+    bbox: Bounds | None = None
+    """The bounds of the mesh nodes of the body in the meshed frame; None when unmeasured."""
+
+    measure: float | None = None
+    """`V` `[m³]`: The volume of the body, or its section area times one metre of depth in 2D; None when unmeasured."""
 
 
 class BoundaryRecord(BaseModel):
-    """One boundary group in ``entities.json``: its Elmer name, the body names it borders, and the symmetry-axis and named-face flags."""
+    """One boundary group in ``entities.json``: its Elmer name, the body names it borders, the symmetry-axis and named-face flags, and its measured geometry."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True)
 
     name: str
+    """The boundary group name, shared by the mesh and the sif."""
+
     bodies: tuple[str, ...] = ()
+    """The names of the bodies the boundary borders."""
+
     on_axis: bool = False
+    """Whether the group lies on the symmetry axis of a 2D axisymmetric model."""
+
     named: bool = False
+    """Whether the group is a tagged face of its own."""
+
+    centroid: Vec3Field | None = None
+    """`[m]`: The centre of mass of the boundary in the meshed frame; None when unmeasured."""
+
+    normal: DirectionField | None = None
+    """`[-]`: The mean outward normal out of the first bordering body; None when unmeasured or ill defined."""
+
+    bbox: Bounds | None = None
+    """The bounds of the mesh nodes of the boundary in the meshed frame; None when unmeasured."""
+
+    length: float | None = None
+    """`L` `[m]`: The summed curve length of a boundary of a 2D model; None in 3D or when unmeasured."""
+
+    measure: float | None = None
+    """`A` `[m²]`: The area of a named face, or its length times one metre of depth in 2D; None for an adjacency group."""
 
 
 class EntitiesFile(BaseModel):
@@ -76,6 +118,12 @@ class _BodyGroupLike(Protocol):
     def material(self) -> _MaterialLike: ...
     @property
     def tags(self) -> Sequence[_TagLike]: ...
+    @property
+    def centroid(self) -> Vec3 | None: ...
+    @property
+    def bbox(self) -> Bounds | None: ...
+    @property
+    def measure(self) -> float | None: ...
 
 
 class _BoundaryGroupLike(Protocol):
@@ -91,6 +139,21 @@ class _BoundaryGroupLike(Protocol):
     def on_axis(self) -> bool: ...
     @property
     def named(self) -> bool: ...
+    @property
+    def centroid(self) -> Vec3 | None: ...
+    @property
+    def normal(self) -> Vec3 | None: ...
+    @property
+    def bbox(self) -> Bounds | None: ...
+    @property
+    def length(self) -> float | None: ...
+    @property
+    def measure(self) -> float | None: ...
+
+
+def _direction(vector: Vec3 | None) -> Direction | None:
+    """``vector`` as a Direction, None kept."""
+    return None if vector is None else Direction(vector.x, vector.y, vector.z)
 
 
 def write_entities(sim_dir: str | Path, physical_groups: Iterable[_BodyGroupLike], boundary_groups: Iterable[_BoundaryGroupLike]) -> Path:
@@ -110,6 +173,9 @@ def write_entities(sim_dir: str | Path, physical_groups: Iterable[_BodyGroupLike
             name=group.name,
             material=group.material.tag or None,
             tags=merged,
+            centroid=group.centroid,
+            bbox=group.bbox,
+            measure=group.measure,
         )
 
     boundaries: dict[int, BoundaryRecord] = {
@@ -118,6 +184,11 @@ def write_entities(sim_dir: str | Path, physical_groups: Iterable[_BodyGroupLike
             bodies=tuple(group.bodies),
             on_axis=group.on_axis,
             named=group.named,
+            centroid=group.centroid,
+            normal=_direction(group.normal),
+            bbox=group.bbox,
+            length=group.length,
+            measure=group.measure,
         )
         for group in boundary_groups
     }
@@ -159,6 +230,15 @@ class Body:
     tags: Mapping[str, str] = field(default_factory=dict[str, str])
     """The selector tags the body was grouped by, merged into one mapping."""
 
+    centroid: Vec3 | None = None
+    """`[m]`: The centre of mass of the body in the meshed frame; None when unmeasured."""
+
+    bbox: Bounds | None = None
+    """The bounds of the mesh nodes of the body in the meshed frame; None when unmeasured."""
+
+    measure: float | None = None
+    """`V` `[m³]`: The volume of the body, or its section area times one metre of depth in 2D; None when unmeasured."""
+
 
 @dataclass(frozen=True)
 class Boundary:
@@ -178,6 +258,21 @@ class Boundary:
 
     sif_index: int | None = None
     """The boundary's Boundary Condition block number in the sif; None when no condition produced a block."""
+
+    centroid: Vec3 | None = None
+    """`[m]`: The centre of mass of the boundary in the meshed frame; None when unmeasured."""
+
+    normal: Direction | None = None
+    """`[-]`: The mean outward normal out of ``bodies[0]``, into ``bodies[1]`` for an interface; None when unmeasured or when the faces cancel."""
+
+    bbox: Bounds | None = None
+    """The bounds of the mesh nodes of the boundary in the meshed frame; None when unmeasured."""
+
+    length: float | None = None
+    """`L` `[m]`: The summed curve length of a boundary of a 2D model; None in 3D or when unmeasured."""
+
+    measure: float | None = None
+    """`A` `[m²]`: The area of a named face, or its length times one metre of depth in 2D; None for an adjacency group."""
 
 
 def _name_of(body: Body | str) -> str:
@@ -380,6 +475,9 @@ def load_entities(sim_dir: str | Path, manifest: RunManifest | None = None) -> E
                 mesh_id=mesh_id,
                 material=record.material,
                 tags=dict(record.tags),
+                centroid=record.centroid,
+                bbox=record.bbox,
+                measure=record.measure,
             )
             for mesh_id, record in data.bodies.items()
         )
@@ -390,6 +488,11 @@ def load_entities(sim_dir: str | Path, manifest: RunManifest | None = None) -> E
                 bodies=tuple(record.bodies),
                 kind=_boundary_kind(record.name, record.on_axis, record.named),
                 sif_index=sif_by_group.get(record.name),
+                centroid=record.centroid,
+                normal=record.normal,
+                bbox=record.bbox,
+                length=record.length,
+                measure=record.measure,
             )
             for mesh_id, record in data.boundaries.items()
         )

@@ -26,6 +26,9 @@ ALIGNMENT_TOLERANCE = 1e-6
 CHECK_SUFFIX = ".check.json"
 """The suffix that turns a solve STEP's stem into its geometry check file's name, ``geometry.check.json`` beside ``geometry.step``."""
 
+AUTHORED_SUFFIX = ".authored.vtp"
+"""The suffix that turns a solve STEP's stem into the name of its authored-body tessellation, ``geometry.authored.vtp`` beside ``geometry.step``."""
+
 
 class Axis(ConfigArea):
     """A line through ``origin`` along ``direction``, in the authored model's frame."""
@@ -216,6 +219,11 @@ class GeometryCheck(BaseModel):
 def check_path(step: Path) -> Path:
     """The geometry check file that belongs to the solve STEP ``step``."""
     return step.with_name(f"{step.stem}{CHECK_SUFFIX}")
+
+
+def authored_path(step: Path) -> Path:
+    """The authored-body tessellation that belongs to the solve STEP ``step``."""
+    return step.with_name(f"{step.stem}{AUTHORED_SUFFIX}")
 
 
 class FrameGeometryError(ValueError):
