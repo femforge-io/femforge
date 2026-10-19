@@ -1926,6 +1926,9 @@ def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_repl
     app.board.queue.clear()
     app.board.publish(now=True)
     failed = app.state[viewer.key(SceneVar.NOTICE)]
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.STALLED})
+    app.board.publish(now=True)
+    stalled = app.state[viewer.key(SceneVar.NOTICE)]
     app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.DONE})
     app.board.publish(now=True)
     done = app.state[viewer.key(SceneVar.NOTICE)]
@@ -1939,6 +1942,7 @@ def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_repl
 
     assert waiting == "Waiting for Solve · Queued\nIts progress shows in the task strip below."
     assert failed == "No Runs Yet. 1 Task Failed; Open the Task Strip for the Reasons."
+    assert stalled == "No Runs Yet. 1 Task Stalled; Open the Task Strip for the Reasons."
     assert done == NO_RUNS_TASKS_NOTICE
     assert app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_TASKS_NOTICE, "a viewer showing a run keeps its notice"
     assert opened == ["r2"], "only the run the viewer shows is followed"

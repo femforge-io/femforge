@@ -13,13 +13,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum, StrEnum
 from pathlib import Path
-from typing import Annotated, Literal, Protocol, cast
+from typing import Annotated, Literal, Protocol, cast, overload
 
 import psutil
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field
 
 from femforge.common.log import RELAYED_ROUTE, TELEMETRY_ROUTE, LogKey, RelayedRecord, emit_relayed, get_console, log, parse_relayed
 from femforge.common.utils import title
+from femforge.elmer.solver_log import StallReason
 from femforge.run.stages import Stage
 from femforge_workbench.process_tree import CREATION_FLAGS, NEW_GROUP, NEW_SESSION, ProcessTree
 from femforge_workbench.reload import Reloader
@@ -44,10 +45,10 @@ WORKER_MODULE = "femforge_workbench.task_worker"
 JOB_FILE = "job.json"
 OUTCOME_FILE = "outcome.json"
 LOG_TAIL = 12
-"""How many of a task process's last plain output lines a failure without an outcome shows."""
+"""How many of a task process's last plain output lines a failure without an outcome shows, and of its last log messages a stall shows."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class Task:
     """One background task: a label unique in its plan and the zero-argument callable a child process runs."""
 
@@ -56,6 +57,33 @@ class Task:
 
     run: Callable[[], object]
     """What the child process calls; its return value is dropped."""
+
+    @overload
+    def __init__(self, label: str, run: Callable[[], object]) -> None: ...
+
+    @overload
+    def __init__(self, label: Callable[[], object], /) -> None: ...
+
+    @overload
+    def __init__(self, *, run: Callable[[], object]) -> None: ...
+
+    def __init__(self, label: str | Callable[[], object] | None = None, run: Callable[[], object] | None = None) -> None:
+        """A task of `run` under `label`, or of a named function alone under its name in Title Case; TypeError for a partial or a lambda without a label."""
+        if callable(label):
+            run, label = label, None
+
+        if run is None:
+            raise TypeError("a task needs a function to run")
+
+        if label is None:
+            name = getattr(run, "__name__", None)
+            if not isinstance(name, str) or not name.isidentifier():
+                raise TypeError(f"a task of {run!r} needs a label: Task(label, run)")
+
+            label = title(name)
+
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "run", run)
 
 
 type TaskFactory = Callable[[], list[Task]]
@@ -101,6 +129,8 @@ class TaskPhase(StrEnum):
     QUEUED = "queued"
     STARTING = "starting"
     GEOMETRY = "geometry"
+    WAITING = "waiting"
+    """Waits for another process that holds the claim on the same run."""
     MESHING = "meshing"
     SOLVING = "solving"
     FINISHING = "finishing"
@@ -108,6 +138,8 @@ class TaskPhase(StrEnum):
     REUSED = "reused"
     """Done, every evaluation answered by a finished bundle."""
     FAILED = "failed"
+    STALLED = "stalled"
+    """Ended on a solve the watchdog stopped."""
     STOPPED = "stopped"
 
     @classmethod
@@ -146,6 +178,8 @@ class TaskPhase(StrEnum):
                 return "↺"
             case TaskPhase.FAILED:
                 return "⊘"
+            case TaskPhase.STALLED:
+                return "⧖"
             case TaskPhase.STOPPED:
                 return "–"
             case _:
@@ -154,15 +188,15 @@ class TaskPhase(StrEnum):
     @property
     def active(self) -> bool:
         """Whether a child process runs the task."""
-        return self in (TaskPhase.STARTING, TaskPhase.GEOMETRY, TaskPhase.MESHING, TaskPhase.SOLVING, TaskPhase.FINISHING)
+        return self in (TaskPhase.STARTING, TaskPhase.GEOMETRY, TaskPhase.WAITING, TaskPhase.MESHING, TaskPhase.SOLVING, TaskPhase.FINISHING)
 
     @property
     def ended(self) -> bool:
         """Whether the task's last run is over."""
-        return self in (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STOPPED)
+        return self in (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STALLED, TaskPhase.STOPPED)
 
 
-FOCUS_ORDER = (TaskPhase.SOLVING, TaskPhase.MESHING, TaskPhase.GEOMETRY, TaskPhase.FINISHING, TaskPhase.STARTING, TaskPhase.QUEUED)
+FOCUS_ORDER = (TaskPhase.SOLVING, TaskPhase.MESHING, TaskPhase.GEOMETRY, TaskPhase.WAITING, TaskPhase.FINISHING, TaskPhase.STARTING, TaskPhase.QUEUED)
 """The phases the collapsed strip leads with, most telling first."""
 
 
@@ -187,8 +221,9 @@ def clock(seconds: float | None) -> str:
     if seconds is None:
         return "—"
 
-    if seconds < 10:
-        return f"{seconds:.1f}s"
+    tenths = round(seconds, 1)
+    if tenths < 10:
+        return f"{tenths:.1f}s"
 
     whole = round(seconds)
     if whole < 60:
@@ -200,6 +235,42 @@ def clock(seconds: float | None) -> str:
         return f"{hours}h {minutes:02d}m"
 
     return f"{minutes}m {secs:02d}s"
+
+
+class TaskField(StrEnum):
+    """The keys of a task row in the client state; each names a field or computed field of `TaskRow`."""
+
+    LABEL = "label"
+    TITLE = "title"
+    PHASE = "phase"
+    RUN_ID = "run_id"
+    RUNS = "runs"
+    SOLVES = "solves"
+    REUSES = "reuses"
+    SOLVER = "solver"
+    PROGRESS = "progress"
+    ITERATION = "iteration"
+    MAX_ITERATIONS = "max_iterations"
+    ELAPSED = "elapsed"
+    ERROR = "error"
+    TRACEBACK = "traceback"
+    STALL = "stall"
+    POSITION = "position"
+    AGAIN = "again"
+    REMOVED = "removed"
+    STOPPING = "stopping"
+    STATE = "state"
+    NOTE = "note"
+    GLYPH = "glyph"
+    PERCENT = "percent"
+    ITERATIONS = "iterations"
+    CLOCK = "clock"
+    ACTIVE = "active"
+    BUSY = "busy"
+    FAILED = "failed"
+    STALLED = "stalled"
+    CANCELLABLE = "cancellable"
+    RETRYABLE = "retryable"
 
 
 class TaskRow(BaseModel):
@@ -247,7 +318,10 @@ class TaskRow(BaseModel):
     """The failure's type and the first line of its message."""
 
     traceback: str | None = None
-    """The failure's traceback, or the process's last output lines when it left no outcome."""
+    """The failure's traceback, the process's last output lines when it left no outcome, or a stalled task's last log lines."""
+
+    stall: str | None = None
+    """Why the watchdog stopped a solve of the task's current or last run; None when none stalled."""
 
     position: int | None = None
     """The task's place in the queue, from 1; None when it is not queued."""
@@ -258,19 +332,29 @@ class TaskRow(BaseModel):
     removed: bool = False
     """Whether a save dropped the task while it was running; the row leaves once the run ends."""
 
+    stopping: bool = False
+    """Whether a confirmed Cancel is stopping the running task."""
+
     @computed_field
     @property
     def state(self) -> str:
         """The phase word with its qualifier, as the strip reads it."""
+        if self.stopping and self.phase.active:
+            return "Cancelling"
+
         match self.phase:
             case TaskPhase.QUEUED if self.position is not None and self.position > 1:
                 return f"Queued · {ordinal(self.position)} In Line"
+            case TaskPhase.WAITING:
+                return "Waiting · Another Process Is Solving It"
             case TaskPhase.SOLVING if self.solver:
                 return f"Solving · {title(self.solver)}"
             case TaskPhase.DONE if self.runs > 1:
                 return f"Done · {self.runs} Runs"
             case TaskPhase.FAILED if self.error:
                 return f"Failed · {self.error}"
+            case TaskPhase.STALLED if self.stall:
+                return f"Stalled · {self.stall}"
             case _:
                 return self.phase.word
 
@@ -330,98 +414,78 @@ class TaskRow(BaseModel):
     @computed_field
     @property
     def failed(self) -> bool:
-        """Whether the task's last run failed."""
-        return self.phase is TaskPhase.FAILED
+        """Whether the task's last run failed or stalled, which the strip marks in the destructive colour."""
+        return self.phase in (TaskPhase.FAILED, TaskPhase.STALLED)
+
+    @computed_field
+    @property
+    def stalled(self) -> bool:
+        """Whether the task's last run ended on a stalled solve, whose details are its log."""
+        return self.phase is TaskPhase.STALLED
 
     @computed_field
     @property
     def cancellable(self) -> bool:
-        """Whether Cancel applies: the task runs or waits in the queue."""
-        return self.phase.active or self.phase is TaskPhase.QUEUED
+        """Whether Cancel applies: the task waits in the queue, or runs and no Cancel is stopping it yet."""
+        return (self.phase.active and not self.stopping) or self.phase is TaskPhase.QUEUED
 
     @computed_field
     @property
     def retryable(self) -> bool:
-        """Whether Retry applies: the task's last run failed or was cancelled."""
-        return self.phase in (TaskPhase.FAILED, TaskPhase.STOPPED)
+        """Whether Retry applies: the task's last run failed, stalled or was cancelled."""
+        return self.phase in (TaskPhase.FAILED, TaskPhase.STALLED, TaskPhase.STOPPED)
 
     def queued(self) -> "TaskRow":
         """The row queued afresh: no run, no clock and no failure until the task starts again."""
         update: dict[str, object] = {
-            "phase": TaskPhase.QUEUED,
-            "run_id": None,
-            "runs": 0,
-            "solves": 0,
-            "reuses": 0,
-            "solver": None,
-            "progress": None,
-            "iteration": None,
-            "max_iterations": None,
-            "elapsed": None,
-            "error": None,
-            "traceback": None,
-            "again": False,
-            "removed": False,
+            TaskField.PHASE: TaskPhase.QUEUED,
+            TaskField.RUN_ID: None,
+            TaskField.RUNS: 0,
+            TaskField.SOLVES: 0,
+            TaskField.REUSES: 0,
+            TaskField.SOLVER: None,
+            TaskField.PROGRESS: None,
+            TaskField.ITERATION: None,
+            TaskField.MAX_ITERATIONS: None,
+            TaskField.ELAPSED: None,
+            TaskField.ERROR: None,
+            TaskField.TRACEBACK: None,
+            TaskField.STALL: None,
+            TaskField.AGAIN: False,
+            TaskField.REMOVED: False,
+            TaskField.STOPPING: False,
         }
 
         return self.model_copy(update=update)
 
 
-class TaskField(StrEnum):
-    """The keys of a task row in the client state; each names a field or computed field of `TaskRow`."""
-
-    LABEL = "label"
-    TITLE = "title"
-    PHASE = "phase"
-    RUN_ID = "run_id"
-    RUNS = "runs"
-    SOLVES = "solves"
-    REUSES = "reuses"
-    SOLVER = "solver"
-    PROGRESS = "progress"
-    ITERATION = "iteration"
-    MAX_ITERATIONS = "max_iterations"
-    ELAPSED = "elapsed"
-    ERROR = "error"
-    TRACEBACK = "traceback"
-    POSITION = "position"
-    AGAIN = "again"
-    REMOVED = "removed"
-    STATE = "state"
-    NOTE = "note"
-    GLYPH = "glyph"
-    PERCENT = "percent"
-    ITERATIONS = "iterations"
-    CLOCK = "clock"
-    ACTIVE = "active"
-    BUSY = "busy"
-    FAILED = "failed"
-    CANCELLABLE = "cancellable"
-    RETRYABLE = "retryable"
-
-
 def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
-    """The row after one record of its task's child: a new run id starts a run, a stage moves the phase, a progress record moves the bar."""
+    """The row after one record of its task's child: a new run id starts a run, a stage or a claim wait moves the phase, a progress record moves the bar, a stall record says why."""
     extra = record["extra"]
     update: dict[str, object] = {}
 
     run_id = extra.get(LogKey.RUN_ID)
     if isinstance(run_id, str) and run_id != row.run_id:
         update |= {
-            "run_id": run_id,
-            "runs": row.runs + 1,
-            "phase": TaskPhase.STARTING,
-            "progress": None,
-            "solver": None,
-            "iteration": None,
-            "max_iterations": None,
+            TaskField.RUN_ID: run_id,
+            TaskField.RUNS: row.runs + 1,
+            TaskField.PHASE: TaskPhase.STARTING,
+            TaskField.PROGRESS: None,
+            TaskField.SOLVER: None,
+            TaskField.ITERATION: None,
+            TaskField.MAX_ITERATIONS: None,
         }
 
+    if LogKey.HOLDER in extra:
+        update[TaskField.PHASE] = TaskPhase.WAITING
+
     if isinstance(extra.get(LogKey.ORIGIN), str):
-        update["reuses"] = row.reuses + 1
+        update[TaskField.REUSES] = row.reuses + 1
 
     if isinstance(extra.get(LogKey.RUN_DIR), str):
-        update["solves"] = row.solves + 1
+        update[TaskField.SOLVES] = row.solves + 1
+        if row.phase is TaskPhase.WAITING:
+            update[TaskField.PHASE] = TaskPhase.STARTING
 
     stage = extra.get(LogKey.STAGE)
     if isinstance(stage, str) and stage in tuple(Stage):
@@ -429,26 +493,39 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
         moved = phase is not row.phase
         kept = not moved and phase is TaskPhase.SOLVING
         update |= {
-            "phase": phase,
-            "progress": row.progress if kept else None,
-            "iteration": row.iteration if kept else None,
-            "max_iterations": row.max_iterations if kept else None,
+            TaskField.PHASE: phase,
+            TaskField.PROGRESS: row.progress if kept else None,
+            TaskField.ITERATION: row.iteration if kept else None,
+            TaskField.MAX_ITERATIONS: row.max_iterations if kept else None,
         }
 
-    phase = update.get("phase", row.phase)
+    phase = update.get(TaskField.PHASE, row.phase)
     progress = extra.get(LogKey.PROGRESS)
     if phase is TaskPhase.SOLVING and isinstance(progress, int | float):
-        known = update.get("progress", row.progress)
-        update["progress"] = max(float(progress), known) if isinstance(known, float) else float(progress)
+        known = update.get(TaskField.PROGRESS, row.progress)
+        update[TaskField.PROGRESS] = max(float(progress), known) if isinstance(known, float) else float(progress)
 
     solver = extra.get(LogKey.SOLVER)
     if phase is TaskPhase.SOLVING and isinstance(solver, str) and solver:
-        update["solver"] = solver
+        update[TaskField.SOLVER] = solver
 
     iteration = extra.get(LogKey.ITERATION)
     if phase is TaskPhase.SOLVING and isinstance(iteration, int):
         cap = extra.get(LogKey.MAX_ITERATIONS)
-        update |= {"iteration": iteration, "max_iterations": cap if isinstance(cap, int) else None}
+        update |= {TaskField.ITERATION: iteration, TaskField.MAX_ITERATIONS: cap if isinstance(cap, int) else None}
+
+    stall = extra.get(LogKey.STALL)
+    if isinstance(stall, str) and stall in tuple(StallReason):
+        match StallReason(stall):
+            case StallReason.REPEATED:
+                what = "Residual Flat"
+            case StallReason.NO_PROGRESS:
+                what = "Residual Not Improving"
+
+        residual = extra.get(LogKey.RESIDUAL)
+        at = f" at {residual:.2e}" if isinstance(residual, float) else ""
+        by = f" by It {iteration}" if isinstance(iteration, int) else ""
+        update[TaskField.STALL] = f"{what}{at}{by}"
 
     return row.model_copy(update=update) if update else row
 
@@ -668,6 +745,9 @@ class TaskView(BaseModel):
     failed: int
     """How many tasks failed their last run."""
 
+    stalled: int
+    """How many tasks ended their last run on a stalled solve."""
+
     error: str | None
     """Why the script's last save listed no tasks; the rows then stay as they were."""
 
@@ -703,6 +783,8 @@ class Running:
     stopping: bool = False
     run_dir: Path | None = None
     """The bundle directory of the run being solved, whose claim a forced stop reaps."""
+    messages: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL))
+    """The child's last log messages, which a stalled task shows as its log."""
 
 
 class TaskBoard:
@@ -792,12 +874,12 @@ class TaskBoard:
         for task in self.plan:
             row = self.by_label.get(task.label) or TaskRow(label=task.label, title=shown_label(task.label))
             if task.label == running:
-                rows[task.label] = row.model_copy(update={"again": True, "removed": False})
+                rows[task.label] = row.model_copy(update={TaskField.AGAIN: True, TaskField.REMOVED: False})
             else:
                 rows[task.label] = row.queued()
 
         if running is not None and running not in rows:
-            rows[running] = self.by_label[running].model_copy(update={"again": False, "removed": True})
+            rows[running] = self.by_label[running].model_copy(update={TaskField.AGAIN: False, TaskField.REMOVED: True})
 
         self.by_label = rows
         self.queue = [task.label for task in self.plan]
@@ -822,6 +904,9 @@ class TaskBoard:
         running = self.running
         if running is not None and running.label == label:
             if not running.stopping:
+                running.stopping = True
+                self.by_label[label] = self.by_label[label].model_copy(update={TaskField.STOPPING: True})
+                self.publish(now=True)
                 self.background(self.stop(running))
 
             return
@@ -830,20 +915,20 @@ class TaskBoard:
             return
 
         self.queue.remove(label)
-        self.by_label[label] = self.by_label[label].model_copy(update={"phase": TaskPhase.STOPPED})
+        self.by_label[label] = self.by_label[label].model_copy(update={TaskField.PHASE: TaskPhase.STOPPED})
         self.publish(now=True)
 
     def rows(self) -> list[TaskRow]:
         """The rows in order, the running one's elapsed time and each queued one's place brought up to date."""
         running = self.running
         if running is not None and running.label in self.by_label:
-            self.by_label[running.label] = self.by_label[running.label].model_copy(update={"elapsed": time.monotonic() - running.started})
+            self.by_label[running.label] = self.by_label[running.label].model_copy(update={TaskField.ELAPSED: time.monotonic() - running.started})
 
         rows: list[TaskRow] = []
         for label, row in self.by_label.items():
             queued = label in self.queue and not row.phase.active
             position = self.queue.index(label) + 1 if queued else None
-            rows.append(row.model_copy(update={"position": position}) if row.position != position else row)
+            rows.append(row.model_copy(update={TaskField.POSITION: position}) if row.position != position else row)
 
         return rows
 
@@ -851,15 +936,16 @@ class TaskBoard:
         """The rows, the summary and the focus row as the strip shows them."""
         rows = self.rows()
         shown = [row for row in rows if not row.removed]
-        done = sum(row.phase in (TaskPhase.DONE, TaskPhase.REUSED) for row in shown)
-        failed = sum(row.phase is TaskPhase.FAILED for row in shown)
+        counts = {phase: sum(row.phase is phase for row in shown) for phase in (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STALLED)}
+        done = counts[TaskPhase.DONE] + counts[TaskPhase.REUSED]
         busy = any(row.phase.active or row.phase is TaskPhase.QUEUED for row in rows)
 
         tasks = "Task" if len(shown) == 1 else "Tasks"
-        summary = f"{done} of {len(shown)} Done" if busy else f"{len(shown)} {tasks} · {done} Done" + (f" · {failed} Failed" if failed else "")
+        ended = [f"{count} {phase.word}" for phase, count in counts.items() if count] or [f"0 {TaskPhase.DONE.word}"]
+        summary = f"{done} of {len(shown)} Done" if busy else " · ".join([f"{len(shown)} {tasks}", *ended])
 
         ranked = [row for phase in FOCUS_ORDER for row in rows if row.phase is phase]
-        failures = [row for row in rows if row.phase is TaskPhase.FAILED]
+        failures = [row for row in rows if row.failed]
         focus = ranked[0] if ranked else failures[-1] if failures else None
 
         return TaskView(
@@ -867,7 +953,8 @@ class TaskBoard:
             summary=summary,
             count=f"{done}/{len(shown)}",
             focus=focus,
-            failed=failed,
+            failed=counts[TaskPhase.FAILED],
+            stalled=counts[TaskPhase.STALLED],
             error=self.error,
             reloaded=self.reloaded,
         )
@@ -915,7 +1002,7 @@ class TaskBoard:
 
     async def run_one(self, label: str) -> None:
         """Runs one task in its own child process, relaying its records and moving its row, then settles the row by its outcome."""
-        self.by_label[label] = self.by_label[label].queued().model_copy(update={"phase": TaskPhase.STARTING, "elapsed": 0.0})
+        self.by_label[label] = self.by_label[label].queued().model_copy(update={TaskField.PHASE: TaskPhase.STARTING, TaskField.ELAPSED: 0.0})
         folder = Path(tempfile.mkdtemp(prefix="femforge-task-"))
         started = time.monotonic()
         try:
@@ -956,13 +1043,14 @@ class TaskBoard:
         if not text.strip():
             return
 
-        bound: dict[str, object] = {str(LogKey.TASK): running.label, TELEMETRY_ROUTE: RELAYED_ROUTE}
+        bound: dict[str, object] = {TELEMETRY_ROUTE: RELAYED_ROUTE}
         record = parse_relayed(text)
         if record is None:
             tail.append(text)
             log.bind(**bound).debug(text)
             return
 
+        running.messages.append(record["message"])
         run_dir = record["extra"].get(LogKey.RUN_DIR)
         if isinstance(run_dir, str):
             running.run_dir = Path(run_dir)
@@ -974,7 +1062,7 @@ class TaskBoard:
         emit_relayed(record, **bound)
 
     def settle(self, running: Running, code: int, outcome: TaskDone | TaskFailed | None, tail: Sequence[str]) -> None:
-        """Ends the row by how the child exited: done or reused when the task returned, else cancelled when stopped, else failed with its error or its exit code.
+        """Ends the row by how the child exited: done or reused when it returned with no stall, else cancelled when stopped, else stalled with its log, else failed.
 
         Args:
             running: The task whose child exited.
@@ -987,21 +1075,26 @@ class TaskBoard:
         if row is None:
             return
 
-        if isinstance(outcome, TaskDone):
+        returned = isinstance(outcome, TaskDone)
+        if isinstance(outcome, TaskFailed):
+            get_console().print(outcome.traceback, markup=False, highlight=False)
+
+        if returned and row.stall is None:
             reused = row.reuses > 0 and row.solves == 0
             self.end(label, phase=TaskPhase.REUSED if reused else TaskPhase.DONE)
-        elif running.stopping:
+        elif running.stopping and not returned:
             self.end(label, phase=TaskPhase.STOPPED)
+        elif row.stall is not None:
+            self.end(label, phase=TaskPhase.STALLED, traceback="\n".join(running.messages) or None)
         elif isinstance(outcome, TaskFailed):
             first = outcome.message.strip().splitlines()[0] if outcome.message.strip() else ""
             error = f"{outcome.error}: {first}" if first else outcome.error
-            get_console().print(outcome.traceback, markup=False, highlight=False)
             self.end(label, phase=TaskPhase.FAILED, error=error, traceback=outcome.traceback)
         else:
             self.end(label, phase=TaskPhase.FAILED, error=f"Task Process Exited ({code})", traceback="\n".join(tail) or None)
 
         if running.label in self.by_label:
-            self.by_label[label] = self.by_label[label].model_copy(update={"elapsed": time.monotonic() - running.started})
+            self.by_label[label] = self.by_label[label].model_copy(update={TaskField.ELAPSED: time.monotonic() - running.started})
 
     def end(self, label: str, *, phase: TaskPhase, error: str | None = None, traceback: str | None = None) -> None:
         """Sets a row's final phase, follows its newer run into the viewer, and drops a row a save removed.
@@ -1016,7 +1109,15 @@ class TaskBoard:
         if row is None:
             return
 
-        ended = row.model_copy(update={"phase": phase, "error": error, "traceback": traceback, "progress": None, "again": False})
+        update: dict[str, object] = {
+            TaskField.PHASE: phase,
+            TaskField.ERROR: error,
+            TaskField.TRACEBACK: traceback,
+            TaskField.PROGRESS: None,
+            TaskField.AGAIN: False,
+            TaskField.STOPPING: False,
+        }
+        ended = row.model_copy(update=update)
         log.bind(**{str(LogKey.TASK): label}, phase=str(phase), error=error).info("Task ended.")
 
         previous = self.last_runs.get(label)
@@ -1035,8 +1136,6 @@ class TaskBoard:
 
     async def stop(self, running: Running) -> None:
         """Breaks the running task until it exits, kills its tree when it is still there after the grace, then reaps the claim it left."""
-        running.stopping = True
-        self.publish(now=True)
         log.bind(**{str(LogKey.TASK): running.label}).info("Stopping the task.")
         loop = asyncio.get_running_loop()
         deadline = loop.time() + STOP_GRACE_S
@@ -1081,7 +1180,7 @@ class TaskBoard:
         shutil.rmtree(running.folder, ignore_errors=True)
         if running.label in self.by_label:
             phase = TaskPhase.DONE if isinstance(outcome, TaskDone) else TaskPhase.STOPPED
-            self.by_label[running.label] = self.by_label[running.label].model_copy(update={"phase": phase})
+            self.by_label[running.label] = self.by_label[running.label].model_copy(update={TaskField.PHASE: phase})
 
         log.bind(**{str(LogKey.TASK): running.label}, graceful=exited).info("Task stopped with the workbench.")
 

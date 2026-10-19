@@ -190,6 +190,7 @@ class StateVar(StrEnum):
     TASK_COUNT = "wb_task_count"
     TASK_FOCUS = "wb_task_focus"
     TASK_FAILED = "wb_task_failed"
+    TASK_STALLED = "wb_task_stalled"
     TASK_ERROR = "wb_task_error"
     TASK_RELOADED = "wb_task_reloaded"
     TASK_SHEET = "wb_task_sheet"
@@ -365,6 +366,7 @@ class Workbench(TrameApp):
                 StateVar.TASK_COUNT: "",
                 StateVar.TASK_FOCUS: None,
                 StateVar.TASK_FAILED: 0,
+                StateVar.TASK_STALLED: 0,
                 StateVar.TASK_ERROR: None,
                 StateVar.TASK_RELOADED: "",
                 StateVar.TASK_SHEET: bool((self.persist.load(self.scope, StateKey.TASK_SHEET) or {}).get(TaskSheetKey.OPEN)),
@@ -503,6 +505,9 @@ class Workbench(TrameApp):
                 with react.If(StateVar.TASK_FAILED):
                     html.Span(["⊘ ", react.Bind(StateVar.TASK_FAILED)], classes=str(Cls.TASK_COUNT), title="Tasks That Failed Their Last Run")
 
+                with react.If(StateVar.TASK_STALLED):
+                    html.Span(["⧖ ", react.Bind(StateVar.TASK_STALLED)], classes=str(Cls.TASK_COUNT), title="Tasks Whose Solve Stalled")
+
     def build_task_sheet(self) -> None:
         """The sheet over the dock's bottom edge: a row per task with its state, elapsed time and run, and its actions."""
 
@@ -562,7 +567,7 @@ class Workbench(TrameApp):
 
                             with react.If(row(TaskField.TRACEBACK)):
                                 Button(
-                                    [react.Bind(f"{StateVar.TASK_DETAILS} === {row(TaskField.LABEL)} ? 'Details ▴' : 'Details ▾'")],
+                                    [react.Bind(f"({row(TaskField.STALLED)} ? 'Log' : 'Details') + ({StateVar.TASK_DETAILS} === {row(TaskField.LABEL)} ? ' ▴' : ' ▾')")],
                                     size="xs",
                                     variant="ghost",
                                     on_click=react.Callback(self.toggle_task_details, args=f"[{row(TaskField.LABEL)}]"),
@@ -589,7 +594,12 @@ class Workbench(TrameApp):
                     with react.If(f"{StateVar.TASK_DETAILS} === {row(TaskField.LABEL)} && {row(TaskField.TRACEBACK)}"), html.Tr(), html.Td(colspan=6):
                         html.Pre([react.Bind(row(TaskField.TRACEBACK))], classes=str(Cls.TASK_DETAIL))
                         with html.Div(classes=str(Cls.TASK_ACTIONS)):
-                            Button("Copy Traceback", size="xs", variant="ghost", on_click=react.Callback(f"navigator.clipboard.writeText({row(TaskField.TRACEBACK)})"))
+                            Button(
+                                [react.Bind(f"{row(TaskField.STALLED)} ? 'Copy Log' : 'Copy Traceback'")],
+                                size="xs",
+                                variant="ghost",
+                                on_click=react.Callback(f"navigator.clipboard.writeText({row(TaskField.TRACEBACK)})"),
+                            )
 
     def show_tasks(self, view: TaskView) -> None:
         """Shows the task board's rows, summary and focus row in the strip and its sheet."""
@@ -601,6 +611,7 @@ class Workbench(TrameApp):
             self.state[StateVar.TASK_COUNT] = view.count
             self.state[StateVar.TASK_FOCUS] = focus
             self.state[StateVar.TASK_FAILED] = view.failed
+            self.state[StateVar.TASK_STALLED] = view.stalled
             self.state[StateVar.TASK_ERROR] = view.error
             self.state[StateVar.TASK_RELOADED] = view.reloaded
 
@@ -637,7 +648,7 @@ class Workbench(TrameApp):
 
     @guard
     def toggle_task_details(self, label: str) -> None:
-        """Shows one task's traceback under its row, or hides it."""
+        """Shows one task's traceback or log under its row, or hides it."""
         with self.state:
             self.state[StateVar.TASK_DETAILS] = "" if self.state[StateVar.TASK_DETAILS] == label else label
 

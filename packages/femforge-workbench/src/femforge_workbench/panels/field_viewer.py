@@ -569,10 +569,12 @@ def tasks_notice(view: TaskView) -> str:
     if focus is not None and (focus.phase.active or focus.phase is TaskPhase.QUEUED):
         return f"{WAITING_FOR} {focus.title} · {focus.state}\n{TASK_STRIP_HINT}"
 
-    if view.failed:
-        tasks = "task" if view.failed == 1 else "tasks"
+    ended = view.failed + view.stalled
+    if ended:
+        tasks = "task" if ended == 1 else "tasks"
+        how = "failed or stalled" if view.failed and view.stalled else "failed" if view.failed else "stalled"
 
-        return title(f"no runs yet. {view.failed} {tasks} failed; open the task strip for the reasons.")
+        return title(f"no runs yet. {ended} {tasks} {how}; open the task strip for the reasons.")
 
     return NO_RUNS_TASKS_NOTICE
 

@@ -181,6 +181,17 @@ def test_a_plan_refuses_duplicate_empty_or_foreign_entries() -> None:
         _ = plan_of("Export")
 
 
+def test_a_named_function_labels_its_own_task_and_a_partial_or_lambda_needs_one() -> None:
+    assert Task(solve_all) == Task("Solve All", solve_all) == Task(run=solve_all)
+    assert Task(label="Export", run=solve_all).label == "Export"
+    with pytest.raises(TypeError, match="needs a label"):
+        _ = Task(partial(print, "x"))
+    with pytest.raises(TypeError, match="needs a label"):
+        _ = Task(lambda: None)
+    with pytest.raises(TypeError, match="function to run"):
+        _ = cast("Callable[..., Task]", Task)(label="Export")
+
+
 def test_task_field_names_every_row_field() -> None:
     assert set(TaskField) == set(TaskRow.model_fields) | set(TaskRow.model_computed_fields)
 
@@ -207,6 +218,20 @@ def test_records_move_the_row() -> None:
     assert observe(meshing, _record(run_id="r1", progress=0.5)).progress is None, "a percent outside the solve is no solve progress"
 
 
+def test_a_claim_wait_and_a_stall_move_the_row() -> None:
+    row = TaskRow(label="a", title="A")
+
+    waiting = observe(row, _record(run_id="r1", holder=4242))
+    solving = observe(waiting, _record(run_id="r1", stage="run_solver"))
+    flat = observe(solving, _record(stall="repeated", solver="linear elasticity", iteration=1339, residual=3.14e-8))
+    slow = observe(solving, _record(stall="no_progress"))
+
+    assert (waiting.phase, waiting.state, waiting.glyph, waiting.active) == (TaskPhase.WAITING, "Waiting · Another Process Is Solving It", "◐", True)
+    assert observe(waiting, _record(run_id="r1", run_dir="runs/r1")).phase is TaskPhase.STARTING, "a claim taken after the wait starts the run"
+    assert flat.stall == "Residual Flat at 3.14e-08 by It 1339" and slow.stall == "Residual Not Improving"
+    assert observe(solving, _record(stall="not a reason")) is solving
+
+
 def test_a_reuse_and_a_solve_are_counted_by_their_records() -> None:
     row = TaskRow(label="a", title="A")
 
@@ -227,7 +252,11 @@ def test_the_strip_copy_names_the_queue_place_the_runs_and_the_failure() -> None
     assert not TaskRow(label="a", title="A", phase=TaskPhase.REUSED).retryable, "Done and Reused rows offer Open only"
     assert TaskRow(label="a", title="A", phase=TaskPhase.GEOMETRY).state == "Preparing Geometry"
     assert [ordinal(number) for number in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23)] == ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd"]
-    assert [clock(seconds) for seconds in (None, 0.3, 12.0, 72.0, 2463.0, 3720.0)] == ["—", "0.3s", "12s", "1m 12s", "41m 03s", "1h 02m"]
+    assert [clock(seconds) for seconds in (None, 0.3, 9.94, 9.96, 12.0, 72.0, 2463.0, 3720.0)] == ["—", "0.3s", "9.9s", "10s", "12s", "1m 12s", "41m 03s", "1h 02m"]
+    stalled = TaskRow(label="a", title="A", phase=TaskPhase.STALLED, stall="Residual Flat at 3.14e-08 by It 1339")
+    assert (stalled.state, stalled.glyph, stalled.failed, stalled.stalled, stalled.retryable) == ("Stalled · Residual Flat at 3.14e-08 by It 1339", "⧖", True, True, True)
+    cancelling = TaskRow(label="a", title="A", phase=TaskPhase.SOLVING, solver="linear elasticity", stopping=True)
+    assert (cancelling.state, cancelling.cancellable, cancelling.active) == ("Cancelling", False, True), "a confirmed Cancel shows at once and cannot be pressed twice"
 
 
 def test_the_queue_runs_in_plan_order_and_a_save_reruns_after_the_running_task(tmp_path: Path) -> None:
@@ -357,6 +386,47 @@ def test_a_newer_run_of_a_task_is_followed_and_a_reused_one_reads_reused(tmp_pat
 
     assert host.follows == [("r1", "r2")], "a reuse of the run shown has nothing newer to follow"
     assert board.by_label["a"].phase is TaskPhase.REUSED and board.by_label["a"].state == "Reused"
+    assert host.views[-1].summary == "1 Task · 1 Reused" and host.views[-1].count == "1/1"
+
+
+def test_a_stalled_run_ends_its_task_stalled_with_its_log_and_the_summary_counts_each_ending(tmp_path: Path) -> None:
+    host = Host()
+    boom = TaskFailed(error="RuntimeError", message="the solve stalled", traceback="Traceback ...")
+    stall = _line(run_id="r1", stall="repeated", iteration=1339, residual=3.14e-8)
+    reuse = _line(run_id="r2", origin="local")
+
+    def scripts(label: str, nth: int) -> Script:
+        match label:
+            case "stalls":
+                return Script(lines=[_line(run_id="r1", stage="run_solver"), stall], outcome=boom)
+            case "returns":
+                return Script(lines=[stall])
+            case "reuses":
+                return Script(lines=[reuse])
+            case "done":
+                return Script()
+            case _:
+                return Script(outcome=boom)
+
+    spawner = Spawner(scripts)
+
+    async def scenario() -> TaskBoard:
+        board = TaskBoard(host, "main:tasks", _plan("stalls", "returns", "reuses", "done", "fails"), path=None, roots=[tmp_path], spawn=spawner)
+        board.start()
+        await _until(lambda: _idle(board) and len(spawner.spawned) == 5)
+        board.shutdown()
+
+        return board
+
+    board = asyncio.run(scenario())
+    view = host.views[-1]
+    stalled = board.by_label["stalls"]
+
+    assert [row.phase for row in board.by_label.values()] == [TaskPhase.STALLED, TaskPhase.STALLED, TaskPhase.REUSED, TaskPhase.DONE, TaskPhase.FAILED]
+    assert stalled.state == "Stalled · Residual Flat at 3.14e-08 by It 1339" and stalled.error is None
+    assert stalled.traceback == "m\nm", "a stalled row shows the child's last log messages"
+    assert view.summary == "5 Tasks · 1 Done · 1 Reused · 1 Failed · 2 Stalled" and (view.failed, view.stalled) == (1, 2)
+    assert view.focus is not None and view.focus.label == "fails"
 
 
 def test_cancel_takes_a_queued_task_out_and_stops_the_running_one(tmp_path: Path) -> None:
@@ -402,6 +472,29 @@ def test_a_cancel_that_lands_after_the_task_returned_reads_done(tmp_path: Path) 
     board = asyncio.run(scenario())
 
     assert board.by_label["a"].phase is TaskPhase.DONE, "the task returned before the break, so its run stands"
+
+
+def test_a_confirmed_cancel_reads_cancelling_until_the_child_exits(tmp_path: Path) -> None:
+    host = Host()
+    release = asyncio.Event()
+    spawner = Spawner(lambda label, nth: Script(hold=release, outcome=None, code=1))
+
+    async def scenario() -> tuple[TaskRow, TaskRow]:
+        board = TaskBoard(host, "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=spawner)
+        board.start()
+        await _until(lambda: board.running is not None)
+        board.cancel("a")
+        cancelling = host.views[-1].rows[0]
+        release.set()
+        await _until(lambda: _idle(board) and board.by_label["a"].phase.ended)
+        board.shutdown()
+
+        return cancelling, board.by_label["a"]
+
+    cancelling, ended = asyncio.run(scenario())
+
+    assert (cancelling.state, cancelling.cancellable) == ("Cancelling", False)
+    assert (ended.state, ended.stopping) == ("Cancelled", False)
 
 
 def test_retry_queues_only_a_failed_or_cancelled_task(tmp_path: Path) -> None:
