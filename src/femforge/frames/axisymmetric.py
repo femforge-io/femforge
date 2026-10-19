@@ -12,7 +12,7 @@ from pydantic import Field, ValidationInfo, field_validator
 
 from femforge.common.vector import Direction, DirectionField, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames.base import Axis, Frame, GeometryCheck, SolvePlane, in_plane, least_aligned_world_axis
+from femforge.frames.base import Axis, Frame, GeometryCheck, SolvePlane, authored_path, in_plane, least_aligned_world_axis
 
 
 if TYPE_CHECKING:
@@ -91,12 +91,14 @@ class Axisymmetric(Frame):
         return GeometryCheck(frame=self.label, tolerance=MISMATCH_TOLERANCE, measured=tuple(revolution_mismatches(compound, self.axis)))
 
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
-        """``step_out``, written with the section of ``step_in`` on ``plane`` once the model passes the geometry check, which is recorded beside it."""
+        """``step_out``, written with the section of ``step_in`` on ``plane`` once the model passes the geometry check; the check and the authored-body tessellation land beside it."""
         from femforge.common.log import log
+        from femforge.geometry.authored import write_authored_geometry
         from femforge.geometry.section import axisymmetric_cross_section, export_section
         from femforge.geometry.step import import_tagged_step
 
         compound = import_tagged_step(step_in)
+        _ = write_authored_geometry(compound, self.plane, authored_path(step_out))
         check: GeometryCheck = self.measure_geometry(compound)
         check.raise_for_mismatch()
 

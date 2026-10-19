@@ -46,6 +46,7 @@ DOCUMENTED_MODULES: tuple[str, ...] = (
     "femforge.meshing.measure",
     "femforge.run.entities",
     "femforge.run.conditions",
+    "femforge.geometry.authored",
 )
 """Modules whose float, Quantity and property-function fields and annotated constants must follow the docstring convention."""
 

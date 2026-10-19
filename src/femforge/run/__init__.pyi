@@ -46,6 +46,7 @@ from .magnetic import (
 )
 from .manifest import RunManifest as RunManifest, cache_key as cache_key, git_sha as git_sha, mesh_key as mesh_key, step_key as step_key
 from .mechanical import clapeyron_energy as clapeyron_energy, strain_energy as strain_energy, strain_energy_density as strain_energy_density
+from .mesh_groups import MESH_IDS_ARRAY as MESH_IDS_ARRAY, MeshGroups as MeshGroups
 from .parse import parse_result as parse_result, result_vtu as result_vtu
 from .reap import ReapedRun as ReapedRun, reap_runs as reap_runs
 from .result import LifecycleStatus as LifecycleStatus, ManifestStatus as ManifestStatus, MeshStats as MeshStats, Result as Result, RunStatus as RunStatus

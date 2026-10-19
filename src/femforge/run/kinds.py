@@ -118,6 +118,9 @@ def _build_step(spec: StepSpec, workdir: Path) -> Produced:
     if (workdir / BundleFile.GEOMETRY_CHECK).is_file():
         files.append(BundleFile.GEOMETRY_CHECK)
 
+    if (workdir / BundleFile.GEOMETRY_AUTHORED).is_file():
+        files.append(BundleFile.GEOMETRY_AUTHORED)
+
     return Produced(files=tuple(files))
 
 

@@ -12,17 +12,22 @@ from typing import TYPE_CHECKING, Mapping, cast
 from femforge.common.files import BundleFile, RunFile
 from femforge.config import RunMeta
 from femforge.meshing.naming import name_fragment
+from femforge.meshing.section_edges import millimetres_per_unit
 from femforge.physical.units import Quantity, VectorQuantity, quantity
+from femforge.run.conditions import ConditionsFile
 from femforge.run.electrical import electrode_currents as currents_from_raw, phase_currents as phases_from_currents, read_boundary_names
 from femforge.run.entities import Bodies, Body, Boundaries, Entities, load_entities
 from femforge.run.magnetic import read_component_names
 from femforge.run.manifest import RunManifest
+from femforge.run.mesh_groups import MeshGroups
 from femforge.run.parse import parse_result, result_vtu
 from femforge.run.result import Result
 from femforge.run.retention import CleanupRecord
 
 
 if TYPE_CHECKING:
+    import pyvista as pv
+
     from femforge.common.vector import Vec3
     from femforge.run.fields import FieldMesh
 
@@ -208,6 +213,33 @@ class Run:
             self._mesh = FieldMesh.load(self.path, bodies=self.bodies, boundaries=self.boundaries)
         return self._mesh
 
+    def conditions(self) -> ConditionsFile | None:
+        """What each body and boundary group received from the sif, from ``conditions.json``; None when the run wrote none."""
+        if not (self.path / BundleFile.CONDITIONS).is_file():
+            return None
+
+        return ConditionsFile.load(self.path)
+
+    def mesh_groups(self) -> MeshGroups | None:
+        """The cells of each body and boundary group, from the Elmer mesh files; None when they are absent, as after a store-backed cleanup."""
+        mesh_files: tuple[BundleFile, ...] = (BundleFile.MESH_NODES, BundleFile.MESH_ELEMENTS, BundleFile.MESH_BOUNDARY)
+
+        if not all((self.path / name).is_file() for name in mesh_files):
+            return None
+
+        return MeshGroups(self.path)
+
+    def authored_geometry(self) -> pv.PolyData | None:
+        """The authored bodies a 2D frame sectioned, tessellated in the solve frame and scaled to mesh units, with cell array ``AuthoredBody``; None when the run wrote none."""
+        path: Path = self.path / BundleFile.GEOMETRY_AUTHORED
+
+        if not path.is_file():
+            return None
+
+        scale: float = millimetres_per_unit(self.manifest.config.mesh.gmsh_options.target_units)
+
+        return _authored_mesh(path, scale)
+
     def strain_energy(self, *bodies: Body | str) -> Quantity:
         """`U` `[J]`: The elastic strain energy stored in the named bodies, or in the whole model when none are named."""
         from femforge.run.mechanical import strain_energy
@@ -221,6 +253,16 @@ class Run:
         share: Vec3 = self.result.frame.authored_share(force.m_as("N"))
 
         return quantity(clapeyron_energy(self.mesh(), name_fragment(face), share), "J")
+
+
+def _authored_mesh(path: Path, millimetres: float) -> pv.PolyData:  # pragma: no cover - needs pyvista (exercised by the gated authored-geometry tests)
+    """The authored-body tessellation at ``path``, its millimetre points divided by ``millimetres`` per mesh unit."""
+    import pyvista as pv
+
+    mesh = cast("pv.PolyData", pv.read(path))
+    mesh.points = mesh.points / millimetres
+
+    return mesh
 
 
 def find_runs(runs_dir: str | Path, *, tags: Mapping[str, str] | None = None, text: str | None = None) -> list[Run]:

@@ -6,6 +6,8 @@ Tagged CAD: the geometry interface, tagged build123d shapes, cross-sections, the
 
 ::: femforge.geometry.section
 
+::: femforge.geometry.authored
+
 ::: femforge.geometry.conformance
 
 ::: femforge.geometry.step

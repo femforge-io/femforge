@@ -16,6 +16,7 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.materials.properties import MaterialProperties
 from femforge.physical.units import U, quantity
 from femforge.run.bundle import write_bundle, write_manifest
+from femforge.run.conditions import ConditionsFile, GroupConditions
 from femforge.run.entities import Bodies, Body, Boundaries, Boundary, BoundaryKind
 from femforge.run.fields import FieldMesh
 from femforge.run.inspect import Run
@@ -320,3 +321,22 @@ def test_clapeyron_energy_raises_for_a_force_the_frame_cannot_carry(tmp_path: Pa
 
     with pytest.raises(ValueError, match="plane normal"):
         _ = run.clapeyron_energy("Tip", quantity(Vec3(100, 0, 0), "N"))
+
+
+def test_the_setup_accessors_are_none_on_a_bundle_without_their_files(tmp_path: Path) -> None:
+    run = Run(_bundle(tmp_path))
+
+    assert (run.conditions(), run.mesh_groups(), run.authored_geometry()) == (None, None, None)
+
+
+def test_the_setup_accessors_open_their_files(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path)
+    ConditionsFile(bodies=[GroupConditions(group="AIR")]).write(bundle)
+    for name in ("mesh.nodes", "mesh.elements", "mesh.boundary"):
+        _ = (bundle / name).write_bytes(b"")
+
+    run = Run(bundle)
+    groups = run.mesh_groups()
+
+    assert run.conditions() == ConditionsFile(bodies=[GroupConditions(group="AIR")])
+    assert groups is not None and groups.path == bundle

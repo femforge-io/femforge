@@ -153,7 +153,7 @@ def test_step_kind_keeps_the_edge_file_and_the_geometry_check_of_a_section(tmp_p
 
     produced = STEP.produce(StepSpec(source=_NamedBar(), frame=frame), tmp_path)
 
-    assert produced.files == ("geometry.step", "geometry.boundaries.json", "geometry.check.json")
+    assert produced.files == ("geometry.step", "geometry.boundaries.json", "geometry.check.json", "geometry.authored.vtp")
 
 
 def test_a_cartesian_2d_step_is_always_rebuilt_and_keys_on_its_thickness_and_state() -> None:
