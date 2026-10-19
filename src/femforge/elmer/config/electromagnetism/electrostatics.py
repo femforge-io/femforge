@@ -27,6 +27,8 @@ class ElectrostaticsSolver(SolverBase, LinearSystem, SteadyState):
     kind: Literal["Electrostatics"] = "Electrostatics"
     """Discriminator that names this solver, doubling as its sif Solver label."""
 
+    display_variable: ClassVar[ElmerVariable | None] = ElmerVariable.POTENTIAL
+
     required_material_keys: ClassVar[frozenset[ElmerMaterialKeyword]] = frozenset({ElmerMaterialKeyword.RELATIVE_PERMITTIVITY})
 
     equation: EquationField = "Electrostatics"

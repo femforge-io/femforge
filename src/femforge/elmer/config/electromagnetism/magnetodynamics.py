@@ -28,6 +28,7 @@ from femforge.elmer.config.common.solver_base import (
     SolverBase,
     SteadyState,
 )
+from femforge.elmer.variables import ElmerVariable
 from femforge.materials.properties import ElmerMaterialKeyword
 
 
@@ -78,6 +79,8 @@ class MagnetoDynamicsCalcFieldsSolver(SolverBase, LinearSystem):
 
     kind: Literal["MagnetoDynamicsCalcFields"] = "MagnetoDynamicsCalcFields"
     """Discriminator that names this solver, doubling as its sif Solver label."""
+
+    display_variable: ClassVar[ElmerVariable | None] = ElmerVariable.MAGNETIC_FLUX_DENSITY
 
     equation: EquationField = "MgDynCalc"
     procedure: ProcedureField = '"MagnetoDynamics" "MagnetoDynamicsCalcFields"'

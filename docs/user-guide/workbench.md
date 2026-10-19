@@ -32,7 +32,7 @@ viewer = ff.workbench.field_viewer(display=display, telemetry="telemetry")
 ff.workbench.show(viewer, title="Field viewer")
 ```
 
-[field_viewer][femforge.workbench.field_viewer] builds the viewer dock. Its run picker lists the indexed runs of the telemetry root, `FEMFORGE_TELEMETRY` when you pass none. Pass `run=` a [Result][femforge.run.Result], a [Run][femforge.run.Run], a run id or a bundle directory to open that run once the server starts. Without one, the viewer opens the newest indexed run as soon as one lands. The [DisplaySpec][femforge.viz.DisplaySpec] sets where the controls start; [Results](results.md#display-state) covers it.
+[field_viewer][femforge.workbench.field_viewer] builds the viewer dock. Its run picker lists the indexed runs of the telemetry root, `FEMFORGE_TELEMETRY` when you pass none. Pass `run=` a [Result][femforge.run.Result], a [Run][femforge.run.Run], a run id or a bundle directory to open that run once the server starts. Without one, the viewer opens the newest indexed run as soon as one lands. The [DisplaySpec][femforge.viz.DisplaySpec] sets where the controls start; [Results](results.md#display-state) covers it. A `DisplaySpec` without a `field` opens each run on [default_display][femforge.viz.default_display].
 
 [show][femforge.workbench.show] serves a workbench and returns when its window closes:
 
@@ -89,6 +89,8 @@ The `browsers` and `monitors` cards read the telemetry root; the [Telemetry](tel
 ## The field viewer
 
 The field viewer puts its controls beside one view, which draws every run, flat or solid. The app bar holds the run picker, which lists the 200 newest indexed runs that have fields, are still solving or failed, newest first, and shows the open run's bundle path beside it. Each run reads as its description, with its run id muted beside it. A run that is still solving reads Solving and opens once its solve ends; one whose solve failed reads Failed. The list follows the run index every second and holds still while its dropdown is open, so a run that lands never moves the row under the pointer and never replaces the open run. With no run given, the viewer opens the newest run with fields as soon as one lands, else the newest one still solving, else the newest failed one. The camera stays put when the next run frames alike.
+
+**Each run opens on its own field.** A run colors the primary field of its solver stack: the flux density of a magnetostatics run, the temperature of a thermal or Joule heating run, the displacement of an elasticity run. A displacement opens on the component its surface forces share, such as Y under a pull along Y, and on Magnitude when they point several ways. Show Field Lines and Opacity Mapping start on for a flux density, a field strength, an electric field or a current, and off otherwise. A Quantity, Mode, Show Field Lines or Opacity Mapping choice you make carries over to the next run that has the quantity shown, and a run without it opens on its own field. The other controls carry over from the run before. A `DisplaySpec` that names a `field` opens each run on that field, mode, field lines and opacity mapping instead. The workbench keeps the panel layout, the open cards and each view's mode between sessions, never the field display.
 
 The first time a run opens, a short tour points out the run picker, each section of the controls and the view's toolbar. Skip or Esc ends it, and it stays closed on later starts. The help button at the right of the app bar replays it.
 

@@ -42,6 +42,8 @@ class StressSolver(SolverBase, LinearSystem, NonlinearSystem, SteadyState):
     kind: Literal["StressSolver"] = "StressSolver"
     """Discriminator that names this solver, doubling as its sif Solver label."""
 
+    display_variable: ClassVar[ElmerVariable | None] = ElmerVariable.DISPLACEMENT
+
     equation: EquationField = "Linear elasticity"
     procedure: ProcedureField = '"StressSolve" "StressSolver"'
     variable: VariableField = ElmerVariable.DISPLACEMENT

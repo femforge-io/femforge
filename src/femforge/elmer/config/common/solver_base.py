@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.pydantic import Map
 from femforge.elmer.config.common.keywords import SifKeywordModel, SifValue, equation_items
+from femforge.elmer.variables import ElmerVariable
 from femforge.materials.properties import ElmerMaterialKeyword
 
 
@@ -185,6 +186,9 @@ class SolverBase(SifKeywordModel):
     conductor_only: ClassVar[bool] = False
     """Restrict this solver's equation to conductor bodies: solving a conduction variable over dielectrics too puts
     ~21 decades of σ contrast into one matrix — singular for a direct factorization, a stall for preconditioned CG."""
+
+    display_variable: ClassVar[ElmerVariable | None] = None
+    """The field a viewer opens a run on when this solver is the stack's last to name one; None for a solver whose output is not looked at first."""
 
     equation: EquationField
     procedure: ProcedureField

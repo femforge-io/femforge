@@ -1,6 +1,7 @@
 """The field viewer: the built-in spec, the controller's drawing path by model dimension, the controls the shell builds and the state they bind."""
 
 import asyncio
+import json
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -14,8 +15,15 @@ import pytest
 from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock
 from femforge.common.files import BundleFile
 from femforge.common.log import TELEMETRY_ENV, log
+from femforge.common.tags import TagKey
+from femforge.common.vector import Vec3
 from femforge.config import RunMeta, SimulationConfig
+from femforge.elmer.config import PhysicsSelection
+from femforge.elmer.physics import Physics
 from femforge.meshing.config import MeshConfig
+from femforge.physical.conditions import SurfaceForce
+from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import quantity
 from femforge.run.bundle import write_manifest
 from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
 from femforge.run.inspect import Run
@@ -133,6 +141,22 @@ def _bundle(root: Path, grid: pv.UnstructuredGrid) -> Path:
     _ = (root / BundleFile.ENTITIES).write_text(entities.model_dump_json(), encoding="utf-8")
 
     return root
+
+
+def _manifested(root: Path, grid: pv.UnstructuredGrid, physics: Physics = Physics.MAGNETOSTATICS, force: Vec3 | None = None) -> Path:
+    bundle = _bundle(root, grid)
+    loads = [EntityTag(selector={TagKey.NAME: "TIP"}, conditions=[SurfaceForce(force=quantity(force, "N"))])] if force is not None else []
+    config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), domain=DomainConfig(tags=loads), physics=PhysicsSelection(selected=physics))
+    _ = write_manifest(bundle, RunManifest.build(config, status="ok", run_id=root.name))
+
+    return bundle
+
+
+def _thermal_grid() -> pv.UnstructuredGrid:
+    grid = _hex_grid()
+    grid.point_data["temperature"] = np.asarray(grid.points)[:, 0] + 300.0
+
+    return grid
 
 
 def _shell(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Workbench:
@@ -759,6 +783,123 @@ def test_a_run_given_to_the_dock_opens_once_the_server_runs_with_the_display_ask
     asyncio.run(run())
 
 
+
+
+def test_each_new_run_opens_on_its_own_defaults_until_the_user_picks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> list[tuple[object, ...]]:
+        app = _shell("defaults", tmp_path, monkeypatch)
+        controller = _controller(app)
+        beam = _manifested(tmp_path / "beam", _elastic_grid(), Physics.LINEAR_ELASTICITY, Vec3(0, 500, 0))
+        magnet = _manifested(tmp_path / "magnet", _hex_grid())
+        opened: list[tuple[object, ...]] = []
+        for bundle in (beam, magnet, beam):
+            await controller.load(bundle)
+            await controller.settle()
+            opened.append(tuple(app.state[key] for key in (FieldVar.FIELD, FieldVar.MODE, FieldVar.STREAMLINES, FieldVar.OPACITY_MAPPING, FieldVar.OPACITY_RANGE)))
+
+        return opened
+
+    assert asyncio.run(run()) == [
+        ("displacement", "y", False, False, [0.15, 1.0]),
+        ("magnetic flux density", "magnitude", True, True, [0.15, 1.0]),
+        ("displacement", "y", False, False, [0.15, 1.0]),
+    ]
+
+
+def test_a_picked_field_carries_to_the_next_run_that_has_it_and_a_run_without_it_opens_on_its_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> list[tuple[object, ...]]:
+        app = _shell("picked", tmp_path, monkeypatch)
+        controller = _controller(app)
+        pulled = _manifested(tmp_path / "pulled", _elastic_grid(), Physics.LINEAR_ELASTICITY, Vec3(0, 500, 0))
+        pushed = _manifested(tmp_path / "pushed", _elastic_grid(), Physics.LINEAR_ELASTICITY, Vec3(-500, 0, 0))
+        heated = _manifested(tmp_path / "heated", _thermal_grid(), Physics.THERMAL)
+        started = _start(app)
+        _ = await app.server.ready
+
+        def shown() -> tuple[object, ...]:
+            return tuple(app.state[key] for key in (FieldVar.FIELD, FieldVar.MODE, FieldVar.STREAMLINES, FieldVar.OPACITY_MAPPING))
+
+        await controller.load(pulled)
+        await controller.settle()
+        opened = [shown()]
+        with app.state:
+            app.state[FieldVar.FIELD] = "vonmises"
+            app.state[FieldVar.STREAMLINES] = True
+
+        await controller.settle()
+        for bundle in (pushed, heated, pushed):
+            await controller.load(bundle)
+            await controller.settle()
+            opened.append(shown())
+
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+
+        return opened
+
+    assert asyncio.run(run()) == [
+        ("displacement", "y", False, False),
+        ("vonmises", "value", True, False),
+        ("temperature", "value", False, False),
+        ("displacement", "x", False, False),
+    ]
+
+
+def test_a_display_that_names_a_field_opens_each_run_on_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> list[tuple[object, ...]]:
+        monkeypatch.delenv(TELEMETRY_ENV, raising=False)
+        app = Workbench("named", title="Fields", server=get_server("field-viewer-named"), persist=LocalJsonStore(tmp_path / "persist"), user="tester")
+        app.add(workbench(display=DisplaySpec(field="joule heating", streamlines=None)))
+        controller = _controller(app)
+        opened: list[tuple[object, ...]] = []
+        for bundle in (_manifested(tmp_path / "first", _hex_grid()), _manifested(tmp_path / "second", _hex_grid())):
+            await controller.load(bundle)
+            await controller.settle()
+            opened.append((app.state[FieldVar.FIELD], app.state[FieldVar.STREAMLINES], app.state[FieldVar.OPACITY_MAPPING]))
+
+        return opened
+
+    assert asyncio.run(run()) == [("joule heating", False, True), ("joule heating", False, True)]
+
+
+def test_the_ui_store_never_holds_the_field_display(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        app = _shell("stored", tmp_path, monkeypatch)
+        controller = _controller(app)
+        started = _start(app)
+        _ = await app.server.ready
+
+        await controller.load(_manifested(tmp_path / "magnet", _hex_grid()))
+        await controller.settle()
+        with app.state:
+            app.state[FieldVar.FIELD] = "joule heating"
+            app.state[FieldVar.MODE] = str(DisplayMode.ABSVALUE)
+            app.state[FieldVar.OPACITY_MAPPING] = False
+
+        await controller.settle()
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+        app.persist.flush()
+
+    asyncio.run(run())
+
+    def keys(data: object) -> set[str]:
+        if isinstance(data, dict):
+            pairs = cast("dict[str, object]", data)
+            nested = [keys(value) for value in pairs.values()]
+
+            return set(pairs).union(*nested)
+
+        if isinstance(data, list):
+            return set[str]().union(*(keys(item) for item in cast("list[object]", data)))
+
+        return set()
+
+    stored = [keys(cast("object", json.loads(file.read_text(encoding="utf-8")))) for file in (tmp_path / "persist").rglob("*.json")]
+    found = set[str]().union(*stored)
+
+    assert stored, "the shell saved its state"
+    assert not found & {str(key) for key in FieldVar}
 
 
 def test_the_last_panel_to_leave_the_dock_releases_the_controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

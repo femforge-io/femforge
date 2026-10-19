@@ -41,3 +41,17 @@ def test_a_vtu_array_name_resolves_to_its_variable() -> None:
     assert variable_of("principal stress") is ElmerVariable.PRINCIPAL_STRESS
     assert variable_of("Stress e") is ElmerVariable.STRESS
     assert variable_of("GeometryIds") is None
+
+
+def test_flows_draw_field_lines_by_default() -> None:
+    flows = {member for member in ElmerVariable if member.lines_by_default}
+
+    assert len(ElmerVariable) == 20
+    assert flows == {
+        ElmerVariable.MAGNETIC_FLUX_DENSITY,
+        ElmerVariable.MAGNETIC_FIELD_STRENGTH,
+        ElmerVariable.CURRENT_DENSITY,
+        ElmerVariable.JFIX,
+        ElmerVariable.VOLUME_CURRENT,
+        ElmerVariable.ELECTRIC_FIELD,
+    }

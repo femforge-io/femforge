@@ -16,6 +16,8 @@ from femforge.common.utils import title
 from femforge.elmer.physics import Physics
 from femforge.elmer.variables import ELEMENTAL_SUFFIX, ElmerVariable, elemental, variable_of, variable_unit
 from femforge.frames import Frame, SolvePlane, default_frame
+from femforge.physical.conditions import SurfaceForce
+from femforge.physical.units import U
 from femforge.run.fields import GEOMETRY_IDS_ARRAY, select_array
 from femforge.run.mechanical import VOIGT_COMPONENTS
 from femforge.viz.colormaps import register_paraview
@@ -39,6 +41,7 @@ from femforge.viz.symmetry import Basis, Expansion, mirror, revolve
 if TYPE_CHECKING:
     import pyvista as pv
 
+    from femforge.config import SimulationConfig
     from femforge.run.entities import Bodies
     from femforge.run.inspect import Run
     from femforge.run.manifest import RunManifest
@@ -90,6 +93,12 @@ AXIS_SLACK = 1e-9
 WARP_SHARE = 0.1
 """`[-]`: The share of the section's bounds diagonal the automatic scale moves the largest displacement."""
 
+DOMINANT_SHARE = 0.9
+"""`[-]`: The share of the summed load one solve component must carry for a run to open on that component."""
+
+OPACITY_MAP: tuple[float, float] = (0.15, 1.0)
+"""`[-]`: The opacity at the low and high color limits a display maps by default."""
+
 
 class Association(StrEnum):
     """Whether a VTU array lives on mesh points or cells (pyvista's ``preference``)."""
@@ -139,6 +148,9 @@ class DisplayMode(StrEnum):
         """The mode's name as it reads in a picker."""
         return title(self.value)
 
+
+AXIS_MODES: tuple[DisplayMode, ...] = (DisplayMode.X, DisplayMode.Y, DisplayMode.Z)
+"""The component modes in solve-axis order."""
 
 VECTOR_MODES: frozenset[DisplayMode] = frozenset({DisplayMode.X, DisplayMode.Y, DisplayMode.Z, DisplayMode.MAGNITUDE, DisplayMode.POLAR_XY})
 """The modes that need a 3-component array; the rest accept any width."""
@@ -328,6 +340,25 @@ def line_vectors(fields: Sequence[FieldInfo], shown: str) -> str | None:
         return vectors[0]
 
 
+def load_mode(config: SimulationConfig) -> DisplayMode:
+    """The solve component the run's surface forces share, Magnitude when none carries `DOMINANT_SHARE` of their sum."""
+    total: list[float] = [0.0, 0.0, 0.0]
+    for tag in config.domain.tags:
+        forces: list[SurfaceForce] = [condition for condition in tag.conditions if isinstance(condition, SurfaceForce)]
+        for force in forces:
+            solved: tuple[float, ...] = config.frame.solve_vector(force.force.to(U.N).magnitude)
+            for index, component in enumerate(solved):
+                total[index] += component
+
+    size: float = math.hypot(*total)
+    if size == 0.0:
+        return DisplayMode.MAGNITUDE
+
+    axis: int = max(range(len(total)), key=lambda index: abs(total[index]))
+
+    return AXIS_MODES[axis] if abs(total[axis]) >= DOMINANT_SHARE * size else DisplayMode.MAGNITUDE
+
+
 class BodyPaint(StrEnum):
     """Where a body's color comes from."""
 
@@ -372,7 +403,7 @@ class DisplaySpec(BaseModel):
     model_config = ConfigDict(use_attribute_docstrings=True, validate_assignment=True)
 
     field: str = ""
-    """Name of the VTU array to color by; empty means "whichever the run offers first"."""
+    """Name of the VTU array to color by; empty opens the viewer on each run's [`default_display`][femforge.viz.default_display], and `fitted` takes the first array."""
 
     mode: DisplayMode = DisplayMode.VALUE
     """How the array is reduced to the displayed value."""
@@ -416,7 +447,7 @@ class DisplaySpec(BaseModel):
     opacity: float = Field(default=1.0, ge=0.0, le=1.0)
     """`[-]`: Multiplies every body's own opacity."""
 
-    opacity_map: tuple[Annotated[float, Field(ge=0.0, le=1.0)], Annotated[float, Field(ge=0.0, le=1.0)]] | None = (0.15, 1.0)
+    opacity_map: tuple[Annotated[float, Field(ge=0.0, le=1.0)], Annotated[float, Field(ge=0.0, le=1.0)]] | None = OPACITY_MAP
     """`[-]`: The opacity at the low and high color limits, linear in the color mapping between them; None draws ``opacity`` throughout."""
 
     body_styles: tuple[BodyStyle, ...] = ()
@@ -768,6 +799,27 @@ def run_manifest(run: Run) -> RunManifest | None:  # pragma: no cover - needs py
         log.bind(run_id=run.path.name).opt(exception=True).warning("Run manifest unreadable; the frame is taken from the grid and the fields stay unitless.")
 
         return None
+
+
+def default_display(run: Run) -> DisplaySpec:
+    """The display a run opens on: its stack's primary field, on the component its loads share, with field lines and opacity mapping for a flux or current."""
+    try:
+        manifest: RunManifest = run.manifest
+    except (FileNotFoundError, ValueError):
+        return DisplaySpec()
+
+    variable: ElmerVariable | None = manifest.physics_config.primary_variable
+    if variable is None:
+        return DisplaySpec()
+
+    flows: bool = variable.lines_by_default
+
+    return DisplaySpec(
+        field=variable.lower(),
+        mode=load_mode(manifest.config),
+        streamlines=FieldLineOptions() if flows else None,
+        opacity_map=OPACITY_MAP if flows else None,
+    )
 
 
 def spread_colors(name: str, count: int) -> list[str]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test

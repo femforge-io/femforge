@@ -109,6 +109,37 @@ class ElmerVariable(StrEnum):
             case ElmerVariable.STRAIN_ENERGY_DENSITY:
                 return "J/m³"
 
+    @property
+    def lines_by_default(self) -> bool:
+        """Whether a viewer draws field lines along this variable by default: True for a flux, field or current, False for the rest."""
+        match self:
+            case (
+                ElmerVariable.MAGNETIC_FLUX_DENSITY
+                | ElmerVariable.MAGNETIC_FIELD_STRENGTH
+                | ElmerVariable.CURRENT_DENSITY
+                | ElmerVariable.JFIX
+                | ElmerVariable.VOLUME_CURRENT
+                | ElmerVariable.ELECTRIC_FIELD
+            ):
+                return True
+            case (
+                ElmerVariable.POTENTIAL
+                | ElmerVariable.TEMPERATURE
+                | ElmerVariable.DISPLACEMENT
+                | ElmerVariable.JOULE_HEATING
+                | ElmerVariable.MAGNETIC_FIELD_ENERGY
+                | ElmerVariable.EDDY_CURRENT_POWER
+                | ElmerVariable.NODAL_FORCE
+                | ElmerVariable.STRESS
+                | ElmerVariable.STRAIN
+                | ElmerVariable.VON_MISES
+                | ElmerVariable.TRESCA
+                | ElmerVariable.PRINCIPAL_STRESS
+                | ElmerVariable.PRINCIPAL_STRAIN
+                | ElmerVariable.STRAIN_ENERGY_DENSITY
+            ):
+                return False
+
 
 def elemental(variable: ElmerVariable | str) -> str:
     """The variable's DG counterpart: Elmer registers a solver's elemental field as ``"<name> e"``."""

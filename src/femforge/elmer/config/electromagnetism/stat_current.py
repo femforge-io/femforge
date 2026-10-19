@@ -40,6 +40,8 @@ class StatCurrentSolver(SolverBase, LinearSystem, NonlinearSystem, SteadyState):
     kind: Literal["StatCurrent"] = "StatCurrent"
     """Discriminator that names this solver, doubling as its sif Solver label."""
 
+    display_variable: ClassVar[ElmerVariable | None] = ElmerVariable.POTENTIAL
+
     required_material_keys: ClassVar[frozenset[ElmerMaterialKeyword]] = frozenset({ElmerMaterialKeyword.ELECTRIC_CONDUCTIVITY})
     # Copper only: with the dielectrics in the same equation CG+ILU0 stalls and a direct factorization is outright singular (umf4num -1).
     conductor_only: ClassVar[bool] = True

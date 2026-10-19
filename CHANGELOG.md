@@ -19,6 +19,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - The field viewer shows elasticity runs: it opens on the displacement, offers Von Mises, Tresca, Strain Energy Density and the principal stresses and strains with the Max, Mid and Min Principal modes, and leaves the stress and strain tensors and their `stress_xx` columns out. `FieldKind` and `line_vectors` join `femforge.viz`.
 - `Run.clapeyron_energy(face, force)` balances the strain energy against the work of a face's authored force and takes the solve frame's share itself, which `Frame.authored_share` gives.
 - The field viewer's Deformation section draws the bodies displaced by the solved displacement, at a scale that starts where the largest displacement moves a tenth of the model's size. `DisplaySpec.warp` and `DisplaySpec.warp_scale` hold the choice.
+- `default_display(run)` picks the display a run opens on: its solver stack's primary field (`PhysicsConfig.primary_variable`), the component its surface forces share, and field lines with opacity mapping only for a flux, field or current (`ElmerVariable.lines_by_default`).
 
 ### Changed
 
@@ -29,6 +30,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
 - The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
 - `SolvePlane` names its directions `x_dir` and `y_dir`, for the old `radial` and `axis`, and gains `normal`.
+- The field viewer opens each run on its `default_display` unless the given `DisplaySpec` names a field. A quantity, mode, field-line or opacity-mapping choice you make carries over only to a run that has the quantity shown.
 - `StressSolver` solves with CG and ILU1 preconditioning to a linear tolerance of `1e-7`, for BiCGStab, ILU0 and `1e-8`, which stalled on large quadratic meshes.
 - `FixedDisplacement` maps each authored axis onto the solve coordinate it runs along, signed. A Cartesian 2D section normal to X or Y and an axisymmetric section now take clamps and rollers, an axis off the plane is dropped, and an axis oblique to a free one raises. `FixedDisplacement.to_elmer()` raises, since its keywords depend on the frame. `Frame.solve_share` names its argument `share_of`.
 - The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.
