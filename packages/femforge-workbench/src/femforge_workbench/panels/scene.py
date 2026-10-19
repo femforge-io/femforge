@@ -63,7 +63,7 @@ CLIENT_LIMIT_MB = 64
 KILOBYTE = 1024
 WASM_CONFIG = {"rendering": "webgl", "exec": "sync", "mode": "wasm32"}
 VIEW_STYLE = {"flex": "1", "minHeight": "0", "position": "relative"}
-NOTICE = "pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-body text-muted-foreground"
+NOTICE = "pointer-events-none absolute inset-0 flex items-center justify-center whitespace-pre-line px-4 text-center text-body text-muted-foreground"
 FILL_STYLE = {"width": "100%", "height": "100%"}
 IMAGE_STYLE = {"width": "100%", "height": "100%", "objectFit": "contain"}
 """trame-rca sizes the frame by width alone, whose aspect then drives the host's height and loops the area's resize observer."""

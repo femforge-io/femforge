@@ -368,20 +368,30 @@ def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path
     assert app.state[StateVar.TASK_SUMMARY] == "0 of 2 Done"
     assert cast("dict[str, object]", app.state[StateVar.TASK_FOCUS])["label"] == "Solve 3D"
 
+    escape = [node for node in find(root, "div") if prop(node, "onKeyDown") is not None]
+    lines = [node for node in find(root, "div") if prop(node, "title") == "Show Every Task"]
+    narrow = [node for node in find(root, "span") if prop(node, "className") == "hidden tabular-nums max-[800px]:inline"]
+    assert len(escape) == 1 and "Escape" in str(prop(escape[0], "onKeyDown")) and "task-toggle" in str(prop(escape[0], "onKeyDown")), "Escape closes the sheet and hands focus back to the toggle"
+    assert prop(toggles[0], "id") == "task-toggle" and len(lines) == 1 and prop(lines[0], "onClick") is not None, "the summary line opens the sheet too"
+    assert len(narrow) == 1 and app.state[StateVar.TASK_COUNT] == "0/2"
+
+    app.state.ready()
     app.toggle_tasks()
     assert app.state[StateVar.TASK_SHEET] is True and app.persist.load(app.scope, StateKey.TASK_SHEET) == {"open": True}
-    app.on_task_key("Escape")
-    assert app.state[StateVar.TASK_SHEET] is False
+    with app.state:
+        app.state[StateVar.TASK_SHEET] = False
+
+    assert app.persist.load(app.scope, StateKey.TASK_SHEET) == {"open": False}, "a sheet closed on the client is remembered closed"
 
     app.cancel_task("Planar 2D")
     armed = app.state[StateVar.TASK_CONFIRM]
     app.cancel_task("Planar 2D")
     assert armed == "Planar 2D" and app.state[StateVar.TASK_CONFIRM] == "", "the second press cancels"
-    assert app.board.rows["Planar 2D"].phase is TaskPhase.STOPPED
+    assert app.board.by_label["Planar 2D"].phase is TaskPhase.STOPPED
 
     app.cancel_task("Solve 3D")
     app.disarm_cancel("Solve 3D")
-    assert app.state[StateVar.TASK_CONFIRM] == "" and app.board.rows["Solve 3D"].phase is TaskPhase.QUEUED
+    assert app.state[StateVar.TASK_CONFIRM] == "" and app.board.by_label["Solve 3D"].phase is TaskPhase.QUEUED
 
     app.retry_task("Planar 2D")
     assert app.board.queue == ["Solve 3D", "Planar 2D"]

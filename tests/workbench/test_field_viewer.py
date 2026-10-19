@@ -48,7 +48,7 @@ import pyvista as pv  # noqa: E402
 from trame.app import get_server  # noqa: E402
 
 from femforge_workbench.app import Hook, StateVar, Template, Workbench  # noqa: E402
-from femforge_workbench.tasks import Task, TaskBoard  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard, TaskPhase  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
@@ -1921,11 +1921,25 @@ def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_repl
     opened: list[object] = []
     monkeypatch.setattr(controller, "open", opened.append)
 
+    waiting = app.state[viewer.key(SceneVar.NOTICE)]
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.FAILED})
+    app.board.queue.clear()
+    app.board.publish(now=True)
+    failed = app.state[viewer.key(SceneVar.NOTICE)]
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.DONE})
+    app.board.publish(now=True)
+    done = app.state[viewer.key(SceneVar.NOTICE)]
+
     app.follow_run("r1", "r2")
     controller.opened = RunEntry("r1", "r1")
     app.follow_run("r0", "r2")
     app.follow_run("r1", "r2")
+    app.board.by_label["Solve"] = app.board.by_label["Solve"].model_copy(update={"phase": TaskPhase.FAILED})
+    app.board.publish(now=True)
 
-    assert app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_TASKS_NOTICE
+    assert waiting == "Waiting for Solve · Queued\nIts progress shows in the task strip below."
+    assert failed == "No Runs Yet. 1 Task Failed; Open the Task Strip for the Reasons."
+    assert done == NO_RUNS_TASKS_NOTICE
+    assert app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_TASKS_NOTICE, "a viewer showing a run keeps its notice"
     assert opened == ["r2"], "only the run the viewer shows is followed"
     assert [row["label"] for row in cast("list[dict[str, object]]", app.state[StateVar.TASKS])] == ["Solve"]

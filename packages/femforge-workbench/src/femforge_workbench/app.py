@@ -1,6 +1,7 @@
 """The workbench shell: a React header over a dock whose panels are trame templates, with persisted layouts and a worker-thread marshal."""
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -18,7 +19,7 @@ from typing import Concatenate, Protocol, cast
 
 import platformdirs
 from trame.app import TrameApp
-from trame.decorators import life_cycle
+from trame.decorators import change, life_cycle
 from trame.ui.html import DivLayout
 from trame.widgets import client, html, rca, react, vtklocal
 from trame_client.widgets.core import AbstractElement
@@ -36,6 +37,7 @@ from femforge_workbench.theme import Palette
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.dock import Dock
 from femforge_workbench.widgets.dropdown_menu import DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
+from femforge_workbench.widgets.element import EVENT
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.module import asset_url
 from femforge_workbench.widgets.progress import Progress
@@ -65,6 +67,7 @@ HELP_ID = "tour-help"
 TOUR_LABEL = "Take the Tour"
 REPLAY_STEP: TourStep = {"target": f"#{HELP_ID}", "title": "Replay This Tour", "body": "Open this tour again from here at any time.", "side": "bottom"}
 TASK_SHEET_ID = "task-sheet"
+TASK_TOGGLE_ID = "task-toggle"
 TASK_ROW = "task"
 CONFIRM_S = 3.0
 """`t_confirm` `[s]`: How long a pressed Cancel waits for the second press before it reverts."""
@@ -114,6 +117,15 @@ class Cls(StrEnum):
     TASK_STRIP = "flex h-6 min-w-0 items-center gap-2 border-t border-border bg-background px-2 text-label"
     TASK_TOGGLE = "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
     TASK_NAME = "font-medium"
+    TASK_WIDE = "font-medium max-[800px]:hidden"
+    TASK_SUMMARY = "max-[800px]:sr-only"
+    TASK_NARROW = "hidden tabular-nums max-[800px]:inline"
+    TASK_SUMMARY_LINE = "flex min-w-0 cursor-pointer items-center gap-1.5"
+    TASK_FOCUS_STATE = "truncate text-muted-foreground max-[800px]:hidden"
+    TASK_FOCUS_FAILED = "truncate text-destructive max-[800px]:hidden"
+    TASK_FOCUS_BAR = "h-1.5 w-16 shrink-0 max-[800px]:hidden"
+    TASK_FOCUS_PULSE = "h-1.5 w-16 shrink-0 animate-pulse rounded-full bg-primary/30 max-[800px]:hidden"
+    TASK_ITERATIONS = "shrink-0 tabular-nums text-muted-foreground"
     TASK_SEP = "h-3.5 w-px shrink-0 bg-border"
     TASK_FOCUS = "flex min-w-0 items-center gap-1.5"
     TASK_LABEL = "shrink-0 font-medium max-[800px]:hidden"
@@ -175,6 +187,7 @@ class StateVar(StrEnum):
     TOUR_STEPS = "wb_tour_steps"
     TASKS = "wb_tasks"
     TASK_SUMMARY = "wb_task_summary"
+    TASK_COUNT = "wb_task_count"
     TASK_FOCUS = "wb_task_focus"
     TASK_FAILED = "wb_task_failed"
     TASK_ERROR = "wb_task_error"
@@ -203,6 +216,8 @@ class Hook(StrEnum):
     FIELD_OPEN = "field_open"
     FIELD_FOLLOW = "field_follow"
     """Takes the previous and the newer run of a task: a viewer showing the previous one opens the newer."""
+    FIELD_TASKS = "field_tasks"
+    """Takes the task strip's view, which an empty viewer names the task it waits for from."""
 
 
 class OpenedKey(StrEnum):
@@ -347,6 +362,7 @@ class Workbench(TrameApp):
                 StateVar.TOUR_STEPS: [REPLAY_STEP],
                 StateVar.TASKS: [],
                 StateVar.TASK_SUMMARY: "",
+                StateVar.TASK_COUNT: "",
                 StateVar.TASK_FOCUS: None,
                 StateVar.TASK_FAILED: 0,
                 StateVar.TASK_ERROR: None,
@@ -424,7 +440,9 @@ class Workbench(TrameApp):
                     on_panel_removed=react.Callback(self.on_panel_removed, args="[$event]"),
                 )
 
-            with react.If(f"{StateVar.TASKS}.length"), html.Div(classes=str(Cls.TASKS)):
+            close = f"trame.state.set({json.dumps(str(StateVar.TASK_SHEET))}, false), document.getElementById({json.dumps(TASK_TOGGLE_ID)}).focus()"
+            escape = f"{EVENT}.key === 'Escape' && {StateVar.TASK_SHEET} && ({close})"
+            with react.If(f"{StateVar.TASKS}.length"), html.Div(classes=str(Cls.TASKS), on_key_down=react.Callback(escape)):
                 with react.If(StateVar.TASK_SHEET):
                     self.build_task_sheet()
 
@@ -439,35 +457,44 @@ class Workbench(TrameApp):
             return f"{StateVar.TASK_FOCUS}.{name}"
 
         with html.Div(classes=str(Cls.TASK_STRIP)):
-            toggle = html.Button(type="button", classes=str(Cls.TASK_TOGGLE), title="Show Every Task", on_click=react.Callback(self.toggle_tasks))
+            toggle = html.Button(id=TASK_TOGGLE_ID, type="button", classes=str(Cls.TASK_TOGGLE), title="Show Every Task", on_click=react.Callback(self.toggle_tasks))
             _ = aria(toggle, aria_expanded=react.Bind(StateVar.TASK_SHEET), aria_controls=TASK_SHEET_ID, aria_label=react.Bind(f"'Tasks, ' + {StateVar.TASK_SUMMARY}"))
             with toggle:
                 _ = aria(html.Span([react.Bind(f"{StateVar.TASK_SHEET} ? '▾' : '▴'")]), aria_hidden="true")
-                html.Span("Tasks", classes=str(Cls.TASK_NAME))
-                _ = aria(html.Span([react.Bind(StateVar.TASK_SUMMARY)]), role="status", aria_live="polite")
+                html.Span("Tasks", classes=str(Cls.TASK_WIDE))
+                _ = aria(html.Span([react.Bind(StateVar.TASK_SUMMARY)], classes=str(Cls.TASK_SUMMARY)), role="status", aria_live="polite")
+                _ = aria(html.Span([react.Bind(StateVar.TASK_COUNT)], classes=str(Cls.TASK_NARROW)), aria_hidden="true")
 
             with react.If(StateVar.TASK_FOCUS):
                 _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
                 with html.Div(classes=str(Cls.TASK_FOCUS)):
-                    _ = aria(html.Span([react.Bind(focus(TaskField.GLYPH))], classes=react.Bind(f"{focus(TaskField.FAILED)} ? 'text-destructive' : ''")), aria_hidden="true")
-                    html.Span([react.Bind(focus(TaskField.TITLE))], classes=str(Cls.TASK_LABEL))
-                    html.Span(
-                        [react.Bind(focus(TaskField.STATE))],
-                        classes=react.Bind(f"{focus(TaskField.FAILED)} ? {Cls.TASK_FAILED.value!r} : {Cls.TASK_STATE.value!r}"),
-                        title=react.Bind(focus(TaskField.STATE)),
-                    )
-                    with react.If(focus(TaskField.PERCENT)):
-                        html.Span([react.Bind(focus(TaskField.PERCENT))], classes=str(Cls.TASK_NUMBER))
-                        Progress(value=react.Bind(f"{focus(TaskField.PROGRESS)} * 100"), max_=100, classes=str(Cls.TASK_BAR))
+                    with html.Div(classes=str(Cls.TASK_SUMMARY_LINE), title="Show Every Task", on_click=react.Callback(self.toggle_tasks)):
+                        _ = aria(html.Span([react.Bind(focus(TaskField.GLYPH))], classes=react.Bind(f"{focus(TaskField.FAILED)} ? 'text-destructive' : ''")), aria_hidden="true")
+                        html.Span([react.Bind(focus(TaskField.TITLE))], classes=str(Cls.TASK_LABEL))
+                        html.Span(
+                            [react.Bind(focus(TaskField.STATE))],
+                            classes=react.Bind(f"{focus(TaskField.FAILED)} ? {Cls.TASK_FOCUS_FAILED.value!r} : {Cls.TASK_FOCUS_STATE.value!r}"),
+                            title=react.Bind(focus(TaskField.STATE)),
+                        )
+                        with react.If(focus(TaskField.PERCENT)):
+                            html.Span([react.Bind(focus(TaskField.PERCENT))], classes=str(Cls.TASK_NUMBER))
+                            Progress(value=react.Bind(f"{focus(TaskField.PROGRESS)} * 100"), max_=100, classes=str(Cls.TASK_FOCUS_BAR))
 
-                    with react.If(focus(TaskField.BUSY)):
-                        _ = aria(html.Div(classes=str(Cls.TASK_PULSE)), role="progressbar", aria_label=react.Bind(focus(TaskField.STATE)))
+                        with react.If(focus(TaskField.BUSY)):
+                            _ = aria(html.Div(classes=str(Cls.TASK_FOCUS_PULSE)), role="progressbar", aria_label=react.Bind(focus(TaskField.STATE)))
 
-                    with react.If(f"{focus(TaskField.ELAPSED)} !== null"):
-                        html.Span([react.Bind(focus(TaskField.CLOCK))], classes=str(Cls.TASK_CLOCK))
+                        with react.If(f"{focus(TaskField.ELAPSED)} !== null"):
+                            html.Span([react.Bind(focus(TaskField.CLOCK))], classes=str(Cls.TASK_CLOCK))
 
                     with react.If(focus(TaskField.RUN_ID)):
-                        Button("Open", size="xs", variant="ghost", title="Open This Run in the Viewer", on_click=react.Callback(self.open_task_run, args=f"[{focus(TaskField.RUN_ID)}]"))
+                        Button(
+                            "Open",
+                            size="xs",
+                            variant="ghost",
+                            classes=str(Cls.TASK_WIDE),
+                            title="Open This Run in the Viewer",
+                            on_click=react.Callback(self.open_task_run, args=f"[{focus(TaskField.RUN_ID)}]"),
+                        )
 
             with html.Div(classes=str(Cls.TASK_END)):
                 with react.If(StateVar.TASK_ERROR):
@@ -482,8 +509,7 @@ class Workbench(TrameApp):
         def row(name: TaskField) -> str:
             return f"{TASK_ROW}.{name}"
 
-        sheet = html.Div(id=TASK_SHEET_ID, classes=str(Cls.TASK_SHEET), on_key_down=react.Callback(self.on_task_key, args="[$event.key]"))
-        with sheet:
+        with html.Div(id=TASK_SHEET_ID, classes=str(Cls.TASK_SHEET)):
             with html.Div(classes=str(Cls.TASK_HEADER)):
                 html.Span("Tasks", classes=str(Cls.TASK_NAME))
                 html.Span([react.Bind(StateVar.TASK_SUMMARY)], classes=str(Cls.TASK_MUTED))
@@ -518,6 +544,9 @@ class Workbench(TrameApp):
 
                             with react.If(row(TaskField.BUSY)):
                                 _ = aria(html.Div(classes=str(Cls.TASK_PULSE)), role="progressbar", aria_label=react.Bind(row(TaskField.STATE)))
+
+                            with react.If(row(TaskField.ITERATIONS)):
+                                html.Span([react.Bind(row(TaskField.ITERATIONS))], classes=str(Cls.TASK_ITERATIONS))
 
                         html.Td([react.Bind(row(TaskField.CLOCK))], classes=str(Cls.TASK_ELAPSED))
                         html.Td([react.Bind(f"{row(TaskField.RUN_ID)} || '—'")], classes=str(Cls.TASK_RUN))
@@ -569,10 +598,15 @@ class Workbench(TrameApp):
         with self.state:
             self.state[StateVar.TASKS] = rows
             self.state[StateVar.TASK_SUMMARY] = view.summary
+            self.state[StateVar.TASK_COUNT] = view.count
             self.state[StateVar.TASK_FOCUS] = focus
             self.state[StateVar.TASK_FAILED] = view.failed
             self.state[StateVar.TASK_ERROR] = view.error
             self.state[StateVar.TASK_RELOADED] = view.reloaded
+
+        hook = self.ctrl[Hook.FIELD_TASKS]
+        if hook.exists():
+            _ = hook(view)
 
     def follow_run(self, previous: str, current: str) -> None:
         """Hands a task's newer run to the field viewer, which opens it when it shows the task's previous run."""
@@ -582,17 +616,14 @@ class Workbench(TrameApp):
 
     @guard
     def toggle_tasks(self) -> None:
-        """Opens or closes the task sheet, remembered for the next start."""
-        shown = not bool(self.state[StateVar.TASK_SHEET])
-        self.persist.save(self.scope, StateKey.TASK_SHEET, {str(TaskSheetKey.OPEN): shown})
+        """Opens or closes the task sheet."""
         with self.state:
-            self.state[StateVar.TASK_SHEET] = shown
+            self.state[StateVar.TASK_SHEET] = not bool(self.state[StateVar.TASK_SHEET])
 
-    @guard
-    def on_task_key(self, key: str) -> None:
-        """Closes the task sheet on Escape."""
-        if key == "Escape" and self.state[StateVar.TASK_SHEET]:
-            self.toggle_tasks()
+    @change(StateVar.TASK_SHEET)
+    def on_task_sheet(self, **_: object) -> None:
+        """Remembers whether the task sheet is open for the next start, however it opened or closed."""
+        self.persist.save(self.scope, StateKey.TASK_SHEET, {str(TaskSheetKey.OPEN): bool(self.state[StateVar.TASK_SHEET])})
 
     @guard
     def open_task_run(self, run_id: str) -> None:

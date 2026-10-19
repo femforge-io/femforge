@@ -80,18 +80,19 @@ if __name__ == "__main__":
     ff.workbench.show(viewer, tasks=solves)
 ```
 
-`tasks` takes a module-level function that lists `Task`s; the workbench runs them one at a time in child processes while it serves, shows each in the status strip, and lists them again on every save. A [Task][femforge.workbench.Task] pairs a label with a function that takes no arguments; a module-level function listed bare is labelled by its name. Each child imports the script by module name, calls the function again and runs the task with the same label, so a `partial` or a lambda works and nothing is pickled. Guard the `show` call under `if __name__ == "__main__":`, or every child serves a workbench of its own.
+`tasks` takes a module-level function that lists `Task`s; the workbench runs them one at a time in child processes while it serves, shows each in the status strip, and lists them again on every save. A [Task][femforge.workbench.Task] pairs a label, unique in the list, with a function that takes no arguments. Each child imports the script by module name, calls the function again and runs the task with the same label, so a `partial` or a lambda works and nothing is pickled. Guard the `show` call under `if __name__ == "__main__":`, or every child serves a workbench of its own.
 
 | The strip shows | When |
 |---|---|
 | `Queued`, with its place in line | the task waits for the one before it |
-| `Starting`, `Preparing Geometry`, `Meshing`, `Solving`, `Finishing` | the stage its child reports; `Solving` names the solver and, once known, the percent converged |
+| `Starting`, `Preparing Geometry`, `Meshing`, `Solving`, `Finishing` | the stage its child reports; `Solving` names the solver and, once known, the percent converged, and the sheet adds the linear iteration |
 | `Done`, `Reused` | the task returned; `Reused` when every run it asked for was solved before |
-| `Failed`, with the error | the task raised, or its child died; Details shows the traceback |
+| `Failed`, with the error | the task raised, or its child died; Details shows the traceback. A stalled solve reads `Failed` too |
 | `Cancelled` | Cancel, pressed twice, stopped it |
 | `Script Error` | a save broke the script; the rows of the last good save stay |
 
 - A save while a task runs lets it finish on its old code, then runs it once more. A task the save dropped finishes, then leaves the strip.
+- Retry runs a failed or cancelled task again; a done one runs again on the next save. Click the summary line or **Tasks** to open the sheet, and press `Escape` to close it.
 - When a task finishes on a newer run while the viewer shows the run it finished on before, the viewer opens the newer one.
 - An unchanged task re-runs in about 3 s, the start of a child process: the [Driver][femforge.run.Driver] reuses its finished runs.
 - The child stores its own records in the telemetry root, and the server only relays them to its terminal.
