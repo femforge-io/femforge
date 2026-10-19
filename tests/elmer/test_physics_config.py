@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from femforge.elmer.physics import Physics
@@ -288,3 +291,56 @@ def test_a_stack_without_a_display_variable_names_none() -> None:
 
     assert bare.primary_variable is None
     assert "display_variable" not in StressSolver().model_dump()
+
+
+def test_linear_targets_list_the_linear_solvers_in_stack_order() -> None:
+    from femforge.elmer.config import LinearSolverType, LinearSystem, linear_targets
+    from femforge.elmer.solver_log import LinearTarget
+
+    config = physics_config(Physics.MAGNETOSTATICS)
+    config.solver(MagnetoDynamicsCalcFieldsSolver).linear_system_solver = LinearSolverType.DIRECT
+
+    targets = linear_targets(config)
+    mgdyn = config.solver(MagnetoDynamicsSolver)
+
+    assert [target.solver for target in targets] == [" ".join(s.equation.lower().split()) for s in config.solvers if isinstance(s, LinearSystem)]
+    assert targets[0] == LinearTarget(
+        solver="mgdyn",
+        iterative=True,
+        method="BiCGStabl",
+        tolerance=mgdyn.linear_system_convergence_tolerance,
+        max_iterations=mgdyn.linear_system_max_iterations,
+    )
+    assert (targets[1].iterative, targets[1].method) == (False, None)
+
+
+def test_an_unset_linear_solver_counts_as_iterative() -> None:
+    from femforge.elmer.config import linear_targets
+
+    config = physics_config(Physics.LINEAR_ELASTICITY)
+    stress = config.solver(StressSolver)
+    stress.linear_system_solver = None
+    stress.linear_system_iterative_method = None
+
+    target = linear_targets(config)[0]
+    assert (target.solver, target.iterative, target.method) == ("linear elasticity", True, None)
+
+
+def test_linear_targets_follow_the_sif_solver_order_of_the_coil_stack(tmp_path: Path) -> None:
+    from femforge.elmer.config import linear_targets
+    from femforge.elmer.sim import Sim
+
+    sim = Sim(physics=Physics.COIL_MAGNETOSTATICS)
+    sim.generate().write(str(tmp_path))
+    sif = (tmp_path / "case.sif").read_text(encoding="utf-8")
+
+    equations: dict[str, int] = {}
+    for block in re.finditer(r"^Solver (?P<number>\d+)\n(?P<body>.*?)^End", sif, re.MULTILINE | re.DOTALL):
+        equation = re.search(r"^\s*Equation = (?P<name>.+)$", block.group("body"), re.MULTILINE)
+        if equation is not None:
+            equations[" ".join(equation.group("name").lower().split())] = int(block.group("number"))
+
+    names = [target.solver for target in linear_targets(sim.config)]
+
+    assert len(names) >= 3
+    assert [equations[name] for name in names] == sorted(equations[name] for name in names)

@@ -11,7 +11,7 @@ from femforge.elmer.config.common.constants import Constants
 from femforge.elmer.config.common.generic import GenericSolver
 from femforge.elmer.config.common.operating_point import OperatingPoint
 from femforge.elmer.config.common.simulation import CoordinateSystem, SimulationSettings
-from femforge.elmer.config.common.solver_base import LinearSolverType, LinearSystem, NonlinearSystem, SolverT, SteadyState
+from femforge.elmer.config.common.solver_base import IterativeMethod, LinearSolverType, LinearSystem, NonlinearSystem, SolverT, SteadyState
 from femforge.elmer.config.electromagnetism.coil_current import CoilCurrentSolver
 from femforge.elmer.config.electromagnetism.electrostatics import ElectrostaticsSolver
 from femforge.elmer.config.electromagnetism.magnetodynamics import MagnetoDynamicsCalcFieldsSolver, MagnetoDynamicsSolver
@@ -21,7 +21,7 @@ from femforge.elmer.config.mechanics.stress import StressSolver
 from femforge.elmer.config.output.result_output import ResultOutputSolver
 from femforge.elmer.config.output.save_scalars import SaveScalarsSolver
 from femforge.elmer.config.thermal.heat import HeatSolver
-from femforge.elmer.solver_log import LoopTargets, normalize_solver_key
+from femforge.elmer.solver_log import LinearTarget, LoopTargets, normalize_solver_key
 from femforge.elmer.variables import ElmerVariable
 
 
@@ -124,3 +124,27 @@ def convergence_targets(config: PhysicsConfig) -> dict[tuple[str, Literal["NS", 
             )
 
     return targets
+
+
+def linear_targets(config: PhysicsConfig) -> tuple[LinearTarget, ...]:
+    """The linear-solve settings of every solver in the stack that solves a linear system, in stack order."""
+    targets: list[LinearTarget] = []
+
+    for solver in config.solvers:
+        if not isinstance(solver, LinearSystem):
+            continue
+
+        # Elmer solves iteratively when the sif names no Linear System Solver.
+        iterative: bool = solver.linear_system_solver is not LinearSolverType.DIRECT
+        method: IterativeMethod | None = solver.linear_system_iterative_method if iterative else None
+        targets.append(
+            LinearTarget(
+                solver=normalize_solver_key(solver.equation),
+                iterative=iterative,
+                method=method.value if method is not None else None,
+                tolerance=solver.linear_system_convergence_tolerance,
+                max_iterations=solver.linear_system_max_iterations,
+            ),
+        )
+
+    return tuple(targets)

@@ -6,16 +6,31 @@ import io
 import json
 import threading
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from femforge.common.log import log
+from femforge.elmer.runtime import solve
 from femforge.elmer.runtime.backend import ExecutionBackend
 from femforge.elmer.runtime.solve import solve_case
-from femforge.elmer.solver_log import ConvergenceSample, ConvergenceTargets, LoopTargets, SolveFinished, SolverEvent, SolverMessage
+from femforge.elmer.solver_log import (
+    ConvergenceSample,
+    ConvergenceTargets,
+    LinearTarget,
+    LoopTargets,
+    SolveFinished,
+    SolverEvent,
+    SolverLogParser,
+    SolverMessage,
+    StallReason,
+)
 from femforge.execution.streaming import CancelToken, CommandResult, LineSink
+
+STALL_LOG = Path(__file__).parents[1] / "fixtures" / "stall" / "lucid_cactus.log"
+ELASTICITY: tuple[LinearTarget, ...] = (LinearTarget(solver="linear elasticity", iterative=True, method="CG", tolerance=1e-8, max_iterations=5000),)
 
 FIXTURE_LINES: list[str] = [
     "MAIN: Loading input file",
@@ -30,9 +45,10 @@ FIXTURE_LINES: list[str] = [
 class _ScriptedBackend(ExecutionBackend):
     """Relays canned solver lines through ``on_line`` and returns a fixed exit, the way a remote backend relays a stream."""
 
-    def __init__(self, lines: list[str], returncode: int = 0) -> None:
+    def __init__(self, lines: list[str], returncode: int = 0, *, stop_when_cancelled: bool = False) -> None:
         self.lines: list[str] = lines
         self.returncode: int = returncode
+        self.stop_when_cancelled: bool = stop_when_cancelled
         self.calls: list[tuple[Path, int, float | None, CancelToken | None]] = []
 
     @property
@@ -79,6 +95,9 @@ class _ScriptedBackend(ExecutionBackend):
         log_path = sim_dir / "elmersolver.log"
         with log_path.open("w", encoding="utf-8") as stream:
             for line in self.lines:
+                if self.stop_when_cancelled and cancel is not None and cancel.is_set():
+                    break
+
                 _ = stream.write(line + "\n")
                 if on_line is not None:
                     on_line(line + "\n")
@@ -160,4 +179,73 @@ def test_solve_case_forwards_the_ranks_the_timeout_and_the_cancel_token(tmp_path
 
     _ = solve_case(backend, tmp_path, n_procs=4, timeout_s=30.0, cancel=cancel)
 
-    assert backend.calls == [(tmp_path, 4, 30.0, cancel)]
+    assert [call[:3] for call in backend.calls] == [(tmp_path, 4, 30.0)]
+    token = backend.calls[0][3]
+    assert token is not None and not token.is_set()
+    cancel.set()
+    assert token.is_set()
+
+
+class _FakeClock:
+    """A clock that advances one second per call."""
+
+    def __init__(self) -> None:
+        self.now: float = 0.0
+
+    def __call__(self) -> float:
+        self.now += 1.0
+        return self.now
+
+
+def _records[T](level: str, run: Callable[[], T]) -> tuple[T, list[tuple[str, dict[str, object]]]]:
+    records: list[tuple[str, dict[str, object]]] = []
+    sink_id: int = log.add(lambda message: records.append((message.record["message"], dict(message.record["extra"]))), level=level)
+    try:
+        out: T = run()
+    finally:
+        log.remove(sink_id)
+
+    return out, records
+
+
+def test_a_stalled_linear_solve_is_stopped_and_reported_once(tmp_path: Path) -> None:
+    lines = [*STALL_LOG.read_text(encoding="utf-8").splitlines(), "ComputeChange: NS (ITER=1) (NRM,RELC): ( 1.0 2.0 ) :: linear elasticity", "       1 0.5000E+00"]
+    backend = _ScriptedBackend(lines)
+
+    run, records = _records("WARNING", lambda: solve_case(backend, tmp_path, linear_targets=ELASTICITY))
+
+    assert run.stall is not None
+    assert run.stall.reason is StallReason.REPEATED
+    assert run.stall.iteration == 1339
+
+    token = backend.calls[0][3]
+    assert token is not None and token.is_set()
+
+    stalled = [(message, extra) for message, extra in records if message.startswith("stalled:")]
+    assert len(stalled) == 1
+    assert stalled[0][1]["iteration"] == 1339
+    assert stalled[0][1]["solver"] == "linear elasticity"
+
+
+def test_the_backend_sees_the_stall_as_a_cancel(tmp_path: Path) -> None:
+    backend = _ScriptedBackend(STALL_LOG.read_text(encoding="utf-8").splitlines(), stop_when_cancelled=True)
+
+    run = solve_case(backend, tmp_path, linear_targets=ELASTICITY)
+
+    assert run.stall is not None
+    relayed = (tmp_path / "elmersolver.log").read_text(encoding="utf-8").splitlines()
+    assert relayed[-1].split() == ["1339", "0.3138E-07"]
+
+
+def test_a_long_linear_solve_logs_a_progress_line_with_its_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(solve, "SolverLogParser", partial(SolverLogParser, clock=_FakeClock()))
+    lines = [f"{iteration:>8} {1.0 / iteration:.4E}" for iteration in range(1, 40)]
+
+    _, records = _records("INFO", lambda: solve_case(_ScriptedBackend(lines), tmp_path, linear_targets=ELASTICITY))
+
+    beats = [(message, extra) for message, extra in records if " r = " in message]
+    assert len(beats) == 1
+    message, extra = beats[0]
+    assert "31/5000" in message
+    assert {"solver", "method", "iteration", "max_iterations", "residual", "tolerance", "best_residual", "best_iteration", "started", "elapsed", "fraction"} <= set(extra)
+    assert extra["iteration"] == 31 and extra["method"] == "CG" and extra["elapsed"] == 30.0
