@@ -71,7 +71,8 @@ def test_a_task_that_raises_writes_its_type_message_and_traceback(tmp_path: Path
 
     assert code == TaskExit.FAILED and isinstance(outcome, TaskFailed)
     assert (outcome.error, outcome.message) == ("RuntimeError", "boom")
-    assert "in boom" in outcome.traceback
+    assert "in boom" in outcome.traceback and outcome.traceback.rstrip().endswith("RuntimeError: boom")
+    assert "task_worker" not in outcome.traceback, "the traceback opens at the task's own frame"
 
 
 def test_a_label_the_plan_lacks_fails_with_a_lookup_error(tmp_path: Path) -> None:

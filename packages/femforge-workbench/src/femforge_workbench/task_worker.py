@@ -27,6 +27,15 @@ def interrupt(signum: int, frame: FrameType | None) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Runs the task the job file `JOB` names and writes the outcome file `OUTCOME`; a break ends it with no outcome."""
+
+    def user_traceback(error: Exception) -> str:
+        """The traceback of `error` from the first frame outside this worker."""
+        frames = error.__traceback__
+        while frames is not None and frames.tb_frame.f_code.co_filename == __file__:
+            frames = frames.tb_next
+
+        return "".join(traceback.format_exception(type(error), error, frames))
+
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 2:
         print(f"usage: python -m {WORKER_MODULE} JOB OUTCOME", file=sys.stderr)
@@ -53,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _ = signal.signal(BREAK_SIGNUM, signal.SIG_IGN)
     except Exception as error:  # noqa: BLE001 - every failure becomes an outcome the board reads
         log.bind(**{str(LogKey.TASK): job.label}).error(f"Task failed: {type(error).__name__}: {error}")
-        failed = TaskFailed(error=type(error).__name__, message=str(error), traceback=traceback.format_exc())
+        failed = TaskFailed(error=type(error).__name__, message=str(error), traceback=user_traceback(error))
         _ = outcome.write_text(failed.model_dump_json(), encoding="utf-8")
         return TaskExit.FAILED
 
