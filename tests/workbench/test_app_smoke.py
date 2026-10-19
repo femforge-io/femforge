@@ -30,6 +30,7 @@ from femforge_workbench.panels.launcher import LauncherPanelId  # noqa: E402
 from femforge_workbench.panels.scene import STILL_SCALE, ScenePanel, View, ViewMode  # noqa: E402
 from femforge_workbench.panels.table import TablePanel  # noqa: E402
 from femforge_workbench.registry import DEMO  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard, TaskPhase  # noqa: E402
 
 
 def _shell(name: str, root: Path) -> Workbench:
@@ -71,7 +72,8 @@ def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_se
 
     assert prop(root, "className") == "flex h-full flex-col"
     assert children[0]["tag"] == "ff-theme" and prop(children[0], "dark") == {"js": str(StateVar.DARK)}
-    assert [child["tag"] for child in children[1:]] == ["header", "ff-tour", "main"]
+    assert [child["tag"] for child in children[1:]] == ["header", "ff-tour", "main", "ReactIf"]
+    assert prop(children[-1], "value") == {"js": f"{StateVar.TASKS}.length"}, "the task strip shows only when a script passed tasks"
     header = cast("list[dict[str, object]]", children[1]["children"])
     assert [child["tag"] for child in header[:2]] == ["div", "div"], "the brand and a divider lead the title"
     assert [prop(node, "src") for node in find(header[0], "img")] == ["/__ff/ff-logo.svg"] and texts(find(header[0], "span")[0]) == ["femforge"]
@@ -81,7 +83,7 @@ def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_se
     slot = cast("dict[str, object]", render["slot"])
     assert slot["params"] == ["panel"]
     assert [prop(node, "templateName") for node in find(slot, "trame-template")] == [{"js": "panel.templateName"}]
-    assert [node.get("props") for node in find(root, "ReactFor")] == [{"items": {"js": str(StateVar.WORKBENCHES)}, "name": "card"}]
+    assert [node.get("props") for node in find(root, "ReactFor")] == [{"items": {"js": str(StateVar.WORKBENCHES)}, "name": "card"}, {"items": {"js": str(StateVar.TASKS)}, "name": "task"}]
     assert cast("dict[str, object]", cast("dict[str, object]", prop(switcher[0], "onSelect"))["callback"])["args"] == {"js": "[card.name]"}
     assert prop(close_all[0], "value") == {"js": f"{StateVar.OPENED}.length"} and texts(find(close_all[0], "ff-button")[0]) == ["Close All"]
     assert [prop(node, "templateName") for node in find(root, "trame-template")][0] == str(Template.HEADER)
@@ -352,3 +354,42 @@ def test_a_workbench_can_put_controls_in_the_header_bound_to_the_state(tmp_path:
         return shown
 
     assert asyncio.run(run()) == ["beta"]
+
+
+def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path) -> None:
+    app = _shell("smoke-tasks", tmp_path)
+    app.board = TaskBoard(app, "main:tasks", [Task("Solve 3D", sys.gettrace), Task("Planar 2D", sys.gettrace)], path=None, roots=[])
+    root = cast("dict[str, object]", app.ui.html)
+
+    toggles = [node for node in find(root, "button") if prop(node, "aria-controls") == "task-sheet"]
+    summary = [node for node in find(root, "span") if prop(node, "role") == "status"]
+    assert len(toggles) == 1 and prop(toggles[0], "aria-expanded") == {"js": str(StateVar.TASK_SHEET)}
+    assert len(summary) == 1 and prop(summary[0], "aria-live") == "polite"
+    assert app.state[StateVar.TASK_SUMMARY] == "0 of 2 Done"
+    assert cast("dict[str, object]", app.state[StateVar.TASK_FOCUS])["label"] == "Solve 3D"
+
+    app.toggle_tasks()
+    assert app.state[StateVar.TASK_SHEET] is True and app.persist.load(app.scope, StateKey.TASK_SHEET) == {"open": True}
+    app.on_task_key("Escape")
+    assert app.state[StateVar.TASK_SHEET] is False
+
+    app.cancel_task("Planar 2D")
+    armed = app.state[StateVar.TASK_CONFIRM]
+    app.cancel_task("Planar 2D")
+    assert armed == "Planar 2D" and app.state[StateVar.TASK_CONFIRM] == "", "the second press cancels"
+    assert app.board.rows["Planar 2D"].phase is TaskPhase.STOPPED
+
+    app.cancel_task("Solve 3D")
+    app.disarm_cancel("Solve 3D")
+    assert app.state[StateVar.TASK_CONFIRM] == "" and app.board.rows["Solve 3D"].phase is TaskPhase.QUEUED
+
+    app.retry_task("Planar 2D")
+    assert app.board.queue == ["Solve 3D", "Planar 2D"]
+
+    app.toggle_task_details("Planar 2D")
+    assert app.state[StateVar.TASK_DETAILS] == "Planar 2D"
+    app.toggle_task_details("Planar 2D")
+    assert app.state[StateVar.TASK_DETAILS] == ""
+
+    app.open_task_run("r1")
+    assert app.state[StateVar.STATUS] == "no field viewer to open the run in"

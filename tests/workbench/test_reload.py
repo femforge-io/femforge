@@ -53,7 +53,9 @@ from femforge_workbench.panels.scene import ScenePanel, View, ViewMode  # noqa: 
 from femforge_workbench.panels.table import TablePanel  # noqa: E402
 from femforge_workbench.persist import LocalJsonStore, StateKey  # noqa: E402
 from femforge_workbench.registry import DEMO, panel  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard, TaskView  # noqa: E402
 from femforge_workbench.widgets.dock import Dock  # noqa: E402
+from tests.workbench.test_tasks import Script, Spawner  # noqa: E402
 
 
 TIMEOUT = 20
@@ -663,9 +665,10 @@ def test_the_shell_core_is_the_supervisors_and_everything_else_rebuilds_in_proce
     assert len(fired) == 1
 
     files = shell_files()
-    assert [file.name for file in files] == ["app.py", "cli.py", "dev.py", "dock.py", "persist.py", "registry.py", "reload.py", "runner.py", "serve.py", "settings.py", "element.py", "module.py"]
+    assert [file.name for file in files] == ["app.py", "cli.py", "dev.py", "dock.py", "persist.py", "registry.py", "reload.py", "runner.py", "serve.py", "settings.py", "tasks.py", "element.py", "module.py"]
     assert all(file.exists() for file in files) and len(SHELL_MODULES) == len(files)
     assert persistent("femforge_workbench.app") and persistent("femforge_workbench.widgets.element") and persistent("femforge.common.log")
+    assert persistent("femforge_workbench.tasks"), "the live board and the Task class a plan is checked against survive a purge"
     assert not persistent("femforge_workbench.panels") and not persistent("femforge_workbench.widgets.button") and not persistent("femforge_workbench.theme")
     assert not persistent("femforge_workbench.demo") and not persistent("femforge_workbench.widgets")
     assert len(PERSISTENT_PACKAGES) == len(SHELL_MODULES) + 1
@@ -714,3 +717,69 @@ def test_the_page_follows_a_supervised_server_only_under_dev(tmp_path: Path, mon
     assert "method: 'HEAD'" in script and "location.reload()" in script
     assert "/__ff/version.json" in script and "cache: 'no-store'" in script and "cache: 'reload'" in script
     assert all(asset in script for asset in assets()) and "window.Ff" in script
+
+
+PLAN = (
+    "from femforge_workbench.tasks import Task\n"
+    "LABEL = {label!r}\n"
+    "def run():\n"
+    "    pass\n"
+    "def tasks():\n"
+    "    return [Task(LABEL, run)]\n"
+)
+
+
+class _LoopHost:
+    """A task board's shell that runs marshalled calls on the test's loop and keeps every view."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.views: list[TaskView] = []
+
+    def marshal(self, fn: Callable[..., object], *args: object) -> None:
+        _ = self.loop.call_soon_threadsafe(fn, *args)
+
+    def show_tasks(self, view: TaskView) -> None:
+        self.views.append(view)
+
+    def follow_run(self, previous: str, current: str) -> None:
+        pass
+
+
+def test_a_save_resubmits_the_edited_plan_and_a_broken_one_keeps_the_rows(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    package = src / "taskplan"
+    package.mkdir(parents=True)
+    _ = (package / "__init__.py").write_text("", encoding="utf-8")
+    module = package / "plan.py"
+    _ = module.write_text(PLAN.format(label="First"), encoding="utf-8")
+    sys.path.insert(0, str(src))
+
+    def save(text: str, version: int) -> None:
+        _ = module.write_text(text, encoding="utf-8")
+        stamp = 1_700_000_000_000_000_000 + version * 1_000_000_000
+        os.utime(module, ns=(stamp, stamp))
+
+    async def scenario() -> tuple[list[str], list[str], str | None]:
+        host = _LoopHost(asyncio.get_running_loop())
+        board = TaskBoard(host, "taskplan.plan:tasks", [Task("First", time.time)], path=None, roots=[src], spawn=Spawner(lambda label, nth: Script()))
+        board.start()
+        save(PLAN.format(label="Second"), 2)
+        await _await(lambda: "Second" in board.rows)
+        edited = list(board.rows)
+        save(BROKEN, 3)
+        await _await(lambda: board.error is not None)
+        board.shutdown()
+
+        return edited, list(board.rows), host.views[-1].error
+
+    try:
+        with _Modules():
+            edited, kept, error = asyncio.run(scenario())
+    finally:
+        sys.path.remove(str(src))
+        for name in [name for name in sys.modules if name.startswith("taskplan")]:
+            del sys.modules[name]
+
+    assert edited == ["Second"], "the save listed the edited plan"
+    assert kept == ["Second"] and error is not None and error.startswith("SyntaxError"), "a broken save keeps the rows and says why"

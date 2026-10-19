@@ -37,7 +37,7 @@ REBUILD_LOCK = threading.Lock()
 WATCHING_LOCK = threading.Lock()
 """Guards the watching list alone, never held across a rebuild, so stopping a reloader does not wait for one."""
 
-SHELL_MODULES = ("app", "cli", "dev", "dock", "persist", "registry", "reload", "runner", "serve", "settings", "widgets.element", "widgets.module")
+SHELL_MODULES = ("app", "cli", "dev", "dock", "persist", "registry", "reload", "runner", "serve", "settings", "tasks", "widgets.element", "widgets.module")
 """The shell core, relative to the workbench package: never purged in process, restarted by the --dev supervisor instead."""
 
 PERSISTENT_PACKAGES = (*(f"{femforge_workbench.__name__}.{name}" for name in SHELL_MODULES), "femforge.common.log")

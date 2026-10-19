@@ -72,6 +72,7 @@ INDEX_UNREADABLE = title("run index unreadable")
 SOLVING_AS = title("solving")
 NO_INDEX_NOTICE = f"No run index. Pass telemetry to field_viewer or set {TELEMETRY_ENV} to list runs here."
 NO_RUNS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving; the solver's progress and any errors show in its terminal."
+NO_RUNS_TASKS_NOTICE = "No runs yet. The first run opens here as soon as it starts solving; its progress and any errors show in the task strip below."
 RUN_MENU = "max-w-[36rem]"
 
 CLIM_STEPS = 1000
@@ -773,7 +774,7 @@ class FieldViewerController(TrameComponent):
         """The run open or waited on, kept in the picker however the index changes."""
         self.entries = merged(self.indexed, [], None, "")
         """The runs the picker offers."""
-        listed = NO_RUN if self.entries else NO_RUNS_NOTICE
+        listed = NO_RUN if self.entries else NO_RUNS_TASKS_NOTICE if app.board is not None else NO_RUNS_NOTICE
         self.note = listed if telemetry is not None else NO_INDEX_NOTICE
         """What the empty view says, for a view built while no run is shown."""
         self.feed = self.runs_feed(telemetry) if telemetry is not None else None
@@ -1036,6 +1037,15 @@ class FieldViewerController(TrameComponent):
                 yield
         finally:
             self.syncing = False
+
+    @controller.set(str(Hook.FIELD_FOLLOW))
+    def follow(self, previous: str, current: str) -> None:
+        """Opens a task's newer run when the viewer shows, or waits on, the task's previous one; any other view stays."""
+        if self.opened is None or self.opened.run_id != previous:
+            return
+
+        log.bind(previous=previous, run_id=current).info("Following the newer run of a task.")
+        self.open(current)
 
     @controller.set(str(Hook.FIELD_OPEN))
     def open(self, location: Location) -> None:

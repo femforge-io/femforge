@@ -3,6 +3,7 @@
 import ctypes
 import os
 import signal
+import subprocess
 import sys
 import time
 from contextlib import suppress
@@ -21,6 +22,14 @@ CREATION_FLAGS: Final = 0x00000004 if WINDOWS else 0
 
 NEW_SESSION: Final = not WINDOWS
 """start_new_session for Popen: on POSIX the child leads a process group of its own, whose id is its pid."""
+
+if sys.platform == "win32":
+    BREAK_SIGNAL = signal.CTRL_BREAK_EVENT
+    NEW_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
+    """The child gets its own console group, so the break reaches it and not its parent."""
+else:
+    BREAK_SIGNAL = signal.SIGTERM
+    NEW_GROUP = 0
 
 KILL_GRACE: Final = 2.0
 """Seconds a terminated tree gets before what is left is killed."""
@@ -159,6 +168,18 @@ class ProcessTree:
             os.killpg(self.pid, signal.SIGKILL)
 
         return held
+
+    def interrupt(self) -> bool:
+        """Sends `BREAK_SIGNAL` to the tree's process group, which a child spawned with `NEW_GROUP` leads; False when it cannot be sent, as without a console."""
+        try:
+            if WINDOWS:
+                os.kill(self.pid, BREAK_SIGNAL)
+            else:
+                os.killpg(self.pid, BREAK_SIGNAL)
+        except OSError:
+            return False
+
+        return True
 
     def close(self) -> None:
         """Ends anything still in the tree and releases it: a job dies with its handle, a group gets SIGKILL."""

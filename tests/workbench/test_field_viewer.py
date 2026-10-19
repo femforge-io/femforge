@@ -48,6 +48,7 @@ import pyvista as pv  # noqa: E402
 from trame.app import get_server  # noqa: E402
 
 from femforge_workbench.app import Hook, StateVar, Template, Workbench  # noqa: E402
+from femforge_workbench.tasks import Task, TaskBoard  # noqa: E402
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
@@ -72,6 +73,7 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     NO_RUN_INDEX,
     NO_RUN_SELECTED,
     NO_RUNS_NOTICE,
+    NO_RUNS_TASKS_NOTICE,
     NO_RUNS_YET,
     PICK_HOLD,
     SOLVING_AS,
@@ -1907,3 +1909,23 @@ def test_the_run_feed_runs_with_the_server_and_stops_with_the_last_panel(tmp_pat
         assert controller.scene is not None and controller.scene.run_id == "solved", "the feed opened the run once the server ran"
 
     asyncio.run(run())
+
+
+def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_replaces_its_previous_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(TELEMETRY_ENV, raising=False)
+    app = Workbench("follow", title="Fields", server=get_server("field-viewer-follow"), persist=LocalJsonStore(tmp_path / "persist"), user="tester")
+    app.board = TaskBoard(app, "main:tasks", [Task("Solve", time.time)], path=None, roots=[])
+    app.add(workbench(telemetry=tmp_path / "telemetry"))
+    controller = _controller(app)
+    viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+    opened: list[object] = []
+    monkeypatch.setattr(controller, "open", opened.append)
+
+    app.follow_run("r1", "r2")
+    controller.opened = RunEntry("r1", "r1")
+    app.follow_run("r0", "r2")
+    app.follow_run("r1", "r2")
+
+    assert app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_TASKS_NOTICE
+    assert opened == ["r2"], "only the run the viewer shows is followed"
+    assert [row["label"] for row in cast("list[dict[str, object]]", app.state[StateVar.TASKS])] == ["Solve"]
