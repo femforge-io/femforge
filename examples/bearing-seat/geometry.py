@@ -104,10 +104,9 @@ class BearingSeat(ff.Build123dGeometry):
         return bodies
 
     def model(self) -> ff.TaggedCompound:
-        """The bodies inside a padded box of air."""
+        """The bodies inside a padded cylinder of air."""
         bodies = self.bodies()
-        padding = ff.Vec3(self.domain_padding, self.domain_padding, self.domain_padding)
-        air_box = ff.boundary_box(ff.TaggedCompound(children=bodies), padding)
-        air = ff.TaggedPart([air_box], tags={ff.TagKey.MATERIAL: ff.materials.Air().tag})
+        cylinder = ff.boundary_cylinder(ff.TaggedCompound(children=bodies), padding=self.domain_padding)
+        air = ff.TaggedPart([cylinder], tags={ff.TagKey.MATERIAL: ff.materials.Air().tag})
 
         return ff.TaggedCompound(children=[*bodies, air])

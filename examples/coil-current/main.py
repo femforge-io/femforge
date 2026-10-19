@@ -82,9 +82,9 @@ class Solenoid(ff.Build123dGeometry):
             ff.TaggedPart([coil], tags={ff.TagKey.MATERIAL: COPPER.tag}, name=COIL),
             ff.TaggedPart([plunger], tags={ff.TagKey.MATERIAL: STEEL.tag}, name=PLUNGER),
         ]
-        box = ff.boundary_box(ff.TaggedCompound(children=bodies), ff.Vec3(self.padding, self.padding, self.padding))
+        air = ff.boundary_cylinder(ff.TaggedCompound(children=bodies), padding=self.padding)
 
-        return ff.TaggedCompound(children=[*bodies, ff.TaggedPart([box], tags={ff.TagKey.MATERIAL: AIR.tag})])
+        return ff.TaggedCompound(children=[*bodies, ff.TaggedPart([air], tags={ff.TagKey.MATERIAL: AIR.tag})])
 
 
 def config(gap: float = 2.0) -> ff.SimulationConfig:

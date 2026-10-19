@@ -30,7 +30,7 @@ AIR = ff.materials.Air()
 
 
 class MagnetAndPlate(ff.Build123dGeometry):
-    """A disc magnet with a steel plate above it, both centered on the Z axis, inside a box of air."""
+    """A disc magnet with a steel plate above it, both centered on the Z axis, inside a cylinder of air."""
 
     gap: float
     """`[mm]`: Air gap between the top of the magnet and the bottom of the plate."""
@@ -59,8 +59,7 @@ class MagnetAndPlate(ff.Build123dGeometry):
         magnet = ff.TaggedPart([disc(self.magnet_diameter, self.magnet_thickness, 0)], tags={ff.TagKey.MATERIAL: N52.tag}, name=MAGNET)
         plate = ff.TaggedPart([disc(self.plate_diameter, self.plate_thickness, self.magnet_thickness + self.gap)], tags={ff.TagKey.MATERIAL: STEEL.tag}, name=PLATE)
 
-        box = ff.boundary_box(ff.TaggedCompound(children=[magnet, plate]), ff.Vec3(self.padding, self.padding, self.padding))
-        air = ff.TaggedPart([box], tags={ff.TagKey.MATERIAL: AIR.tag})
+        air = ff.TaggedPart([ff.boundary_cylinder(ff.TaggedCompound(children=[magnet, plate]), padding=self.padding)], tags={ff.TagKey.MATERIAL: AIR.tag})
 
         return ff.TaggedCompound(children=[magnet, plate, air])
 
