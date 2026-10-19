@@ -10,7 +10,7 @@ You need Docker running and a clone of this repository. The [install guide](http
 uv run examples/thermal/main.py
 ```
 
-The solve takes seconds. The terminal logs the peak temperature, and your browser opens the workbench at http://localhost:8080. Press `Ctrl+C` to stop.
+Your browser opens the workbench at http://localhost:8080 at once, and the solve runs in the background. It takes seconds: the task strip under the view shows its progress, and the view opens the run when it lands. The terminal logs the peak temperature. Press `Ctrl+C` to stop.
 
 ## What to change
 

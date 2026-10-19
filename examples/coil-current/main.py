@@ -1,5 +1,6 @@
-"""A solenoid in a steel frame pulls a steel plunger toward the frame's bottom plate: solve two gaps on the axisymmetric section, then browse the field in a workbench."""
+"""A solenoid in a steel frame pulls a steel plunger toward the frame's bottom plate: solve two gaps on the axisymmetric section in the background while a workbench shows the field."""
 
+from functools import partial
 from pathlib import Path
 
 import build123d as b3d
@@ -108,26 +109,27 @@ def config(gap: float = 2.0) -> ff.SimulationConfig:
     )
 
 
-def solve() -> None:
-    """Solve every gap in Docker and log the axial force on the plunger, negative toward the bottom plate."""
-    driver = ff.Driver(runs_dir=RUNS, telemetry=TELEMETRY, docker=True)
+def solve(gap: float) -> float:
+    """`F` `[N]`: The axial force on the plunger ``gap`` mm above the bottom plate, negative toward it, solved in Docker."""
+    result = ff.Driver(runs_dir=RUNS, telemetry=TELEMETRY, docker=True).evaluate(config(gap))
+    newtons = result.axial_force(PLUNGER).m_as("newton")
+    ff.log.success(f"{gap:g} mm gap: {newtons:.2f} N on the plunger, run {result.run_id}")
 
-    for gap in GAPS:
-        result = driver.evaluate(config(gap))
-        newtons = result.axial_force(PLUNGER).m_as("newton")
-        ff.log.success(f"{gap:g} mm gap: {newtons:.2f} N on the plunger, run {result.run_id}")
+    return newtons
+
+
+def solves() -> list[ff.workbench.Task]:
+    """One task per gap, which the workbench solves in the background and lists again on every save of this file."""
+    return [ff.workbench.Task(f"Gap {gap:g} mm", partial(solve, gap)) for gap in GAPS]
 
 
 def viewer() -> ff.workbench.Split:
-    """The field viewer on the newest run, coloring the flux density with the air hidden."""
+    """The field viewer coloring the flux density with the air hidden; it opens the newest run as soon as one lands."""
     display = ff.DisplaySpec(field="magnetic flux density", mode=ff.DisplayMode.MAGNITUDE, hidden_bodies=("AIR",))
-    runs = ff.find_runs(RUNS)
 
-    return ff.workbench.field_viewer(runs[0] if runs else None, display=display, telemetry=TELEMETRY)
+    return ff.workbench.field_viewer(display=display, telemetry=TELEMETRY)
 
 
 if __name__ == "__main__":
-    solve()
-
-    # A function, not a built dock, so every save of this file rebuilds the workbench.
-    ff.workbench.show(viewer, title="Coil Current", window=ff.workbench.Window.BROWSER)
+    # Functions, not a built dock and a list, so every save of this file rebuilds the workbench and solves the edited gaps.
+    ff.workbench.show(viewer, tasks=solves, title="Coil Current", window=ff.workbench.Window.BROWSER)

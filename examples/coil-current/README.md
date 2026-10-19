@@ -10,7 +10,7 @@ You need Docker running and a clone of this repository. The [install guide](http
 uv run examples/coil-current/main.py
 ```
 
-The two solves take seconds. The terminal logs the force on the plunger for each gap, negative toward the bottom plate, and your browser opens the workbench at http://localhost:8080. Press `Ctrl+C` to stop.
+Your browser opens the workbench at http://localhost:8080 at once, and the two solves run in the background, one after the other. They take seconds: the task strip under the view shows each gap's progress. The terminal logs the force on the plunger for each gap, negative toward the bottom plate. Press `Ctrl+C` to stop.
 
 ## What to change
 

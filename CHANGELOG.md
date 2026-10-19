@@ -22,6 +22,8 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - `default_display(run)` picks the display a run opens on: its solver stack's primary field (`PhysicsConfig.primary_variable`), the component its surface forces share, and field lines with opacity mapping only for a flux, field or current (`ElmerVariable.lines_by_default`).
 - The driver stops a linear solve whose residual stops improving, marks the run `stalled`, and records the reason and the last residuals in the manifest; a linear solve logs a progress line every 30 s.
 - `Axisymmetric` and `Cartesian2D` check the authored model before sectioning it. `Frame.check_geometry` raises `FrameGeometryError`, listing every body or named face that is not a solid of revolution about the axis, or not a prism through the thickness, with its mismatch; the solids or faces that share a name are measured as one. `boundary_cylinder` bounds an axisymmetric model with a cylinder of air, and the run manifest records the check as `geometry_check`, on a pass and on a failure.
+- `ff.workbench.show(..., tasks=)` runs a script's tasks in background child processes, one at a time, while the workbench serves, with a task strip under the dock that shows each task's stage, progress and failure and offers Open, Cancel and Retry; `ff.workbench.Task` labels a task. A save lists the tasks again, and Ctrl+C or closing the window stops the running one and releases its run.
+- Driver and solve records bind the keys of the new `LogKey` enum: the run directory, the stage, the solver and the share of convergence covered.
 
 ### Changed
 
@@ -40,6 +42,8 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.
 - Cached sections and the runs built on them are rebuilt on first use.
 - `RunStatus` is a `StrEnum` with `STALLED`; the manifest's `running` and `abandoned` are `LifecycleStatus`.
+- The `femforge new` template and the examples solve through `show(tasks=)`; bearing-seat no longer solves on a daemon thread.
+- The launcher's script runs are `ScriptRun`, `ScriptStatus` and `ScriptField` in `femforge_workbench.runner`, for `Task`, `TaskStatus` and `TaskField`.
 
 ### Fixed
 

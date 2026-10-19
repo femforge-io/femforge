@@ -58,6 +58,20 @@ def counter() -> Split:
 
 The trame server runs on one asyncio loop. A reloader or a monitor that works on another thread hands its result to the loop through `marshal`, which wraps `call_soon_threadsafe` (`packages/femforge-workbench/src/femforge_workbench/app.py:683-688`). A state change made from such a callback runs inside `with self.state:`, because only a trame handler flushes state on its own (`packages/femforge-workbench/src/femforge_workbench/app.py:519-524`).
 
+### Background tasks
+
+`show(..., tasks=)` hands a script's solves to a [TaskBoard][femforge_workbench.tasks.TaskBoard], which runs each task in a child process of its own, one at a time (`packages/femforge-workbench/src/femforge_workbench/tasks.py`). Threads would not do:
+
+- OCC holds the GIL. A 3.2 s boolean on a worker thread blocked the server loop for over 2 s, and geometry building, sectioning, the frame check and the result parse all run OCC; only meshing has a process of its own (`WorkerMesher`).
+- A save purges every reloadable module. A solve still running on a thread would import a new generation of a class halfway, and `isinstance` checks across the two generations fail.
+- A child imports fresh code on each start, a crash in OCC or gmsh never reaches the server, and its job object takes ElmerSolver down with it. The price is about 3.4 s of start-up per task.
+
+The child, `python -m femforge_workbench.task_worker JOB OUTCOME`, imports the factory by its `module:attr` target, lists the plan again and runs the task with the job's label, so nothing is pickled (`packages/femforge-workbench/src/femforge_workbench/task_worker.py`). It logs JSON lines and writes a done or failed outcome file, the `WorkerMesher` pattern.
+
+Its records reach the board on stdout. The board reads the bound `LogKey` fields, the run id, the stage, the run directory and the progress, to move the row, and relays each record to its terminal under `RELAYED_ROUTE`, a telemetry route no sink stores. The child stores its own records, so they land in the log store once (`src/femforge/common/log.py`).
+
+A stop is graceful first. The child leads its own console group (`NEW_GROUP`), and `ProcessTree.interrupt` sends it the break, which the worker turns into `KeyboardInterrupt`, so the Driver's cleanup releases its claim (`packages/femforge-workbench/src/femforge_workbench/process_tree.py`). A child still alive after 10 s has its tree killed, and `reap_runs` breaks the claim it left, so the next run need not wait out the 120 s stale window. The shell stops the board on exit, and `show` stops it again when the server raises.
+
 ## The widget library
 
 Each wrapper subclasses `Element` and passes `locals()` to it. Every declared parameter becomes a React prop: a trailing underscore is stripped, `aria_label` is renamed, the rest is camelCased, and a parameter named `on_*` becomes an event (`packages/femforge-workbench/src/femforge_workbench/widgets/element.py:73-81`, `packages/femforge-workbench/src/femforge_workbench/widgets/element.py:102-121`). `model` stays on the Python side and binds a state variable that the control writes in the browser (`packages/femforge-workbench/src/femforge_workbench/widgets/element.py:18-19`). A wrapper that needs a handle takes a `ref` from `next_ref` and calls component methods through it, as [Dock][femforge_workbench.widgets.dock.Dock] does for `addPanel` and `restoreLayout` (`packages/femforge-workbench/src/femforge_workbench/widgets/dock.py:51-72`).

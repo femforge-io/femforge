@@ -1,4 +1,4 @@
-"""A copper puck dissipates 1 W on an FR4 board that still air cools: solve the steady temperature, then browse it in a workbench."""
+"""A copper puck dissipates 1 W on an FR4 board that still air cools: solve the steady temperature in the background while a workbench shows it."""
 
 from math import pi
 from pathlib import Path
@@ -94,16 +94,18 @@ def solve() -> ff.Result:
     return result
 
 
-def viewer() -> ff.workbench.Split:
-    """The field viewer on the newest run, coloring the temperature."""
-    display = ff.DisplaySpec(field="temperature", colormap="inferno")
-    runs = ff.find_runs(RUNS)
+def solves() -> list[ff.workbench.Task]:
+    """The 1 W solve as a task, which the workbench runs in the background and again after every save of this file."""
+    return [ff.workbench.Task("Puck at 1 W", solve)]
 
-    return ff.workbench.field_viewer(runs[0] if runs else None, display=display, telemetry=TELEMETRY)
+
+def viewer() -> ff.workbench.Split:
+    """The field viewer coloring the temperature; it opens the newest run as soon as one lands."""
+    display = ff.DisplaySpec(field="temperature", colormap="inferno")
+
+    return ff.workbench.field_viewer(display=display, telemetry=TELEMETRY)
 
 
 if __name__ == "__main__":
-    _ = solve()
-
-    # A function, not a built dock, so every save of this file rebuilds the workbench.
-    ff.workbench.show(viewer, title="Thermal", window=ff.workbench.Window.BROWSER)
+    # Functions, not a built dock and a list, so every save of this file rebuilds the workbench and solves the edit.
+    ff.workbench.show(viewer, tasks=solves, title="Thermal", window=ff.workbench.Window.BROWSER)
