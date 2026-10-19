@@ -16,7 +16,7 @@ from femforge.artifacts.kind import Produced
 from femforge.artifacts.local import LocalArtifactStore
 from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock, LockOwner
 from femforge.artifacts.sidecar import ArtifactOrigin
-from femforge.frames import Axis, Axisymmetric, FrameUnion, Solid
+from femforge.frames import Axis, Axisymmetric, FrameGeometryError, FrameUnion, Solid
 from femforge.common.names import bundle_name
 from femforge.common.tags import TagKey
 from femforge.common.vector import Direction, Vec3
@@ -456,7 +456,7 @@ def test_an_authored_step_is_sectioned_once_per_file_and_frame(tmp_path: Path, m
     assert first.step_key == second.step_key
     assert Path(second.config.mesh.step) == second.sim_dir / "geometry.step"
 
-    _ = prepared("shifted", Axisymmetric(axis=Axis(origin=Vec3(0.5, 0, 0), direction=Direction(0, 0, 1))))
+    _ = prepared("shifted", Axisymmetric(axis=Axis(origin=Vec3(0, 0, 0.5), direction=Direction(0, 0, 1))))
     longer = _RodGeometry(length=12.0).build_step(tmp_path / "longer.step")
     _ = prepared("longer", Axisymmetric(), longer)
     assert sections == [authored, authored, longer]
@@ -465,6 +465,62 @@ def test_an_authored_step_is_sectioned_once_per_file_and_frame(tmp_path: Path, m
     solid = prepared("solid", Solid())
     assert solid.config.mesh.step == str(authored)
     assert sections == [authored, authored, longer]
+
+
+class _BoxedRodGeometry(Build123dGeometry):
+    """A tagged rod on the Z axis inside a box of air, which no axisymmetric frame accepts."""
+
+    def model(self) -> TaggedCompound:
+        rod = TaggedPart(b3d.Cylinder(radius=2.0, height=10.0), tags={"Material": "Steel316"})
+        air = TaggedPart([b3d.Box(20, 20, 30)], tags={"Material": "Air"})
+
+        return TaggedCompound(children=[rod, air])
+
+
+class _MeshlessDriver(Driver):
+    """A driver whose mesh stage refuses, so a run stops right after its geometry."""
+
+    def mesh(self, state: SolveState) -> None:
+        raise RuntimeError("no mesh in this test")
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["store-free", "cached"])
+def test_the_manifest_records_a_passing_geometry_check_on_every_evaluation(tmp_path: Path, cached: bool) -> None:
+    config = SimulationConfig(geometry=_RodGeometry(), frame=Axisymmetric())
+    driver = _MeshlessDriver(runs_dir=tmp_path / "runs", code_sha="sha1", artifacts=ArtifactCache(LocalArtifactStore(tmp_path / "store")) if cached else None)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="no mesh"):
+            _ = driver.evaluate(config)
+
+        check = RunManifest.load(tmp_path / "runs" / _run_name(config)).geometry_check
+
+        assert check is not None
+        assert check.passed
+        assert check.frame == "axisymmetric about Z"
+        assert [measured.body for measured in check.measured] == ["Material=Steel316"]
+
+
+def test_the_manifest_records_a_failing_geometry_check(tmp_path: Path) -> None:
+    config = SimulationConfig(geometry=_BoxedRodGeometry(), frame=Axisymmetric())
+
+    with pytest.raises(FrameGeometryError, match="Material=Air"):
+        _ = Driver(runs_dir=tmp_path / "runs", code_sha="sha1").evaluate(config)
+
+    manifest = RunManifest.load(tmp_path / "runs" / _run_name(config))
+
+    assert manifest.status == "error"
+    assert manifest.geometry_check is not None
+    assert [mismatch.body for mismatch in manifest.geometry_check.mismatches] == ["Material=Air"]
+
+
+def test_a_solid_run_records_no_geometry_check(tmp_path: Path) -> None:
+    config = SimulationConfig(geometry=_RodGeometry(), frame=Solid())
+
+    with pytest.raises(RuntimeError, match="no mesh"):
+        _ = _MeshlessDriver(runs_dir=tmp_path / "runs", code_sha="sha1").evaluate(config)
+
+    assert RunManifest.load(tmp_path / "runs" / _run_name(config)).geometry_check is None
 
 
 # --- cached mesh ----------------------------------------------------------------

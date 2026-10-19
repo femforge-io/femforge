@@ -13,8 +13,8 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 | The mesher always emits `Mesh.RecombineAll = 0`, because WhitneyAVSolver needs tetrahedra and a persisted gmsh options file can turn recombination on. | `src/femforge/meshing/gmsh_options.py:92-94` | `tests/meshing/test_gmsh_options.py::test_recombine_all_is_pinned_off` |
 | The global element size applies first, then each region takes the finest `EntityTag.mesh_size` among its tags. | `src/femforge/meshing/mesh_sizing.py:30-44`, `src/femforge/meshing/mesh_sizing.py:62-64` | `tests/meshing/test_mesh_sizing.py::test_resolve_finest_requested_size_wins` |
 | `MeshConfig.deterministic` pins gmsh to one thread, whatever `num_threads` says, so the same STEP and sizes yield the identical mesh. | `src/femforge/meshing/config.py:28-35` | `tests/meshing/test_gmsh_options.py::test_deterministic_pins_meshing_to_one_thread` |
-| ElmerGrid renumbers the groups, so `reconcile_ids` rewrites each group's id from `mesh.names` before the sif targets it. | `src/femforge/elmer/mesh_names.py:64-83`, `src/femforge/run/driver.py:619-625` | `tests/elmer/test_mesh_names.py::test_reconcile_overwrites_gmsh_tags_with_elmer_ids` |
-| The axisymmetric frame puts the radial direction on X and the symmetry axis on Y, and a section that reaches X < 0 raises, since Elmer rejects it silently. | `src/femforge/frames/axisymmetric.py:67-74`, `src/femforge/geometry/section.py:166-170` | `tests/geometry/test_section.py::test_a_section_leaking_below_x_zero_raises` |
+| ElmerGrid renumbers the groups, so `reconcile_ids` rewrites each group's id from `mesh.names` before the sif targets it. | `src/femforge/elmer/mesh_names.py:64-83`, `src/femforge/run/driver.py:635-641` | `tests/elmer/test_mesh_names.py::test_reconcile_overwrites_gmsh_tags_with_elmer_ids` |
+| The axisymmetric frame puts the radial direction on X and the symmetry axis on Y, and a section that reaches X < 0 raises, since Elmer rejects it silently. | `src/femforge/frames/axisymmetric.py:68-75`, `src/femforge/geometry/section.py:166-170` | `tests/geometry/test_section.py::test_a_section_leaking_below_x_zero_raises` |
 
 ## Solver input
 
@@ -42,10 +42,10 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 
 | Rule | Code | Test |
 | --- | --- | --- |
-| Execution settings never enter the run identity: the backend, the mesher, the rank count, retention and telemetry. | `src/femforge/run/driver.py:128` | `tests/run/test_driver.py::test_driver_mpi_processes_is_not_part_of_the_run_identity` |
-| `cache_key` hashes the config without `meta`, the STEP path and `physics.overrides`, plus the STEP key, the resolved solver stack and `RUN_PRODUCER_VERSION`, so overrides equal to the preset leave it unchanged. | `src/femforge/run/kinds.py:187-204` | `tests/run/test_manifest.py::test_cache_key_ignores_overrides_identical_to_the_preset` |
+| Execution settings never enter the run identity: the backend, the mesher, the rank count, retention and telemetry. | `src/femforge/run/driver.py:129` | `tests/run/test_driver.py::test_driver_mpi_processes_is_not_part_of_the_run_identity` |
+| `cache_key` hashes the config without `meta`, the STEP path and `physics.overrides`, plus the STEP key, the resolved solver stack and `RUN_PRODUCER_VERSION`, so overrides equal to the preset leave it unchanged. | `src/femforge/run/kinds.py:190-207` | `tests/run/test_manifest.py::test_cache_key_ignores_overrides_identical_to_the_preset` |
 | Every artifact key hashes the kind name, its producer version and the spec without its `HashExclude` fields at any depth. | `src/femforge/artifacts/keys.py:91-105` | `tests/artifacts/test_keys.py::test_keys_are_stable_and_ignore_hash_excluded_fields_at_any_depth` |
-| The mesh key hashes the `MeshSpec`, so materials' properties, conditions, physics and metadata never move it. | `src/femforge/run/kinds.py:142-184` | `tests/run/test_kinds.py::test_mesh_key_ignores_everything_that_only_changes_the_solve` |
+| The mesh key hashes the `MeshSpec`, so materials' properties, conditions, physics and metadata never move it. | `src/femforge/run/kinds.py:145-187` | `tests/run/test_kinds.py::test_mesh_key_ignores_everything_that_only_changes_the_solve` |
 | An artifact exists exactly when its `artifact.json` sidecar does, so the store writes the sidecar last, inside the staging directory, before the rename. | `src/femforge/artifacts/sidecar.py:19-20`, `src/femforge/artifacts/local.py:242-245` | `tests/artifacts/test_local_store.py::test_put_from_staging_prunes_unlisted_files_and_commits_atomically` |
 | A record's `name` sits beside its key and is always derived from the key, never read from input. | `src/femforge/artifacts/sidecar.py:80-81`, `src/femforge/artifacts/sidecar.py:107-110` | `tests/artifacts/test_sidecar.py::test_record_name_is_derived_and_survives_a_round_trip` |
 | Publishing is first-wins: the losing publisher's rename fails and its staging copy is discarded. | `src/femforge/artifacts/local.py:36-38`, `src/femforge/artifacts/local.py:244-249` | `tests/artifacts/test_local_store.py::test_two_publishers_racing_on_one_key` |
@@ -58,7 +58,7 @@ These are the narrow rules the code upholds, one per row, each with the code tha
 | Rule | Code | Test |
 | --- | --- | --- |
 | An MPI solve's scalars are read from rank 0 and never summed, since every rank writes the globally reduced row. | `src/femforge/run/parse.py:94-118` | `tests/run/test_parse.py::test_parse_mpi_rank_dats_read_rank_zero` |
-| An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:117-119`, `src/femforge/run/parse.py:224-227` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
+| An axisymmetric result scales Elmer's per-radian forces by 2π, reports only the axial component and keeps `raw` verbatim. | `src/femforge/frames/axisymmetric.py:129-131`, `src/femforge/run/parse.py:224-227` | `tests/run/test_parse.py::test_parse_axisymmetric_revolves_the_typed_vectors` |
 | The field display's automatic range is the union of every body's own robust range, hidden or styled bodies included. | `src/femforge/viz/field_display.py:535-577`, `src/femforge/viz/field_display.py:935-939` | `tests/viz/test_field_display.py::test_the_color_range_covers_every_body_however_it_is_shown` |
 | A field line ends at its first sharp reversal, where the cosine between consecutive steps drops below -0.5. | `src/femforge/viz/field_lines.py:222-259` | `tests/viz/test_field_lines.py::test_a_line_ends_at_its_first_sharp_reversal_and_a_straight_one_stays_whole` |
 

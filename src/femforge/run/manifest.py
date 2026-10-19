@@ -16,6 +16,7 @@ from femforge.config import SimulationConfig
 from femforge.elmer.config import PhysicsConfig
 from femforge.elmer.physics import Physics
 from femforge.elmer.solver_log import StallVerdict
+from femforge.frames import GeometryCheck
 from femforge.run.kinds import cache_key, mesh_key, step_key
 from femforge.run.result import ManifestStatus, MeshStats
 from femforge.run.retention import CleanupRecord
@@ -94,6 +95,9 @@ class RunManifest(BaseModel):
 
     mesh_stats: MeshStats | None = None
     """Mesh size/quality summary for consistency auditing."""
+
+    geometry_check: GeometryCheck | None = None
+    """The frame's check of the authored model, recorded on a pass and on a failure; None when the frame meshes the model as authored."""
 
     status: ManifestStatus
     """Lifecycle status: ``running`` while the pipeline executes, then the terminal solve status (mirrors Result.status), or ``abandoned`` when its claim went silent first."""

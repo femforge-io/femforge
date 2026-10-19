@@ -39,7 +39,7 @@ def config_for(
         shell_thickness=shell_thickness,
     )
 
-    # A uniform fine mesh fills the 3D air box with millions of elements; the field that sets the pull lives in and around the bodies.
+    # A uniform fine mesh fills the 3D air with millions of elements; the field that sets the pull lives in and around the bodies.
     body_size = mesh_size * ff.U.mm
     air_size = body_size * 5
 

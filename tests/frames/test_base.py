@@ -1,14 +1,33 @@
-"""The frame seam: axes, solve planes, the abstract base and the discriminated union."""
+"""The frame seam: axes, solve planes, geometry checks, the abstract base and the discriminated union."""
 
 import math
+import pickle
+from pathlib import Path
+from typing import cast
 
+import build123d as b3d
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.physics import Physics
-from femforge.frames import Axis, Axisymmetric, Cartesian2D, Frame, FrameUnion, Solid, SolvePlane, default_frame, shipped_frames
+from femforge.frames import (
+    Axis,
+    Axisymmetric,
+    BodyMismatch,
+    Cartesian2D,
+    Frame,
+    FrameCheck,
+    FrameGeometryError,
+    FrameUnion,
+    GeometryCheck,
+    Solid,
+    SolvePlane,
+    default_frame,
+    shipped_frames,
+)
 from femforge.frames.base import in_plane, least_aligned_world_axis
+from femforge.geometry.tags import TaggedCompound, TaggedPart
 from femforge.physical.units import U
 
 
@@ -151,3 +170,71 @@ def test_in_plane_keeps_a_perpendicular_direction_and_projects_the_rest() -> Non
 
     with pytest.raises(ValueError, match="parallel to"):
         _ = in_plane(Direction(0, 0, -2), normal)
+
+
+def _check(*measured: tuple[str, FrameCheck, float]) -> GeometryCheck:
+    mismatches = tuple(BodyMismatch(body=body, check=check, fraction=fraction) for body, check, fraction in measured)
+
+    return GeometryCheck(frame="axisymmetric about Z", tolerance=1e-4, measured=mismatches)
+
+
+def test_the_error_lists_every_failing_leaf_then_each_remedy_once() -> None:
+    check = _check(
+        ("Material=Air", FrameCheck.TURNED, 0.3336),
+        ("Name=Rod", FrameCheck.TURNED, 5e-5),
+        ("Name=Side", FrameCheck.TURNED, 0.411),
+    )
+    error = FrameGeometryError(check)
+
+    assert isinstance(error, ValueError)
+    assert error.check is check
+    assert [mismatch.body for mismatch in error.mismatches] == ["Material=Air", "Name=Side"]
+    assert str(error).splitlines() == [
+        "The model does not fit the frame axisymmetric about Z:",
+        "  - Material=Air: changes when turned 37° about the axis, mismatch 3.34e-01",
+        "  - Name=Side: changes when turned 37° about the axis, mismatch 4.11e-01",
+        FrameCheck.TURNED.remedy,
+    ]
+
+
+def test_the_remedies_follow_the_check_order() -> None:
+    error = FrameGeometryError(_check(("Name=Prism", FrameCheck.PRISM, 0.5), ("Name=Prism", FrameCheck.DEPTH, 1.0)))
+
+    assert str(error).splitlines()[-2:] == [FrameCheck.PRISM.remedy, FrameCheck.DEPTH.remedy]
+
+
+def test_the_error_survives_a_pickle_round_trip() -> None:
+    error = FrameGeometryError(_check(("Material=Air", FrameCheck.TURNED, 0.3336)))
+    restored = cast("object", pickle.loads(pickle.dumps(error)))
+
+    assert isinstance(restored, FrameGeometryError)
+    assert restored.check == error.check
+    assert str(restored) == str(error)
+
+
+@pytest.mark.parametrize("check", list(FrameCheck))
+def test_every_check_names_its_failure_and_its_remedy(check: FrameCheck) -> None:
+    assert check.failure
+    assert check.remedy
+
+
+def test_a_check_passes_within_its_tolerance_and_round_trips_beside_its_step(tmp_path: Path) -> None:
+    check = _check(("Name=Rod", FrameCheck.TURNED, 1e-4))
+    step = tmp_path / "geometry.step"
+
+    assert check.passed
+    check.raise_for_mismatch()
+    assert GeometryCheck.load(step) is None
+
+    check.write(step)
+
+    assert (tmp_path / "geometry.check.json").is_file()
+    assert GeometryCheck.load(step) == check
+
+
+@pytest.mark.parametrize("frame", [Axisymmetric(), Cartesian2D(thickness=10 * U.mm)])
+def test_check_geometry_raises_for_a_model_that_does_not_fit(frame: Frame) -> None:
+    wedge = TaggedCompound(children=[TaggedPart([b3d.Wedge(20, 20, 20, 5, 5, 15, 15)], name="Wedge")])
+
+    with pytest.raises(FrameGeometryError, match="Name=Wedge"):
+        frame.check_geometry(wedge)

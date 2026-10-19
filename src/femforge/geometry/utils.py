@@ -1,4 +1,4 @@
-"""build123d helpers: boundary boxes, rectangles, assembly-tree pruning and collinearity checks."""
+"""build123d helpers: boundary boxes and cylinders, rectangles, assembly-tree pruning and collinearity checks."""
 
 from typing import Any, Callable, Self, cast
 
@@ -7,6 +7,7 @@ from anytree import PostOrderIter
 from build123d.topology import shape_core, three_d
 
 from femforge.common.vector import Vec3
+from femforge.frames.base import Axis
 
 
 V = b3d.Vector
@@ -81,6 +82,31 @@ def boundary_box(shape: b3d.Compound, padding: Vec3 = Vec3(0, 0, 0)) -> b3d.Part
     result = box.part
     result.color = b3d.Color(1, 1, 1, 0.2)
     result.label = "Boundary Box"
+    return result
+
+
+def boundary_cylinder(shape: b3d.Compound, axis: Axis = Axis.Z, padding: float = 0.0) -> b3d.Part:
+    """A cylinder about ``axis`` around ``shape``'s bounding box, its diameter and length grown by ``padding``, half on each side.
+
+    Args:
+        shape: The bodies the cylinder bounds.
+        axis: The cylinder's axis, the symmetry axis of an axisymmetric model.
+        padding: How much the diameter and the length grow past the bounding box, in millimetres.
+    """
+    bounds: b3d.BoundBox = shape.bounding_box()
+    origin = b3d.Vector(*axis.origin.to_tuple())
+    direction = b3d.Vector(*axis.direction.to_tuple())
+    corners: list[b3d.Vector] = [b3d.Vector(x, y, z) - origin for x in (bounds.min.X, bounds.max.X) for y in (bounds.min.Y, bounds.max.Y) for z in (bounds.min.Z, bounds.max.Z)]
+    heights: list[float] = [corner.dot(direction) for corner in corners]
+    radius: float = max((corner - direction * height).length for corner, height in zip(corners, heights, strict=True))
+    low: float = min(heights)
+    high: float = max(heights)
+    placement: b3d.Location = b3d.Plane(origin=origin + direction * ((low + high) / 2), z_dir=direction).location
+
+    result = cast(b3d.Part, placement * b3d.Cylinder(radius + padding / 2, high - low + padding))
+    result.color = b3d.Color(1, 1, 1, 0.2)
+    result.label = "Boundary Cylinder"
+
     return result
 
 

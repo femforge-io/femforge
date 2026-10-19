@@ -14,11 +14,13 @@ from femforge.common.tags import parse_tags
 from femforge.common.vector import Direction, Vec3
 from femforge.elmer.config import CoordinateSystem
 from femforge.elmer.physics import Physics
-from femforge.frames import Axis, Cartesian2D, PlaneState
+from femforge.frames import Axis, BodyMismatch, Cartesian2D, FrameCheck, FrameGeometryError, GeometryCheck, PlaneState
 from femforge.geometry import Build123dGeometry
+from femforge.geometry.conformance import MISMATCH_TOLERANCE
 from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
 from femforge.meshing.section_edges import SectionEdges
 from femforge.physical.units import U
+from tests.geometry.flexures import toroidal_flexure
 
 
 THICKNESS = 10 * U.mm
@@ -197,6 +199,13 @@ class _Prism(Build123dGeometry):
         return TaggedCompound(children=[prism, *markers])
 
 
+class _Toroid(Build123dGeometry):
+    """The toroidal flexure: the lower half of a notched 100 x 20 profile revolved about X."""
+
+    def model(self) -> TaggedCompound:
+        return TaggedCompound(children=[TaggedPart([toroidal_flexure()], name="TorodialFlexure")])
+
+
 class _NestedPrism(Build123dGeometry):
     """The prism inside a located, tagged sub-assembly."""
 
@@ -271,19 +280,54 @@ def test_a_plane_on_the_bottom_face_still_sections_the_prism_and_its_end_faces(t
     _assert_prism_section(_frame().prepare_geometry(authored, tmp_path / "solve.step"))
 
 
-def test_a_named_face_in_the_section_plane_raises(tmp_path: Path) -> None:
+def test_a_named_face_in_the_section_plane_fails_the_prism_check(tmp_path: Path) -> None:
     authored = _Prism(named=("Bottom",)).build_step(tmp_path / "authored.step")
 
-    with pytest.raises(ValueError, match="'Name=Bottom' lies in the section plane"):
+    with pytest.raises(FrameGeometryError) as raised:
         _ = _frame().prepare_geometry(authored, tmp_path / "solve.step")
 
+    assert raised.value.mismatches == (BodyMismatch(body="Name=Bottom", check=FrameCheck.PRISM, fraction=1.0),)
+    assert not (tmp_path / "solve.step").exists()
 
-def test_a_named_face_parallel_to_the_plane_raises(tmp_path: Path) -> None:
+
+def test_a_named_face_parallel_to_the_plane_fails_the_prism_check(tmp_path: Path) -> None:
     authored = _Prism(named=("Top",)).build_step(tmp_path / "authored.step")
     frame = _frame(normal=Axis(origin=Vec3(0, 0, 5), direction=Direction(0, 0, 1)))
 
-    with pytest.raises(ValueError, match="'Name=Top' does not cross the plane through"):
+    with pytest.raises(FrameGeometryError) as raised:
         _ = frame.prepare_geometry(authored, tmp_path / "solve.step")
+
+    assert raised.value.mismatches == (BodyMismatch(body="Name=Top", check=FrameCheck.PRISM, fraction=1.0),)
+
+
+def test_a_passing_section_records_its_check_beside_the_step(tmp_path: Path) -> None:
+    authored = _Prism().build_step(tmp_path / "authored.step")
+    frame = _frame(normal=Axis(origin=Vec3(0, 0, 5), direction=Direction(0, 0, 1)))
+
+    out = frame.prepare_geometry(authored, tmp_path / "geometry.step")
+    check = GeometryCheck.load(out)
+
+    assert check is not None
+    assert check.passed
+    assert check.frame == frame.label
+    assert check.tolerance == MISMATCH_TOLERANCE
+    assert [(measured.body, measured.check) for measured in check.measured] == [
+        ("Material=Steel316, Name=Prism", FrameCheck.DEPTH),
+        ("Material=Steel316, Name=Prism", FrameCheck.PRISM),
+        ("Name=Left", FrameCheck.PRISM),
+        ("Name=Right", FrameCheck.PRISM),
+    ]
+    assert (tmp_path / "geometry.check.json").is_file()
+
+
+def test_a_toroid_solved_as_a_prism_fails_the_prism_and_depth_checks(tmp_path: Path) -> None:
+    authored = _Toroid().build_step(tmp_path / "authored.step")
+    frame = _frame(normal=Axis(origin=Vec3(0, 0, 5), direction=Direction(0, 0, 1)))
+
+    with pytest.raises(FrameGeometryError, match="TorodialFlexure") as raised:
+        _ = frame.prepare_geometry(authored, tmp_path / "solve.step")
+
+    assert {mismatch.check for mismatch in raised.value.mismatches} == {FrameCheck.PRISM, FrameCheck.DEPTH}
 
 
 def test_a_solid_off_the_plane_raises(tmp_path: Path) -> None:

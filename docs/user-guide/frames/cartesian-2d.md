@@ -60,10 +60,11 @@ The driver converts the STEP in its first stage, `prepare_geometry`, through [Ca
 
 1. It builds the parametric geometry when the config has one, else it reads the authored STEP.
 2. [import_tagged_step][femforge.geometry.step.import_tagged_step] imports the STEP as tagged parts, one per named solid, and its named faces as markers. A STEP that holds no solid is rejected: author the 3D model and let the frame section it.
-3. [planar_cross_section][femforge.geometry.section.planar_cross_section] places the parts in the solve frame through `plane`, then intersects each solid with the whole Z = 0 plane. Each face keeps its solid's tags and color, and each named face becomes a named edge, a [TaggedEdge][femforge.geometry.tags.TaggedEdge] with the face's tags.
-4. It writes the section to `geometry.step` and the named edges to `geometry.boundaries.json` beside it, since gmsh imports no names on free edges. The mesher names each matching curve from that file and meshes the section in 2D.
+3. [check_geometry][femforge.frames.Frame.check_geometry] compares every body with its mid-depth section extruded through the model's depth, and the depth with `thickness`, and raises [FrameGeometryError][femforge.frames.FrameGeometryError] for a mismatch above 1e-4. The solids or faces that share a name are fused and measured as one, so a surface a CAD export splits at its seams passes.
+4. [planar_cross_section][femforge.geometry.section.planar_cross_section] places the parts in the solve frame through `plane`, then intersects each solid with the whole Z = 0 plane. Each face keeps its solid's tags and color, and each named face becomes a named edge, a [TaggedEdge][femforge.geometry.tags.TaggedEdge] with the face's tags.
+5. It writes the section to `geometry.step`, the named edges to `geometry.boundaries.json` beside it, since gmsh imports no names on free edges, and the check to `geometry.check.json`. The mesher names each matching curve from the edge file and meshes the section in 2D, and the run manifest records the check as `geometry_check`.
 
-A named face becomes the boundary group of its edge, so a condition on `LeftFace` in 3D lands on the same edge of the section. The section raises when a solid does not reach the plane, when a named face does not cross it, and when a named face lies in it. Put the plane at mid-depth, as the example does: a plane on a boundary face of the prism still sections it, but then each named end face meets the plane only along its own edge.
+A named face becomes the boundary group of its edge, so a condition on `LeftFace` in 3D lands on the same edge of the section. The check rejects a named face that does not run through the depth, such as an end face; the section raises when a solid does not reach the plane. Put the plane at mid-depth, as the example does: a plane on a boundary face of the prism still sections it, but then each named end face meets the plane only along its own edge.
 
 ## Physics
 
@@ -107,7 +108,7 @@ The [workbench](../workbench.md) field viewer shows the section flat, as solved;
 ## Limits
 
 - Only magnetostatics, heat conduction and linear elasticity have a Cartesian 2D form; electrostatics and current conduction do not.
-- femforge does not check that the model is prismatic; it sections the plane you name.
+- femforge checks that the model is a prism through `thickness`, then sections the plane you name.
 - Plane stress assumes a thin part; use `PlaneState.STRAIN` for a long one.
 - A Cartesian 2D run computes no torque.
 - The viewer does not extrude the section back into a prism.

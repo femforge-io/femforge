@@ -1,12 +1,26 @@
-"""Rect / NestedRect layout math and the air-domain boundary_box helper."""
+"""Rect / NestedRect layout math and the air-domain boundary_box and boundary_cylinder helpers."""
+
+import math
 
 import build123d as b3d
 import pytest
 from anytree import PreOrderIter
 
-from femforge.common.vector import Vec3
-from femforge.geometry.tags import TaggedPart
-from femforge.geometry.utils import NestedRect, Rect, all_colliinear, boundary_box, collinear_ends, compound_topology, drop_collinear_points, remove_where
+from femforge.common.vector import Direction, Vec3
+from femforge.frames import Axis
+from femforge.geometry.conformance import MISMATCH_TOLERANCE, revolution_mismatches
+from femforge.geometry.tags import TaggedCompound, TaggedPart
+from femforge.geometry.utils import (
+    NestedRect,
+    Rect,
+    all_colliinear,
+    boundary_box,
+    boundary_cylinder,
+    collinear_ends,
+    compound_topology,
+    drop_collinear_points,
+    remove_where,
+)
 
 
 V = b3d.Vector
@@ -152,3 +166,27 @@ def test_compound_topology_renders_the_tree() -> None:
     assert len(tree.children) == 1
     assert "inner" in str(tree.children[0].label)
     assert "leaf" in str(tree.children[0].children[0].label)
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [Axis.Z, Axis(origin=Vec3(3, -2, 1), direction=Direction(1, 2, 2))],
+    ids=["z", "tilted"],
+)
+def test_boundary_cylinder_holds_the_bounding_box_and_turns_into_itself(axis: Axis) -> None:
+    box = b3d.Pos(4, 1, -2) * b3d.Box(10, 6, 8)
+    cylinder = boundary_cylinder(b3d.Compound(children=[box]), axis=axis, padding=4.0)
+    origin = b3d.Vector(*axis.origin.to_tuple())
+    direction = b3d.Vector(*axis.direction.to_tuple())
+    corners = [b3d.Vector(vertex.X, vertex.Y, vertex.Z) - origin for vertex in box.vertices()]
+    heights = [corner.dot(direction) for corner in corners]
+    radius = max((corner - direction * height).length for corner, height in zip(corners, heights, strict=True))
+    length = max(heights) - min(heights)
+
+    assert all(cylinder.is_inside(origin + corner) for corner in corners)
+    assert cylinder.volume == pytest.approx(math.pi * (radius + 2.0) ** 2 * (length + 4.0), rel=1e-9)
+    assert cylinder.label == "Boundary Cylinder"
+
+    measured = revolution_mismatches(TaggedCompound(children=[TaggedPart([cylinder], name="Air")]), axis)
+
+    assert all(measurement.fraction <= MISMATCH_TOLERANCE for measurement in measured)

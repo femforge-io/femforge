@@ -12,6 +12,8 @@ from femforge.frames.base import Axis, Frame
 if TYPE_CHECKING:
     from femforge.common.vector import Vec3
     from femforge.elmer.config.common.simulation import CoordinateSystem
+    from femforge.frames.base import GeometryCheck
+    from femforge.geometry.tags import TaggedCompound
 
 
 class Solid(Frame):
@@ -46,6 +48,10 @@ class Solid(Frame):
     def lumps_torque(self) -> bool:
         """True: Elmer lumps a torque about any authored axis."""
         return True
+
+    def measure_geometry(self, compound: TaggedCompound) -> GeometryCheck | None:
+        """None: the solve meshes the model as authored."""
+        return None
 
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:
         """``step_in`` itself: nothing is converted."""

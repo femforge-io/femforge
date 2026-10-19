@@ -29,6 +29,7 @@ import typing
 from pathlib import Path
 
 import femforge as ff
+from femforge.geometry.step import import_tagged_step
 
 folder = Path(sys.argv[1])
 sys.path.insert(0, str(folder))
@@ -44,9 +45,12 @@ assert builders, f"{folder.name} defines no function that returns a SimulationCo
 for builder in builders:
     config = builder()
     assert isinstance(config, ff.SimulationConfig), f"{builder.__qualname__} returned a {type(config).__name__}"
+    if config.geometry is not None and config.frame.rewrites_geometry:
+        step = config.geometry.build_step(Path.cwd() / f"{builder.__module__}.{builder.__qualname__}.step")
+        config.frame.check_geometry(import_tagged_step(step))
     print(f"{builder.__module__}.{builder.__qualname__}: {config.frame.label}")
 """
-"""The program each example's process runs: import every module of the folder, then call each function that returns a SimulationConfig with its defaults."""
+"""The program each example's process runs: import every module of the folder, then call each function that returns a SimulationConfig with its defaults and check the model of each sectioned one against its frame."""
 
 
 def test_the_examples_folder_holds_examples() -> None:

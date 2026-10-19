@@ -3,22 +3,28 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.config import ConfigArea
+from femforge.common.files import write_atomic
 from femforge.common.vector import DIRECTION_SLACK, Direction, DirectionField, Vec3, Vec3Field
 from femforge.elmer.physics import Physics
 
 
 if TYPE_CHECKING:
     from femforge.elmer.config.common.simulation import CoordinateSystem
+    from femforge.geometry.tags import TaggedCompound
 
 
 ALIGNMENT_TOLERANCE = 1e-6
 """`[-]`: The largest transverse share of a unit direction still counted as parallel to an axis."""
+
+CHECK_SUFFIX = ".check.json"
+"""The suffix that turns a solve STEP's stem into its geometry check file's name, ``geometry.check.json`` beside ``geometry.step``."""
 
 
 class Axis(ConfigArea):
@@ -111,6 +117,131 @@ def in_plane(direction: Direction, normal: Direction) -> Direction:
     return Direction(across.x, across.y, across.z)
 
 
+class FrameCheck(StrEnum):
+    """A rule a sectioning frame holds every body and named face of the authored model to."""
+
+    TURNED = "turned"
+    """The leaf is unchanged when turned about the symmetry axis."""
+
+    PRISM = "prism"
+    """The leaf is its mid-depth section carried through the model's depth along the normal."""
+
+    DEPTH = "depth"
+    """The body spans the frame's thickness along the normal."""
+
+    @property
+    def failure(self) -> str:
+        """What a leaf that fails the check does, worded to follow the leaf's name."""
+        from femforge.geometry.conformance import TURN_DEGREES
+
+        match self:
+            case FrameCheck.TURNED:
+                return f"changes when turned {TURN_DEGREES:g}° about the axis"
+            case FrameCheck.PRISM:
+                return "is not a prism through the model's depth along the normal"
+            case FrameCheck.DEPTH:
+                return "spans a depth along the normal other than the thickness"
+
+    @property
+    def remedy(self) -> str:
+        """How to author the model so that it passes the check."""
+        match self:
+            case FrameCheck.TURNED:
+                return "Author every body, the air included, and every named face as a solid or surface of revolution about the axis: bound the model with boundary_cylinder, not boundary_box."
+            case FrameCheck.PRISM:
+                return "Author every body as a prism through the model's depth, and name only faces that run through it, never its end faces."
+            case FrameCheck.DEPTH:
+                return "Set thickness to the model's depth along the normal."
+
+
+class BodyMismatch(BaseModel):
+    """How far one body or named face of the authored model is from passing one frame check."""
+
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
+
+    body: str
+    """The leaf's tags, such as ``Material=Air``."""
+
+    check: FrameCheck
+    """The check the leaf was measured against."""
+
+    fraction: float
+    """`[-]`: The mismatch, a share of the leaf's volume, area or depth."""
+
+
+class GeometryCheck(BaseModel):
+    """A frame's verdict on an authored model: every measured body and named face, and the tolerance each was held to."""
+
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
+
+    frame: str
+    """The label of the frame that checked the model."""
+
+    tolerance: float
+    """`[-]`: The largest mismatch fraction that still passes."""
+
+    measured: tuple[BodyMismatch, ...]
+    """Every measurement, passing ones included."""
+
+    @property
+    def mismatches(self) -> tuple[BodyMismatch, ...]:
+        """The measurements above ``tolerance``."""
+        return tuple(measurement for measurement in self.measured if measurement.fraction > self.tolerance)
+
+    @property
+    def passed(self) -> bool:
+        """Whether every measurement is within ``tolerance``."""
+        return not self.mismatches
+
+    def raise_for_mismatch(self) -> None:
+        """Raise [`FrameGeometryError`][femforge.frames.FrameGeometryError] when a measurement is above ``tolerance``."""
+        if not self.passed:
+            raise FrameGeometryError(self)
+
+    def write(self, step: Path) -> None:
+        """Write the check beside the solve STEP ``step``."""
+        write_atomic(check_path(step), self.model_dump_json())
+
+    @classmethod
+    def load(cls, step: Path) -> GeometryCheck | None:
+        """The check recorded beside ``step``; None when it has no check file."""
+        path: Path = check_path(step)
+
+        if not path.is_file():
+            return None
+
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def check_path(step: Path) -> Path:
+    """The geometry check file that belongs to the solve STEP ``step``."""
+    return step.with_name(f"{step.stem}{CHECK_SUFFIX}")
+
+
+class FrameGeometryError(ValueError):
+    """The authored model does not fit the frame: a body or named face mismatches a frame check beyond its tolerance."""
+
+    check: GeometryCheck
+    """The whole verdict, passing measurements included."""
+
+    mismatches: tuple[BodyMismatch, ...]
+    """The measurements above the tolerance."""
+
+    def __init__(self, check: GeometryCheck) -> None:
+        """List every failing leaf of ``check`` with its mismatch, then each remedy once."""
+        self.check = check
+        self.mismatches = check.mismatches
+        failing: set[FrameCheck] = {mismatch.check for mismatch in self.mismatches}
+        lines: list[str] = [f"  - {mismatch.body}: {mismatch.check.failure}, mismatch {mismatch.fraction:.2e}" for mismatch in self.mismatches]
+        remedies: list[str] = [member.remedy for member in FrameCheck if member in failing]
+
+        super().__init__("\n".join([f"The model does not fit the frame {check.frame}:", *lines, *remedies]))
+
+    def __reduce__(self) -> tuple[type[FrameGeometryError], tuple[GeometryCheck]]:
+        """Rebuild from the check, so the error survives a trip between processes."""
+        return (FrameGeometryError, (self.check,))
+
+
 class Frame(ConfigArea, ABC):
     """How an authored model maps onto the coordinates the solve runs in; each subclass is one frame."""
 
@@ -158,6 +289,17 @@ class Frame(ConfigArea, ABC):
     def plane_stress(self) -> bool | None:
         """Whether a 2D elasticity solve is plane stress (True) or plane strain (False); None when the frame poses no plane state."""
         return None
+
+    @abstractmethod
+    def measure_geometry(self, compound: TaggedCompound) -> GeometryCheck | None:
+        """How far every body and named face of the authored ``compound`` is from fitting this frame; None when the frame takes any model."""
+
+    def check_geometry(self, compound: TaggedCompound) -> None:
+        """Raise ``FrameGeometryError`` when a body or named face of the authored ``compound`` does not fit this frame."""
+        check: GeometryCheck | None = self.measure_geometry(compound)
+
+        if check is not None:
+            check.raise_for_mismatch()
 
     @abstractmethod
     def prepare_geometry(self, step_in: Path, step_out: Path) -> Path:

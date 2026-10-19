@@ -21,6 +21,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - The field viewer's Deformation section draws the bodies displaced by the solved displacement, at a scale that starts where the largest displacement moves a tenth of the model's size. `DisplaySpec.warp` and `DisplaySpec.warp_scale` hold the choice.
 - `default_display(run)` picks the display a run opens on: its solver stack's primary field (`PhysicsConfig.primary_variable`), the component its surface forces share, and field lines with opacity mapping only for a flux, field or current (`ElmerVariable.lines_by_default`).
 - The driver stops a linear solve whose residual stops improving, marks the run `stalled`, and records the reason and the last residuals in the manifest; a linear solve logs a progress line every 30 s.
+- `Axisymmetric` and `Cartesian2D` check the authored model before sectioning it. `Frame.check_geometry` raises `FrameGeometryError`, listing every body or named face that is not a solid of revolution about the axis, or not a prism through the thickness, with its mismatch; the solids or faces that share a name are measured as one. `boundary_cylinder` bounds an axisymmetric model with a cylinder of air, and the run manifest records the check as `geometry_check`, on a pass and on a failure.
 
 ### Changed
 
@@ -32,6 +33,8 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
 - `SolvePlane` names its directions `x_dir` and `y_dir`, for the old `radial` and `axis`, and gains `normal`.
 - The field viewer opens each run on its `default_display` unless the given `DisplaySpec` names a field. A quantity, mode, field-line or opacity-mapping choice you make carries over only to a run that has the quantity shown.
+- The project template and the coil-current and bearing-seat examples bound their models with a cylinder of air, which the axisymmetric check accepts. Every STEP artifact rebuilds once.
+- Half and quarter axisymmetric models are rejected: author the whole revolution.
 - `StressSolver` solves with CG and ILU1 preconditioning to a linear tolerance of `1e-7`, for BiCGStab, ILU0 and `1e-8`, which stalled on large quadratic meshes.
 - `FixedDisplacement` maps each authored axis onto the solve coordinate it runs along, signed. A Cartesian 2D section normal to X or Y and an axisymmetric section now take clamps and rollers, an axis off the plane is dropped, and an axis oblique to a free one raises. `FixedDisplacement.to_elmer()` raises, since its keywords depend on the frame. `Frame.solve_share` names its argument `share_of`.
 - The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.

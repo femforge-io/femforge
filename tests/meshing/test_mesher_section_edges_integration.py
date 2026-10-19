@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -67,9 +68,23 @@ def _prism(*named: str) -> TaggedCompound:
     return TaggedCompound(children=[prism, *markers])
 
 
-def _mesh(tmp_path: Path, frame: Axisymmetric | Cartesian2D, *named: str) -> Mesher:
+def _rod(*named: str) -> TaggedCompound:
+    """A steel rod of radius 10 mm along X from the origin to 100 mm, its axis through (0, 10, 0), with the +X end disc named Right when asked."""
+    rod = b3d.Pos(50, 10, 0) * b3d.Cylinder(10, 100, rotation=(0, 90, 0))
+    body = TaggedPart([rod], tags={TagKey.MATERIAL: "Steel316"}, name="Prism")
+    body.color = b3d.Color("gray")
+    markers: list[TaggedFace] = []
+    for name in named:
+        marker = TaggedFace(rod.faces().sort_by(b3d.Axis.X)[-1], name=name)
+        marker.color = b3d.Color("red")
+        markers.append(marker)
+
+    return TaggedCompound(children=[body, *markers])
+
+
+def _mesh(tmp_path: Path, frame: Axisymmetric | Cartesian2D, *named: str, model: Callable[..., TaggedCompound] = _prism) -> Mesher:
     authored: Path = tmp_path / "authored.step"
-    _prism(*named).export_step(str(authored))
+    model(*named).export_step(str(authored))
     step: Path = frame.prepare_geometry(authored, tmp_path / "geometry.step")
     domain = DomainConfig(
         materials=[Steel_316()],
@@ -110,7 +125,7 @@ def test_a_named_curve_group_records_its_length_body_and_tag(end_edges: Mesher) 
 
 def test_an_axisymmetric_section_names_the_edge_of_a_named_face_too(tmp_path: Path) -> None:
     frame = Axisymmetric(axis=Axis(origin=Vec3(0, 10, 0), direction=Direction(1, 0, 0)), radial=Direction(0, 0, 1))
-    mesher = _mesh(tmp_path, frame, "Right")
+    mesher = _mesh(tmp_path, frame, "Right", model=_rod)
     by_name: dict[str, BoundaryGroup] = {group.name: group for group in mesher.boundary_groups}
 
     assert set(by_name) == {"PRISM__EXT", "PRISM__AXIS", "RIGHT"}
@@ -118,7 +133,7 @@ def test_an_axisymmetric_section_names_the_edge_of_a_named_face_too(tmp_path: Pa
 
 
 def test_the_curves_of_a_colored_section_take_no_body_name(tmp_path: Path) -> None:
-    mesher = _mesh(tmp_path, Axisymmetric(axis=Axis(origin=Vec3(0, 10, 0), direction=Direction(1, 0, 0)), radial=Direction(0, 0, 1)))
+    mesher = _mesh(tmp_path, Axisymmetric(axis=Axis(origin=Vec3(0, 10, 0), direction=Direction(1, 0, 0)), radial=Direction(0, 0, 1)), model=_rod)
     by_name: dict[str, BoundaryGroup] = {group.name: group for group in mesher.boundary_groups}
 
     assert set(by_name) == {"PRISM__EXT", "PRISM__AXIS"}

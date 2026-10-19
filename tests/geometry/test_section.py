@@ -328,6 +328,22 @@ def test_an_axisymmetric_section_clips_a_named_face_to_its_x_at_least_zero_edge(
     assert (box.min.X, box.max.X, box.min.Y, box.max.Y) == pytest.approx((0.0, 2.0, 5.0, 5.0), abs=1e-9)
 
 
+def test_a_named_face_in_the_section_plane_raises() -> None:
+    bottom = _planar(Axis(origin=Vec3(0, 0, -3), direction=Direction(0, 0, 1)))
+    bar = _bar()
+    flat = TaggedFace(b3d.Box(20, 4, 6).faces().sort_by(b3d.Axis.Z)[0], name="Bottom")
+
+    with pytest.raises(ValueError, match="'Name=Bottom' lies in the section plane"):
+        _ = planar_cross_section(TaggedCompound(children=[*_parts(bar), flat]), bottom)
+
+
+def test_a_named_face_parallel_to_the_plane_raises() -> None:
+    top = TaggedFace(b3d.Box(20, 4, 6).faces().sort_by(b3d.Axis.Z)[-1], name="Top")
+
+    with pytest.raises(ValueError, match="'Name=Top' does not cross the plane through"):
+        _ = planar_cross_section(TaggedCompound(children=[*_parts(_bar()), top]), _planar())
+
+
 def test_export_section_writes_the_step_and_its_named_edges(tmp_path: Path) -> None:
     step = tmp_path / "geometry.step"
 

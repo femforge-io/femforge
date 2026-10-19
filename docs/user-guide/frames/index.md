@@ -32,7 +32,7 @@ Each stage asks the frame one question rather than naming a frame. The frame's p
 
 | Stage | What the frame decides | Hook |
 |---|---|---|
-| Geometry | Whether the solve meshes the authored STEP or a converted one, and the conversion. | [prepare_geometry][femforge.frames.Frame.prepare_geometry], [rewrites_geometry][femforge.frames.Frame.rewrites_geometry] |
+| Geometry | Whether the solve meshes the authored STEP or a converted one, the conversion, and whether the authored model fits the frame. | [prepare_geometry][femforge.frames.Frame.prepare_geometry], [rewrites_geometry][femforge.frames.Frame.rewrites_geometry], [check_geometry][femforge.frames.Frame.check_geometry] |
 | Mesh | The body dimension the mesher meshes, and whether the section has a symmetry axis to name. The named edges of a section reach the mesher from the file beside its STEP. | [model_dim][femforge.frames.Frame.model_dim], [revolves][femforge.frames.Frame.revolves] |
 | Physics | The form each selected physics solves as, the Elmer coordinate system of the stack, and the plane state of a 2D elasticity solve. | [solves][femforge.frames.Frame.solves], [coordinate_system][femforge.frames.Frame.coordinate_system], [plane_stress][femforge.frames.Frame.plane_stress] |
 | Conditions | Which conditions the frame can drive: a vector condition must have a form in solve coordinates, and torque needs a frame that lumps one. | [solve_vector][femforge.frames.Frame.solve_vector], [supports][femforge.frames.Frame.supports], [lumps_torque][femforge.frames.Frame.lumps_torque] |

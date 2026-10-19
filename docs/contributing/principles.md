@@ -27,9 +27,9 @@ print(CoolingConfig.model_fields["ambient_temperature"].description)
 
 ## Runs
 
-**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:128`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:187-204`).
+**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:129`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:190-207`).
 
-**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:182-184`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
+**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:185-187`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
 
 ## Units and values
 
@@ -53,7 +53,7 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 
 ## Docstrings and comments
 
-**A physical field documents its glyph and unit, and its name carries no unit.** The docstring's first line reads `` `glyph` `[unit]`: meaning ``, with `[-]` for a dimensionless value. `tests/test_field_docstrings.py:42` enforces the format on the modules it lists and checks that pint parses the unit, as in `` `h` `[mm]`: Domain-wide target element size `` (`src/femforge/meshing/config.py:23`).
+**A physical field documents its glyph and unit, and its name carries no unit.** The docstring's first line reads `` `glyph` `[unit]`: meaning ``, with `[-]` for a dimensionless value. `tests/test_field_docstrings.py:43` enforces the format on the modules it lists and checks that pint parses the unit, as in `` `h` `[mm]`: Domain-wide target element size `` (`src/femforge/meshing/config.py:23`).
 
 **A docstring is one sentence, two at most.** Design rationale belongs in these pages. A public function or constructor with three or more parameters adds a Google `Args:` block with one line per parameter, which `tests/test_public_api.py:497` checks against the signature, as in `to_elmer` (`src/femforge/materials/properties.py:176-183`).
 
@@ -64,7 +64,7 @@ assert axis == ff.Direction(0.0, 0.0, 1.0)
 | Rule | Why | Example |
 | --- | --- | --- |
 | A blank line after every guard, `return` or `raise` | each exit stands out | `src/femforge/run/kinds.py:43-45` |
-| A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:427-432` |
+| A trailing comma on a call with more than three arguments | ruff then keeps one argument per line | `src/femforge/run/driver.py:428-433` |
 | A named intermediate instead of a nested comprehension | the name says what the step yields | `tests/test_release.py:111-112` |
 | A single-use helper nested in its caller | its scope shows where it is used | `src/femforge/meshing/mesher.py:137-141` |
 

@@ -77,7 +77,7 @@ def cross_section_3D(
     return result
 
 
-def _solve_location(plane: SolvePlane) -> b3d.Location:
+def solve_location(plane: SolvePlane) -> b3d.Location:
     """The placement that carries authored shapes into the solve frame of ``plane``, the plane landing on Z = 0."""
     x_dir: b3d.Vector = b3d.Vector(*plane.x_dir.to_tuple())
     y_dir: b3d.Vector = b3d.Vector(*plane.y_dir.to_tuple())
@@ -99,7 +99,7 @@ def _sheet(parts: list[TaggedPart], *, half: bool, margin: float) -> b3d.Sketch:
 
 def _section(compound: TaggedCompound, plane: SolvePlane, *, half: bool, margin: float, kind: str) -> list[TaggedFace | TaggedEdge]:
     """Every tagged solid of ``compound`` sectioned into faces and every marker face into named edges, in the solve frame of ``plane``; ``kind`` names the section in errors."""
-    leaves = compound.placed_leaves(_solve_location(plane))
+    leaves = compound.placed_leaves(solve_location(plane))
     parts: list[TaggedPart] = [leaf for leaf in leaves if isinstance(leaf, TaggedPart)]
 
     if not parts:

@@ -64,15 +64,15 @@ assert ff.run.step_key(small) != ff.run.step_key(large)
 
 The interface has three rules:
 
-- **The parameters are the identity.** The STEP spec hashes the geometry model itself, so two configs with equal parameters and an equal frame share one STEP, and a changed parameter makes a new one (`src/femforge/run/kinds.py:131-134`). The STEP file is derived output.
+- **The parameters are the identity.** The STEP spec hashes the geometry model itself, so two configs with equal parameters and an equal frame share one STEP, and a changed parameter makes a new one (`src/femforge/run/kinds.py:134-137`). The STEP file is derived output.
 - **Subclass fields survive a round trip.** The `geometry` field is `SerializeAsAny[GeometryArea]`, so a dump carries the subclass's fields (`src/femforge/config.py:43`), and `GeometryArea` sets `extra="allow"`, so a manifest loaded back as the base class keeps them readable (`src/femforge/geometry/config.py:15-16`).
-- **The geometry builds in the authored frame.** The driver calls `build_step` into the run directory, converts the result with the frame's [prepare_geometry][femforge.frames.Frame.prepare_geometry], and repoints `mesh.step` at the solve-frame STEP (`src/femforge/run/driver.py:70-91`). The repointed path uses forward slashes, because ElmerGrid on Windows fails on backslashes in its mesh path (`src/femforge/run/driver.py:65-68`).
+- **The geometry builds in the authored frame.** The driver calls `build_step` into the run directory, converts the result with the frame's [prepare_geometry][femforge.frames.Frame.prepare_geometry], and repoints `mesh.step` at the solve-frame STEP (`src/femforge/run/driver.py:71-92`). The repointed path uses forward slashes, because ElmerGrid on Windows fails on backslashes in its mesh path (`src/femforge/run/driver.py:66-69`).
 
 `import femforge.geometry` stays light: `build123d_geometry.py` imports `TaggedCompound`, and with it build123d, only under `TYPE_CHECKING` (`src/femforge/geometry/build123d_geometry.py:12-13`).
 
 ## The frame area
 
-The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:84-163`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`), [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`) and [Cartesian2D][femforge.frames.Cartesian2D] (`src/femforge/frames/cartesian_2d.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
+The frame is a seam like the geometry and the mesh backend. [Frame][femforge.frames.Frame] is an abstract, frozen config model (`src/femforge/frames/base.py:245-341`), and each shipped frame is one subclass in its own module: [Solid][femforge.frames.Solid] (`src/femforge/frames/solid.py`), [Axisymmetric][femforge.frames.Axisymmetric] (`src/femforge/frames/axisymmetric.py`) and [Cartesian2D][femforge.frames.Cartesian2D] (`src/femforge/frames/cartesian_2d.py`). The solve stages call hooks on the frame rather than naming a frame class, so a new frame adds hook implementations rather than branches; the physics selection and a few error messages still name the shipped frames.
 
 `FrameUnion`, the discriminated union on `kind`, types every serialized frame field: `SimulationConfig.frame`, `Result.frame`, `StepSpec.frame` and `MeshJob.frame` (`src/femforge/frames/__init__.py:13`). Every function and attribute that only calls the hooks takes the base `Frame`. `default_frame(model_dim)`, the frame of a bundle whose manifest names none, takes the first shipped frame of that dimension that builds from defaults alone, so `Cartesian2D`, whose `thickness` is required, follows `Axisymmetric` in the union and a 2D bundle without a manifest reads as axisymmetric.
 
@@ -82,8 +82,10 @@ The frame is a seam like the geometry and the mesh backend. [Frame][femforge.fra
 | `model_dim` | the body dimension the mesher meshes | `Mesher.body_dim` (`src/femforge/meshing/mesher.py:93-95`), `mesh_spec`, the run index |
 | `coordinate_system` | the Elmer coordinate system of the solved stack | `solved_stack` (`src/femforge/elmer/config/common/presets.py:29-35`), `PhysicsConfig.check_frame` (`src/femforge/elmer/config/common/physics_config.py:74-82`) |
 | `plane` | the solve plane in the authored model, None for a whole-model solve; its `x_dir` and `y_dir` are the authored solve +X and +Y, and `normal` their cross product | `axisymmetric_cross_section`, `planar_cross_section`, the workbench's symmetry expansion, `FixedDisplacement.on_boundary` and `check_frame` |
-| `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:70-91`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:96-99`) |
-| `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:102-118`) |
+| `rewrites_geometry` | whether the solve meshes a converted STEP; defaults to `plane is not None` | `materialize_geometry` (`src/femforge/run/driver.py:71-92`), `StepSpec.passes_through` (`src/femforge/run/kinds.py:96-99`) |
+| `prepare_geometry` | the STEP the solve meshes | `materialize_geometry`, the STEP artifact producer (`src/femforge/run/kinds.py:102-121`) |
+| `measure_geometry` | every body's and named face's mismatch against the frame's rule, as a `GeometryCheck`; None for a frame that takes any model | `check_geometry`, each sectioning frame's `prepare_geometry` |
+| `check_geometry` | raises `FrameGeometryError` when the authored model does not fit the frame; concrete on the base | each sectioning frame's `prepare_geometry`, through the check's `raise_for_mismatch` |
 | `solves` | the form a physics solves as, raising when it has none | `SimulationConfig.solved_physics`, `PhysicsSelection.check_frame`, `solved_stack`, `Sim` |
 | `supports` | whether `solves` has a form; concrete on the base | `CurrentDensity.check_frame` |
 | `lumps_torque` | whether Elmer's force lumping yields a torque | `CalculateMagneticForce.check_frame` |
@@ -121,7 +123,7 @@ Each condition is self-describing. It pins its `physics` and its body or boundar
 
 ## The run identity
 
-[cache_key][femforge.run.cache_key] is the SHA-256 of one canonical JSON payload: the bundle kind name, `RUN_PRODUCER_VERSION`, and the run spec (`src/femforge/run/kinds.py:202-204`). The run spec has three parts (`src/femforge/run/kinds.py:187-199`):
+[cache_key][femforge.run.cache_key] is the SHA-256 of one canonical JSON payload: the bundle kind name, `RUN_PRODUCER_VERSION`, and the run spec (`src/femforge/run/kinds.py:205-207`). The run spec has three parts (`src/femforge/run/kinds.py:190-202`):
 
 | Part | Holds | Leaves out |
 |---|---|---|
@@ -133,18 +135,18 @@ The pieces each have one job:
 
 - **One serialization.** Every key in the codebase hashes `json.dumps(payload, sort_keys=True)` (`src/femforge/artifacts/keys.py:49-51`).
 - **`HashExclude()` marks a field the hash skips.** `spec_payload` merges the marked fields at any depth into the exclude spec before dumping (`src/femforge/artifacts/keys.py:91-94`). The walk starts from the instance, so a polymorphic subclass contributes its own marked fields (`src/femforge/common/pydantic.py:57-72`). The gmsh `terminal_output` and `num_threads` options carry it (`src/femforge/meshing/gmsh_options.py:82`, `src/femforge/meshing/gmsh_options.py:108`).
-- **Quantities hash in base units.** `run_spec_payload` dumps the config and the resolved stack with the `CANONICAL_UNITS` serialization context, so every quantity enters the key in base units at twelve significant digits and unit spelling does not change the run id, while every stored dump keeps the authored spelling (`src/femforge/run/kinds.py:187-199`, `src/femforge/physical/units.py:284-308`).
+- **Quantities hash in base units.** `run_spec_payload` dumps the config and the resolved stack with the `CANONICAL_UNITS` serialization context, so every quantity enters the key in base units at twelve significant digits and unit spelling does not change the run id, while every stored dump keeps the authored spelling (`src/femforge/run/kinds.py:190-202`, `src/femforge/physical/units.py:284-308`).
 - **An authored STEP keys on its geometry.** `step_digest` imports the file and returns its `TaggedCompound.fingerprint`: the hash of every leaf's kind, tags, RGB color, size, volume, area or length, center of mass, bounding box, face areas and centers, and vertices, sorted so the leaf order does not count (`src/femforge/run/kinds.py:40-70`, `src/femforge/geometry/tags.py:69-113`). The size is the bounding-box diagonal to nine significant digits, and every other quantity is quantized to a billionth of it, so integration noise drops out and a scaled model still keys apart. The faces and vertices tell apart changes that keep the whole-body properties, such as a rotated hole. Two files with the same bytes share one memoized digest wherever they live. The bytes cannot be the identity: build123d numbers assembly occurrences from a process-wide counter and writes the style entities in a varying order, so two exports of one model differ. A file that does not import keys on its bytes with the `FILE_NAME` export timestamp masked, and `AuthoredStep.path` is `HashExclude()` (`src/femforge/run/kinds.py:73-82`).
-- **The identity comes from the authored config.** The driver builds the manifest from the config it was given, before the geometry stage repoints `mesh.step` at the derived STEP, which would otherwise digest the derived STEP (`src/femforge/run/driver.py:290-297`).
+- **The identity comes from the authored config.** The driver builds the manifest from the config it was given, before the geometry stage repoints `mesh.step` at the derived STEP, which would otherwise digest the derived STEP (`src/femforge/run/driver.py:291-298`).
 - **Producer versions invalidate.** Bump `RUN_PRODUCER_VERSION`, `MESH_PRODUCER_VERSION` or `STEP_PRODUCER_VERSION` when a pipeline change alters what the same spec yields (`src/femforge/run/kinds.py:27-34`).
 
-The run id is `bundle_name(cache_key)`: an adjective and a noun picked by hash bits, then the first 8 hex characters (`src/femforge/common/names.py:1044-1054`). The word lists are frozen, because any edit renames every existing bundle, and together they give 50 bits (`src/femforge/common/names.py:8-10`). The driver raises when a directory with the same name holds a different `cache_key` (`src/femforge/run/driver.py:280-286`). [mesh_key][femforge.run.mesh_key] and the other artifact keys follow the same scheme; [Artifacts and retention](artifacts.md#identity-and-names) covers them.
+The run id is `bundle_name(cache_key)`: an adjective and a noun picked by hash bits, then the first 8 hex characters (`src/femforge/common/names.py:1044-1054`). The word lists are frozen, because any edit renames every existing bundle, and together they give 50 bits (`src/femforge/common/names.py:8-10`). The driver raises when a directory with the same name holds a different `cache_key` (`src/femforge/run/driver.py:281-287`). [mesh_key][femforge.run.mesh_key] and the other artifact keys follow the same scheme; [Artifacts and retention](artifacts.md#identity-and-names) covers them.
 
 ## customize_physics and the resolved stack
 
 [SimulationConfig.resolved_stack][femforge.config.SimulationConfig.resolved_stack] returns `physics.overrides` when it is set, else the preset that `solved_stack` builds for the selection in the frame (`src/femforge/config.py:104-109`). [SimulationConfig.customize_physics][femforge.config.SimulationConfig.customize_physics] writes that preset into `physics.overrides` once and returns it for typed editing (`src/femforge/config.py:111-116`).
 
-The identity hashes the resolved stack and drops the authored overrides, so customizing without an edit leaves the key where it was (`src/femforge/run/kinds.py:191-198`):
+The identity hashes the resolved stack and drops the authored overrides, so customizing without an edit leaves the key where it was (`src/femforge/run/kinds.py:194-201`):
 
 ```python
 import femforge as ff
@@ -160,7 +162,7 @@ stack.solver(MagnetoDynamicsSolver).linear_system_max_iterations = 2000
 assert ff.run.cache_key(config) != before
 ```
 
-An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:653-657`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
+An edit through `customize_physics` enters the identity. An edit in the driver's `configure_sim` hook runs after the identity is computed, so it changes the solve without changing the run id (`src/femforge/run/driver.py:669-673`). Customize after you set the frame: overrides built for one frame fail `check_frame` under the other (`src/femforge/elmer/config/common/physics_config.py:79`).
 
 ## The JSON schema export
 
@@ -192,4 +194,4 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 | Code that drives gmsh imports it inside the function | `src/femforge/meshing/boundary.py:165`, `src/femforge/meshing/gmsh_options.py:58` |
 | The geometry interface names build123d types only under `TYPE_CHECKING` | `src/femforge/geometry/build123d_geometry.py:12-13` |
 | `femforge.elmer` is lazy, so `femforge.elmer.config` loads without the runtime | `src/femforge/elmer/__init__.py` |
-| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:367-376`, `src/femforge/common/log.py:206-211` |
+| Telemetry, and with it polars, loads only when a root is set | `src/femforge/run/driver.py:368-377`, `src/femforge/common/log.py:206-211` |

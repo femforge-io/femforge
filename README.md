@@ -77,7 +77,7 @@ print(result.axial_force("PLATE").m_as("newton"), "N")
 ff.workbench.show(ff.workbench.field_viewer(result), window=ff.workbench.Window.BROWSER)
 ```
 
-The STEP holds a magnet, a steel plate and an air box, each solid named with its tags, such as `Material=N52, Name=MAGNET`. [Geometry and tags](https://docs.femforge.io/user-guide/geometry/) builds the same model in build123d.
+The STEP holds a magnet, a steel plate and a cylinder of air, each solid named with its tags, such as `Material=N52, Name=MAGNET`. [Geometry and tags](https://docs.femforge.io/user-guide/geometry/) builds the same model in build123d.
 
 ## Install in your own project
 
