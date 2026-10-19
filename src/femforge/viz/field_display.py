@@ -18,7 +18,7 @@ from femforge.elmer.variables import ELEMENTAL_SUFFIX, ElmerVariable, elemental,
 from femforge.frames import Frame, SolvePlane, default_frame
 from femforge.physical.conditions import SurfaceForce
 from femforge.physical.units import U
-from femforge.run.fields import GEOMETRY_IDS_ARRAY, select_array
+from femforge.run.fields import BC_ID_OFFSET, GEOMETRY_IDS_ARRAY, select_array
 from femforge.run.mechanical import VOIGT_COMPONENTS
 from femforge.viz.colormaps import register_paraview
 from femforge.viz.field_lines import (
@@ -42,9 +42,10 @@ if TYPE_CHECKING:
     import pyvista as pv
 
     from femforge.config import SimulationConfig
-    from femforge.run.entities import Bodies
+    from femforge.run.entities import Bodies, Boundaries
     from femforge.run.inspect import Run
     from femforge.run.manifest import RunManifest
+    from femforge.viz.glyphs import EntityRef, GlyphLayer, GlyphView
 
 
 type FloatArray = np.typing.NDArray[np.float64]
@@ -869,6 +870,7 @@ class FieldScene:
         run_id: str,
         bodies: Bodies | None = None,
         frame: Frame | None = None,
+        boundaries: Boundaries | None = None,
     ) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
         """Hold one run's solved grid, split into bodies, under a default display.
 
@@ -880,8 +882,9 @@ class FieldScene:
             run_id: The run bundle's name.
             bodies: The named bodies from ``entities.json``; None names none.
             frame: The solve frame; None takes the first shipped frame that solves on the grid's dimension.
+            boundaries: The named boundaries from ``entities.json``; None names none.
         """
-        from femforge.run.entities import Bodies
+        from femforge.run.entities import Bodies, Boundaries
 
         register_paraview()
         self.frame: Frame = frame if frame is not None else default_frame(model_dim)
@@ -907,6 +910,11 @@ class FieldScene:
         """The vector array and the scale the shown blocks are displaced by, None while they are drawn as solved."""
         self.run_id: str = run_id
         self.bodies: Bodies = bodies if bodies is not None else Bodies([])
+        self.boundaries: Boundaries = boundaries if boundaries is not None else Boundaries([])
+        self.glyphs: GlyphLayer | None = None
+        """The run's glyph layer, drawn after everything else on every redraw; None draws none."""
+        self.glyph_view: GlyphView | None = None
+        """What the glyph layer draws; None removes its actors."""
         self.spec: DisplaySpec = DisplaySpec().fitted(self.fields) if self.fields else DisplaySpec()
         self.clim: tuple[float, float] = (0.0, 1.0)
         self.data_range: tuple[float, float] = (0.0, 1.0)
@@ -946,7 +954,7 @@ class FieldScene:
         frame: Frame | None = manifest.config.frame if manifest is not None else None
 
         log.bind(run_id=run.path.name, bodies=len(blocks), fields=len(fields), frame=frame.label if frame is not None else None).info("Field scene loaded.")
-        return cls(grid=grid, blocks=blocks, fields=fields, model_dim=model_dim_of(grid), run_id=run.path.name, bodies=bodies, frame=frame)
+        return cls(grid=grid, blocks=blocks, fields=fields, model_dim=model_dim_of(grid), run_id=run.path.name, bodies=bodies, frame=frame, boundaries=run.boundaries)
 
     @property
     def expandable(self) -> bool:
@@ -1203,6 +1211,8 @@ class FieldScene:
         self._update_outline(plotter, fitted)
         self._update_streamlines(plotter, fitted)
         self._update_lines_bar(plotter)
+        if self.glyphs is not None:
+            self.glyphs.update(plotter, self, self.glyph_view)
 
     def _update_styled(self, plotter: pv.Plotter, styled: Mapping[str, tuple[str, float]]) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Give every solid body an actor of its own in its ``(color, opacity)``, replacing only the ones that changed and removing the ones dropped."""
@@ -1226,6 +1236,30 @@ class FieldScene:
                 name=SceneActor.STYLED.of(name),
             )
             self._styled[name] = style
+
+    def group_cells(self, ref: EntityRef) -> pv.DataSet | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The solved cells of a body, or of a boundary a condition marked in the VTU; None for any other group."""
+        from femforge.viz.glyphs import EntityKind
+
+        if ref.kind is EntityKind.BODY:
+            return cast("pv.DataSet", self.section_blocks[ref.name]) if ref.name in self.section_blocks.keys() else None
+
+        boundary = self.boundaries.get(ref.name)
+        if boundary is None or boundary.sif_index is None or GEOMETRY_IDS_ARRAY not in self.section_grid.cell_data:
+            return None
+
+        # The VTU marks a boundary's cells by its block number past an offset that grows tenfold until it clears every body id.
+        largest: int = max((body.mesh_id for body in self.bodies), default=0)
+        offset: int = BC_ID_OFFSET
+        while offset <= largest:
+            offset *= 10
+
+        ids: IntArray = np.asarray(self.section_grid.cell_data[GEOMETRY_IDS_ARRAY], dtype=np.int64)
+        picked = cast("np.typing.NDArray[np.bool_]", ids == offset + boundary.sif_index)
+        if not bool(np.any(picked)):
+            return None
+
+        return cast("pv.DataSet", self.section_grid.extract_cells(np.flatnonzero(picked)))  # pyright: ignore[reportUnknownMemberType]  # pyvista's extract_cells index parameter is partially untyped
 
     def shown_blocks(self, hidden: Iterable[str]) -> pv.MultiBlock:  # pragma: no cover - needs pyvista (viz extra)
         """The blocks of every body not in ``hidden``, under their names."""

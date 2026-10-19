@@ -50,8 +50,26 @@ from femforge.viz.field_lines import (
     seed_points,
     select_flux_density_array,
 )
+from femforge.viz.glyphs import (
+    GLYPH_ACTORS,
+    EntityKind,
+    EntityRef,
+    Glyph,
+    GlyphActor,
+    GlyphDraw,
+    GlyphHost,
+    GlyphLabels,
+    GlyphLayer,
+    GlyphPlacement,
+    GlyphView,
+    GroupScene,
+    glyph_actors,
+    glyph_label,
+    glyphs_of,
+    plain_spec,
+)
 from femforge.viz.scene import Renderable, Scene
-from femforge.viz.symmetry import Basis, Expansion, mirror, revolve
+from femforge.viz.symmetry import Basis, Expansion, mirror, revolve, swept_lines
 
 
 __all__ = [
@@ -105,4 +123,21 @@ __all__ = [
     "Basis",
     "mirror",
     "revolve",
+    "swept_lines",
+    "GlyphLabels",
+    "GlyphActor",
+    "GLYPH_ACTORS",
+    "EntityKind",
+    "EntityRef",
+    "Glyph",
+    "GlyphView",
+    "GlyphPlacement",
+    "GlyphHost",
+    "GlyphDraw",
+    "GlyphLayer",
+    "GroupScene",
+    "glyph_label",
+    "glyphs_of",
+    "glyph_actors",
+    "plain_spec",
 ]
