@@ -32,6 +32,7 @@ from femforge.elmer.runtime.solve import SolveRun, solve_case
 from femforge.elmer.runtime.tools import native_elmer_installed
 from femforge.elmer.sim import Sim
 from femforge.execution.docker.image import DockerImage
+from femforge.frames import FrameGeometryError, GeometryCheck
 from femforge.meshing.backend import GmshMesher, MeshBackend, MeshJob, MeshReport
 from femforge.run.artifacts import BundlePolicy, MeshGroupsFile, bundle_files, rebind_groups
 from femforge.run.bundle import write_bundle, write_manifest
@@ -555,23 +556,38 @@ class Driver:
         manifest.artifacts.append(handle.ref)
         write_manifest(sim_dir, manifest)
 
-    def prepare_geometry(self, state: SolveState) -> None:
-        """Materialize the solve-frame STEP into the run directory (from the artifact cache when one is configured) and repoint ``state.config`` at it."""
-        spec: StepSpec = step_spec(state.config)
-        state.step_key = artifact_key(STEP, spec)
-
-        if self.artifacts is None or spec.passes_through:
-            state.config = materialize_geometry(state.config, state.sim_dir)
+    def _record_geometry_check(self, check: GeometryCheck | None) -> None:
+        """Note the frame's verdict on the authored model on the active manifest."""
+        if self._active is None or check is None:
             return
 
-        handle: ArtifactHandle[StepSpec] = self.artifacts.get_or_produce(
-            STEP,
-            spec,
-            into=state.sim_dir,
-        )
-        self._record_artifact(handle)
-        state.step_key = handle.key
-        state.config = repoint_step(state.config, state.sim_dir / BundleFile.GEOMETRY_STEP)
+        manifest, sim_dir = self._active
+        manifest.geometry_check = check
+        write_manifest(sim_dir, manifest)
+
+    def prepare_geometry(self, state: SolveState) -> None:
+        """Materialize the solve-frame STEP into the run directory (from the artifact cache when one is configured), repoint ``state.config`` at it and record the frame's geometry check."""
+        spec: StepSpec = step_spec(state.config)
+        state.step_key = artifact_key(STEP, spec)
+        step_path: Path = state.sim_dir / BundleFile.GEOMETRY_STEP
+
+        try:
+            if self.artifacts is None or spec.passes_through:
+                state.config = materialize_geometry(state.config, state.sim_dir)
+            else:
+                handle: ArtifactHandle[StepSpec] = self.artifacts.get_or_produce(
+                    STEP,
+                    spec,
+                    into=state.sim_dir,
+                )
+                self._record_artifact(handle)
+                state.step_key = handle.key
+                state.config = repoint_step(state.config, step_path)
+        except FrameGeometryError as error:
+            self._record_geometry_check(error.check)
+            raise
+
+        self._record_geometry_check(GeometryCheck.load(step_path))
 
     def pre_mesh(self, state: SolveState) -> None:
         """Hook before meshing (e.g. adjust ``state.config`` or drop extra inputs into ``state.sim_dir``)."""

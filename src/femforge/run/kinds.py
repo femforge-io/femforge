@@ -30,7 +30,7 @@ RUN_PRODUCER_VERSION = 2
 MESH_PRODUCER_VERSION = 2
 """Bump when meshing or ElmerGrid conversion changes what the same mesh spec yields."""
 
-STEP_PRODUCER_VERSION = 3
+STEP_PRODUCER_VERSION = 4
 """Bump when STEP export or frame conversion changes what the same geometry parameters and frame yield."""
 
 # ISO-10303-21 stamps the export time into the HEADER's FILE_NAME entity, which the bytes fallback masks.
@@ -114,6 +114,9 @@ def _build_step(spec: StepSpec, workdir: Path) -> Produced:
     # A section with named edges records them beside its STEP, since gmsh imports no names on free edges.
     if (workdir / BundleFile.GEOMETRY_BOUNDARIES).is_file():
         files.append(BundleFile.GEOMETRY_BOUNDARIES)
+
+    if (workdir / BundleFile.GEOMETRY_CHECK).is_file():
+        files.append(BundleFile.GEOMETRY_CHECK)
 
     return Produced(files=tuple(files))
 

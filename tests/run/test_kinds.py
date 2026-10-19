@@ -147,13 +147,13 @@ class _NamedBar(Build123dGeometry):
         return TaggedCompound(children=[bar, TaggedFace(box.faces().sort_by(b3d.Axis.X)[0], name="Left")])
 
 
-def test_step_kind_keeps_the_edge_file_of_a_section_with_named_faces(tmp_path: Path) -> None:
+def test_step_kind_keeps_the_edge_file_and_the_geometry_check_of_a_section(tmp_path: Path) -> None:
     assert STEP.produce is not None
     frame = Cartesian2D(normal=Axis(origin=Vec3(0, 0, 0), direction=Direction(0, 0, 1)), thickness=6 * U.mm)
 
     produced = STEP.produce(StepSpec(source=_NamedBar(), frame=frame), tmp_path)
 
-    assert produced.files == ("geometry.step", "geometry.boundaries.json")
+    assert produced.files == ("geometry.step", "geometry.boundaries.json", "geometry.check.json")
 
 
 def test_a_cartesian_2d_step_is_always_rebuilt_and_keys_on_its_thickness_and_state() -> None:
