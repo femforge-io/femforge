@@ -10,15 +10,45 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.files import BundleFile
 from femforge.common.tags import TagDict
+from femforge.common.vector import Direction, DirectionField, Vec3, Vec3Field
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.boundary import BoundaryGroup
 from femforge.physical.domain import EntityTag
 
 
+class Bounds(BaseModel):
+    """An axis-aligned bounding box in metres."""
+
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
+
+    low: Vec3Field
+    """`[m]`: The lower corner."""
+
+    high: Vec3Field
+    """`[m]`: The upper corner."""
+
+    @property
+    def diagonal(self) -> float:
+        """`D` `[m]`: The length of the box diagonal."""
+        return (self.high - self.low).magnitude()
+
+
 class PhysicalGroup:
     """A single gmsh physical group plus the metadata to reconstruct the matching Elmer body; both sides share the same ``name`` and integer ``id``."""
 
-    def __init__(self, dim: int, gmsh_id: int, name: str, material: MaterialProperties, tags: list[EntityTag], entity_tags: list[int], authored: str | None = None) -> None:
+    def __init__(
+        self,
+        dim: int,
+        gmsh_id: int,
+        name: str,
+        material: MaterialProperties,
+        tags: list[EntityTag],
+        entity_tags: list[int],
+        authored: str | None = None,
+        centroid: Vec3 | None = None,
+        bbox: Bounds | None = None,
+        measure: float | None = None,
+    ) -> None:
         """Record one body group.
 
         Args:
@@ -29,6 +59,9 @@ class PhysicalGroup:
             tags: The ``EntityTag`` objects the group matched.
             entity_tags: The gmsh entity tags in the group.
             authored: The ``Name`` tag the entities were authored with, or None when the name is composed.
+            centroid: The centre of mass of the group; None until measured.
+            bbox: The bounds of the mesh nodes of the group; None until measured.
+            measure: The volume of the group, or its section area times one metre in 2D; None until measured.
         """
         self.dim = dim
         """Topological dimension of the group (3 = volume in a 3D model, 2 = surface in a 2D one)."""
@@ -50,6 +83,15 @@ class PhysicalGroup:
 
         self.entity_tags = entity_tags
         """The gmsh entity tags (volumes in 3D, surfaces in 2D) that make up this group."""
+
+        self.centroid = centroid
+        """`[m]`: The centre of mass of the group in the meshed frame; None until measured."""
+
+        self.bbox = bbox
+        """The bounds of the mesh nodes of the group in the meshed frame; None until measured."""
+
+        self.measure = measure
+        """`V` `[m³]`: The volume of the group, or its section area times one metre of depth in 2D; None until measured."""
 
     def __repr__(self) -> str:
         return f"PhysicalGroup(id={self.id}, name={self.name!r}, material={self.material.name!r})"
@@ -140,6 +182,12 @@ class _BodySource(Protocol):
     def entity_tags(self) -> Sequence[int]: ...
     @property
     def authored(self) -> str | None: ...
+    @property
+    def centroid(self) -> Vec3 | None: ...
+    @property
+    def bbox(self) -> Bounds | None: ...
+    @property
+    def measure(self) -> float | None: ...
 
 
 class _BoundarySource(Protocol):
@@ -161,6 +209,14 @@ class _BoundarySource(Protocol):
     def measure(self) -> float | None: ...
     @property
     def tags(self) -> Sequence[_TagSource]: ...
+    @property
+    def centroid(self) -> Vec3 | None: ...
+    @property
+    def normal(self) -> Vec3 | None: ...
+    @property
+    def bbox(self) -> Bounds | None: ...
+    @property
+    def length(self) -> float | None: ...
 
 
 class BodyGroupRecord(BaseModel):
@@ -185,6 +241,15 @@ class BodyGroupRecord(BaseModel):
 
     authored: str | None = None
     """The ``Name`` tag the group was named by, or None when its name is composed."""
+
+    centroid: Vec3Field | None = None
+    """`[m]`: The centre of mass of the group in the meshed frame; None for a mesh from before groups were measured."""
+
+    bbox: Bounds | None = None
+    """The bounds of the mesh nodes of the group in the meshed frame; None for a mesh from before groups were measured."""
+
+    measure: float | None = None
+    """`V` `[m³]`: The volume of the group, or its section area times one metre of depth in 2D; None for a mesh from before groups were measured."""
 
 
 class BoundaryGroupRecord(BaseModel):
@@ -215,6 +280,18 @@ class BoundaryGroupRecord(BaseModel):
 
     measure: float | None = None
     """`A` `[m²]`: Measured size of a named group, area in 3D and length times one metre of depth in 2D; None for adjacency groups."""
+
+    centroid: Vec3Field | None = None
+    """`[m]`: The centre of mass of the group in the meshed frame; None for a mesh from before groups were measured."""
+
+    normal: DirectionField | None = None
+    """`[-]`: The mean outward normal out of the first bordering body; None when the faces cancel, as on a closed shell, or their side is unknown."""
+
+    bbox: Bounds | None = None
+    """The bounds of the mesh nodes of the group in the meshed frame; None for a mesh from before groups were measured."""
+
+    length: float | None = None
+    """`L` `[m]`: The summed length of the boundary curves of a 2D model; None in 3D."""
 
 
 class MeshGroupsFile(BaseModel):
@@ -249,6 +326,9 @@ class MeshGroupsFile(BaseModel):
                     selectors=[dict(tag.selector) for tag in group.tags],
                     entity_tags=list(group.entity_tags),
                     authored=group.authored,
+                    centroid=group.centroid,
+                    bbox=group.bbox,
+                    measure=group.measure,
                 )
                 for group in physical_groups
             ],
@@ -262,6 +342,10 @@ class MeshGroupsFile(BaseModel):
                     named=group.named,
                     selectors=[dict(tag.selector) for tag in group.tags],
                     measure=group.measure,
+                    centroid=group.centroid,
+                    normal=None if group.normal is None else Direction(group.normal.x, group.normal.y, group.normal.z),
+                    bbox=group.bbox,
+                    length=group.length,
                 )
                 for group in boundary_groups
             ],

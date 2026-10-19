@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ pytest.importorskip("build123d")
 import build123d as b3d  # imported after the gate so the file still collects where the CAD stack is absent
 
 from femforge.common.tags import TagKey
+from femforge.common.vector import Direction, Vec3
 from femforge.config import SimulationConfig
 from femforge.geometry.tags import TaggedCompound, TaggedFace, TaggedPart
 from femforge.materials.steel import Steel_316
@@ -127,3 +129,44 @@ def test_a_named_face_survives_the_fragment_of_several_bodies(tmp_path: Path) ->
     assert set(by_name) == {"BEAM__BLOCK", "BEAM__EXT", "BLOCK__EXT", "ROOT"}
     assert by_name["ROOT"].bodies == ("BEAM",)
     assert by_name["ROOT"].measure == pytest.approx(1e-4, rel=1e-6)
+
+
+def test_a_named_group_records_its_centroid_bounds_and_outward_normal(end_faces: tuple[Mesher, DomainConfig]) -> None:
+    mesher, _ = end_faces
+    by_name: dict[str, BoundaryGroup] = {group.name: group for group in mesher.boundary_groups}
+    root: BoundaryGroup = by_name["ROOT"]
+    beam = mesher.physical_groups[0]
+
+    assert root.normal is not None and root.normal.isclose(Direction(-1, 0, 0), tolerance=1e-9)
+    assert by_name["TIP"].normal is not None and by_name["TIP"].normal.isclose(Direction(1, 0, 0), tolerance=1e-9)
+    assert root.centroid is not None and root.centroid.isclose(Vec3(-0.01, 0.0, 0.0), tolerance=1e-9)
+    assert root.length is None
+    assert by_name["BEAM__EXT"].normal is None
+    assert beam.measure == pytest.approx(2e-6, rel=1e-9)
+    assert beam.centroid is not None and beam.centroid.isclose(Vec3(0.0, 0.0, 0.0), tolerance=1e-9)
+    assert beam.bbox is not None and beam.bbox.diagonal == pytest.approx(math.sqrt(6e-4), rel=1e-9)
+
+
+def test_an_interface_normal_points_out_of_its_first_body(tmp_path: Path) -> None:
+    _, beam = _beam()
+    block = TaggedPart([b3d.Pos(15, 0, 0) * b3d.Box(10, 10, 10)], tags={TagKey.MATERIAL: "Steel316"}, name="Block")
+    block.color = b3d.Color("green")
+
+    mesher, _ = _mesh(tmp_path / "pair.step", beam, block)
+    interface: BoundaryGroup = next(group for group in mesher.boundary_groups if group.name == "BEAM__BLOCK")
+
+    assert interface.bodies == ("BEAM", "BLOCK")
+    assert interface.normal is not None and interface.normal.isclose(Direction(1, 0, 0), tolerance=1e-9)
+
+
+def test_a_curved_body_is_bounded_by_its_mesh_nodes(tmp_path: Path) -> None:
+    rod = TaggedPart([b3d.Cylinder(10, 20)], tags={TagKey.MATERIAL: "Steel316"}, name="Beam")
+    rod.color = b3d.Color("gray")
+
+    mesher, _ = _mesh(tmp_path / "rod.step", rod)
+    body = mesher.physical_groups[0]
+    shell: BoundaryGroup = mesher.boundary_groups[0]
+
+    assert body.bbox is not None
+    assert body.bbox.high.y <= 0.0101 and body.bbox.low.y >= -0.0101
+    assert shell.name == "BEAM__EXT" and shell.normal is None

@@ -8,7 +8,7 @@ from femforge.meshing.config import MeshConfig, SupportsMeshing
 from femforge.meshing.firewall import block_gmsh
 from femforge.meshing.geometry_utils import EntityGeometry, extract_entity_geometry
 from femforge.meshing.gmsh_options import GmshOptions, MeshAlgorithm2D, MeshAlgorithm3D
-from femforge.meshing.groups import BodyGroupRecord, BoundaryGroupRecord, MeshGroupsFile, PhysicalGroup, format_boundary_groups, format_physical_groups, raise_on_duplicate_names
+from femforge.meshing.groups import BodyGroupRecord, BoundaryGroupRecord, Bounds, MeshGroupsFile, PhysicalGroup, format_boundary_groups, format_physical_groups, raise_on_duplicate_names
 from femforge.meshing.mesh_sizing import ResolvedRegionMeshSize, apply_mesh_sizing, gmsh_set_global_size, gmsh_set_region_size, resolve_region_sizes
 from femforge.meshing.spec import MeshSpec, TagSelectorSpec
 
@@ -35,6 +35,7 @@ __all__ = [
     "format_physical_groups",
     "format_boundary_groups",
     "MeshGroupsFile",
+    "Bounds",
     "BodyGroupRecord",
     "BoundaryGroupRecord",
     "BoundaryGroup",

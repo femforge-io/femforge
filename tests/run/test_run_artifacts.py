@@ -14,10 +14,10 @@ from femforge.frames import Solid
 from femforge.common.tags import TagKey
 from femforge.config import SimulationConfig
 from femforge.geometry.config import GeometryArea
-from femforge.meshing.groups import MeshGroupsFile
+from femforge.meshing.groups import Bounds, MeshGroupsFile
 from femforge.physical.conditions import Magnetization
 from femforge.physical.domain import DomainConfig, EntityTag
-from femforge.common.vector import Direction
+from femforge.common.vector import Direction, Vec3
 from femforge.materials.properties import MaterialProperties
 from femforge.run.artifacts import BundlePolicy, MeshRebindError, bundle_files, prune_store_sourced, rebind_groups, rehydrate_bundle
 from femforge.run.bundle import write_manifest
@@ -44,6 +44,9 @@ class _FakeBodyGroup:
     tags: list[_FakeTag] = field(default_factory=list)
     entity_tags: list[int] = field(default_factory=list)
     authored: str | None = None
+    centroid: Vec3 | None = None
+    bbox: Bounds | None = None
+    measure: float | None = None
 
 
 @dataclass
@@ -56,6 +59,10 @@ class _FakeBoundaryGroup:
     named: bool = False
     measure: float | None = None
     tags: list[_FakeTag] = field(default_factory=list)
+    centroid: Vec3 | None = None
+    normal: Vec3 | None = None
+    bbox: Bounds | None = None
+    length: float | None = None
 
 
 def _groups() -> MeshGroupsFile:
@@ -72,6 +79,9 @@ def _groups() -> MeshGroupsFile:
             material=_FakeMaterial("N42"),
             tags=[_FakeTag({"Magnetization": "N"})],
             entity_tags=[2, 3],
+            centroid=Vec3(0.01, 0.02, 0.0),
+            bbox=Bounds(low=Vec3(0.0, 0.0, 0.0), high=Vec3(0.02, 0.04, 0.0)),
+            measure=8e-4,
         ),
     ]
     boundaries = [
@@ -102,6 +112,10 @@ def _groups() -> MeshGroupsFile:
             named=True,
             measure=2.5e-3,
             tags=[_FakeTag({TagKey.NAME: "Tip"})],
+            centroid=Vec3(0.05, 0.0, 0.0),
+            normal=Vec3(2.0, 0.0, 0.0),
+            bbox=Bounds(low=Vec3(0.05, -0.01, 0.0), high=Vec3(0.05, 0.01, 0.0)),
+            length=2.5e-3,
         ),
     ]
     return MeshGroupsFile.capture(bodies, boundaries, element_count=4067)
@@ -139,6 +153,11 @@ def test_rebind_groups_attaches_the_current_domain_objects() -> None:
     assert tip.named and tip.is_external
     assert tip.tags == [domain.tags[1]] and tip.tags[0] is domain.tags[1]
     assert tip.measure == 2.5e-3
+    assert (tip.centroid, tip.normal, tip.length) == (Vec3(0.05, 0.0, 0.0), Direction(1, 0, 0), 2.5e-3)
+    assert tip.bbox is not None and tip.bbox.diagonal == pytest.approx(0.02)
+    assert (magnet.centroid, magnet.measure) == (Vec3(0.01, 0.02, 0.0), 8e-4)
+    assert magnet.bbox == Bounds(low=Vec3(0.0, 0.0, 0.0), high=Vec3(0.02, 0.04, 0.0))
+    assert boundaries[0].normal is None and boundaries[0].centroid is None
 
 
 def test_rebind_groups_fails_loudly_on_a_mismatched_domain() -> None:

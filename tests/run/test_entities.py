@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from femforge.common.tags import TagKey
+from femforge.common.vector import Direction, Vec3
+from femforge.meshing.groups import Bounds
 from femforge.config import SimulationConfig
 from femforge.meshing.config import MeshConfig
 from femforge.physical.domain import DomainConfig, EntityTag
@@ -43,6 +45,9 @@ class _FakeBodyGroup:
     name: str
     material: _FakeMaterial
     tags: list[_FakeTag] = field(default_factory=list)
+    centroid: Vec3 | None = None
+    bbox: Bounds | None = None
+    measure: float | None = None
 
 
 @dataclass
@@ -52,19 +57,42 @@ class _FakeBoundaryGroup:
     bodies: tuple[str, ...]
     on_axis: bool = False
     named: bool = False
+    centroid: Vec3 | None = None
+    normal: Vec3 | None = None
+    bbox: Bounds | None = None
+    length: float | None = None
+    measure: float | None = None
 
 
 def _write_sample_entities(tmp_path: Path) -> None:
     body_groups = [
         _FakeBodyGroup(id=1, name="AIR", material=_FakeMaterial("Air")),
-        _FakeBodyGroup(id=2, name="N42_MAGNETIZATIONN", material=_FakeMaterial("N42"), tags=[_FakeTag({"Magnetization": "N"})]),
+        _FakeBodyGroup(
+            id=2,
+            name="N42_MAGNETIZATIONN",
+            material=_FakeMaterial("N42"),
+            tags=[_FakeTag({"Magnetization": "N"})],
+            centroid=Vec3(0.0, 0.0, 0.0),
+            bbox=Bounds(low=Vec3(-0.05, -0.01, 0.0), high=Vec3(0.05, 0.01, 0.0)),
+            measure=2e-3,
+        ),
         _FakeBodyGroup(id=3, name="UNTAGGED", material=_FakeMaterial("")),
     ]
     boundary_groups = [
         _FakeBoundaryGroup(id=4, name="AIR__EXT", bodies=("AIR",)),
         _FakeBoundaryGroup(id=5, name="AIR__N42_MAGNETIZATIONN", bodies=("AIR", "N42_MAGNETIZATIONN")),
         _FakeBoundaryGroup(id=6, name="AIR__AXIS", bodies=("AIR",), on_axis=True),
-        _FakeBoundaryGroup(id=7, name="RIGHTFACE", bodies=("N42_MAGNETIZATIONN",), named=True),
+        _FakeBoundaryGroup(
+            id=7,
+            name="RIGHTFACE",
+            bodies=("N42_MAGNETIZATIONN",),
+            named=True,
+            centroid=Vec3(0.05, 0.0, 0.0),
+            normal=Vec3(3.0, 0.0, 0.0),
+            bbox=Bounds(low=Vec3(0.05, -0.01, 0.0), high=Vec3(0.05, 0.01, 0.0)),
+            length=0.02,
+            measure=0.02,
+        ),
     ]
     write_entities(tmp_path, body_groups, boundary_groups)
 
@@ -111,6 +139,11 @@ def test_load_entities_from_the_sidecar_resolves_kinds_and_sif_indices(tmp_path:
     assert face.kind is BoundaryKind.NAMED
     assert face.bodies == ("N42_MAGNETIZATIONN",)
     assert face.mesh_id == 7
+    assert (face.centroid, face.normal, face.length, face.measure) == (Vec3(0.05, 0.0, 0.0), Direction(1, 0, 0), 0.02, 0.02)
+    assert face.bbox == Bounds(low=Vec3(0.05, -0.01, 0.0), high=Vec3(0.05, 0.01, 0.0))
+    assert (magnet.measure, magnet.centroid) == (2e-3, Vec3(0.0, 0.0, 0.0))
+    assert magnet.bbox is not None and magnet.bbox.diagonal == pytest.approx(0.10198039)
+    assert (interface.normal, interface.length, entities.bodies["AIR"].bbox) == (None, None, None)
 
 
 def _manifest(tmp_path: Path) -> RunManifest:

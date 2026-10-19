@@ -76,6 +76,9 @@ def rebind_groups(groups: MeshGroupsFile, domain: DomainConfig) -> tuple[list[Ph
                 tags=tags,
                 entity_tags=list(record.entity_tags),
                 authored=record.authored,
+                centroid=record.centroid,
+                bbox=record.bbox,
+                measure=record.measure,
             )
         )
 
@@ -92,6 +95,10 @@ def rebind_groups(groups: MeshGroupsFile, domain: DomainConfig) -> tuple[list[Ph
                 tags=_tags_for(f"boundary {record.name!r}", record.selectors, domain),
                 measure=record.measure,
                 named=record.named,
+                centroid=record.centroid,
+                normal=record.normal,
+                bbox=record.bbox,
+                length=record.length,
             )
         )
 
