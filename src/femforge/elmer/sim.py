@@ -203,7 +203,7 @@ class Sim:
         if self.physics in PHYSICS_NEEDS_BOUNDARY_CONDITION and not sim.boundaries:
             warnings.warn(
                 f"Physics '{self.physics.value}' resolved no boundary conditions from {len(self.boundary_groups)} boundary group(s); "
-                f"the solve is likely ill-posed (does a region need a FixedTemperature / HeatFlux / Convection / FixedPotential / FixedDisplacement / SurfaceForce?).",
+                f"the solve is likely ill-posed (does a region need a FixedTemperature / HeatFlux / Convection / FixedVoltage / FixedDisplacement / SurfaceForce?).",
                 SolverConfigWarning,
                 stacklevel=2,
             )

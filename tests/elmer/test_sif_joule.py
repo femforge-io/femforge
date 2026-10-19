@@ -10,15 +10,15 @@ from femforge.common.tags import CurrentDir, TagKey
 from femforge.elmer.physics import Physics, condition_physics
 from femforge.materials.copper import Copper
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import Convection, FixedPotential, JouleHeat
+from femforge.physical.conditions import Convection, FixedVoltage, JouleHeat
 from femforge.physical.domain import EntityTag, conditions_for
 from femforge.physical.units import U
 from tests.elmer.test_sif_smoke import FakeBoundaryGroup, FakePhysicalGroup, _boundary_blocks, _write_sif
 
 
 def _joule_groups() -> list[PhysicalGroup]:
-    entry = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedPotential(value=0.01 * U.V)])
-    exit_ = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedPotential(value=0 * U.V)])
+    entry = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.ENTRY}, conditions=[FixedVoltage(value=0.01 * U.V)])
+    exit_ = EntityTag(selector={TagKey.CURRENT_DIR: CurrentDir.EXIT}, conditions=[FixedVoltage(value=0 * U.V)])
     bar = EntityTag(selector={"Region": "Bar"}, conditions=[JouleHeat(), Convection(coefficient=15 * U.W / (U.m**2 * U.K), ext_temperature=300 * U.K)])
     return [
         FakePhysicalGroup(1, "COPPER_ENTRY", Copper(), [entry]),
@@ -71,11 +71,11 @@ def test_joule_heating_sif_has_both_solvers_and_body_force() -> None:
 def test_coupled_physics_activates_both_condition_families() -> None:
     blocks = _boundary_blocks(_joule_sif())
     # Electrical electrodes AND thermal convection both fire under the coupled physics.
-    assert "COPPER_ENTRY__EXT_fixed_potential" in blocks
+    assert "COPPER_ENTRY__EXT_fixed_voltage" in blocks
     assert "COPPER_BAR__EXT_convection" in blocks
     # The film is external-only: the bar↔pad interface carries the pad's potential but no convection.
-    assert "COPPER_BAR__COPPER_ENTRY_fixed_potential" in blocks
-    assert "Heat Transfer Coefficient" not in blocks["COPPER_BAR__COPPER_ENTRY_fixed_potential"]
+    assert "COPPER_BAR__COPPER_ENTRY_fixed_voltage" in blocks
+    assert "Heat Transfer Coefficient" not in blocks["COPPER_BAR__COPPER_ENTRY_fixed_voltage"]
     assert "COPPER_EXIT__EXT_convection" not in blocks
 
 

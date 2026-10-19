@@ -305,7 +305,7 @@ After the solve, [parse_result][femforge.run.parse_result] reads the finished bu
 
 A current-conduction run measures each phase's terminal current with Elmer's own flux integral, and `src/femforge/run/electrical.py` maps the result back to names:
 
-1. [FixedPotential][femforge.physical.FixedPotential] emits `Save Scalars = Logical True` beside its potential, which marks the electrode for boundary integration (`src/femforge/physical/conditions.py:337-342`).
+1. [FixedVoltage][femforge.physical.FixedVoltage] emits `Save Scalars = Logical True` beside its potential, which marks the electrode for boundary integration (`src/femforge/physical/conditions.py:337-342`).
 2. SaveScalars' default first reduction is the `diffusive flux` of `Potential` weighted by `Electric Conductivity`, which integrates σ ∂φ/∂n over each marked boundary to a current (`src/femforge/elmer/config/output/save_scalars.py:34-41`). Its second reduction integrates the Joule loss density to a power P, a cross-check through R = ΔV²/P (`src/femforge/elmer/config/output/save_scalars.py:43-47`).
 3. Elmer names each flux column by its boundary index, as in `diffusive flux: potential over bc 3`; [boundary_fluxes][femforge.run.boundary_fluxes] reads the index out of the column name (`src/femforge/run/electrical.py:10-21`).
 4. [read_boundary_names][femforge.run.read_boundary_names] reads the index-to-name map `Sim` wrote as `boundaries.yml` (`src/femforge/run/electrical.py:24-31`). The file is flat `int: name` YAML, and the reader splits each line at its first colon.

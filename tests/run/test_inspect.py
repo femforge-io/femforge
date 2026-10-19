@@ -247,8 +247,8 @@ def test_electrode_and_phase_currents(tmp_path: Path) -> None:
     run = Run(bundle)
     assert run.electrode_currents == {}
 
-    (bundle / "boundaries.yml").write_text("1: COPPER_PHASE0__EXT_fixed_potential\n2: COPPER_PHASE0_PAD__EXT\n", encoding="utf-8")
-    assert run.electrode_currents == {"COPPER_PHASE0__EXT_fixed_potential": 2.5, "COPPER_PHASE0_PAD__EXT": -0.1}
+    (bundle / "boundaries.yml").write_text("1: COPPER_PHASE0__EXT_fixed_voltage\n2: COPPER_PHASE0_PAD__EXT\n", encoding="utf-8")
+    assert run.electrode_currents == {"COPPER_PHASE0__EXT_fixed_voltage": 2.5, "COPPER_PHASE0_PAD__EXT": -0.1}
     # The dominant |flux| among a phase's electrodes is its terminal current.
     assert run.phase_currents == {"0": 2.5}
 

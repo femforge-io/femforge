@@ -22,7 +22,7 @@ from femforge.physical.conditions import (
     CurrentDensity,
     ElmerKeyword,
     FixedDisplacement,
-    FixedPotential,
+    FixedVoltage,
     FixedTemperature,
     HeatFlux,
     HeatSource,
@@ -54,7 +54,7 @@ def test_the_shipped_conditions_are_the_union_members_in_order() -> None:
         HeatFlux,
         Convection,
         HeatSource,
-        FixedPotential,
+        FixedVoltage,
         JouleHeat,
         CoilDrive,
         CoilTerminal,
@@ -157,8 +157,8 @@ def test_convection_to_elmer() -> None:
     assert data["External Temperature"] == pytest.approx(300.0)
 
 
-def test_fixed_potential_to_elmer_emits_electrode_keywords() -> None:
-    cond = FixedPotential(value=1 * U.mV)
+def test_fixed_voltage_to_elmer_emits_electrode_keywords() -> None:
+    cond = FixedVoltage(value=1 * U.mV)
     assert cond.physics is Physics.CURRENT_CONDUCTION
     assert cond.target is ConditionTarget.BOUNDARY
     data = cond.to_elmer()
@@ -205,7 +205,7 @@ def test_external_only_flags() -> None:
     assert CoilTerminal.external_only is True
     assert FixedTemperature.external_only is False
     assert HeatFlux.external_only is False
-    assert FixedPotential.external_only is False
+    assert FixedVoltage.external_only is False
 
 
 # --- CalculateMagneticForce.to_elmer ----------------------------------------
@@ -259,16 +259,16 @@ def test_condition_list_round_trips_via_discriminator() -> None:
         HeatFlux(value=500 * U.W / U.m**2),
         Convection(coefficient=12 * U.W / (U.m**2 * U.K), ext_temperature=300 * U.K),
         HeatSource(power_density=1e6 * U.W / U.m**3),
-        FixedPotential(value=1 * U.mV),
+        FixedVoltage(value=1 * U.mV),
         FixedDisplacement(z=None),
         SurfaceForce(force=quantity(Vec3(0, 0, 100), "N")),
     ]
     dumped: list[dict[str, object]] = cast("list[dict[str, object]]", adapter.dump_python(conditions))
     # The discriminator is present so model_validate can reconstruct types.
-    assert [c["kind"] for c in dumped] == ["magnetization", "current_density", "fixed_temperature", "heat_flux", "convection", "heat_source", "fixed_potential", "fixed_displacement", "surface_force"]
+    assert [c["kind"] for c in dumped] == ["magnetization", "current_density", "fixed_temperature", "heat_flux", "convection", "heat_source", "fixed_voltage", "fixed_displacement", "surface_force"]
 
     restored: list[ConditionUnion] = adapter.validate_python(dumped)
-    assert [type(c) for c in restored] == [Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, FixedDisplacement, SurfaceForce]
+    assert [type(c) for c in restored] == [Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedVoltage, FixedDisplacement, SurfaceForce]
     # Values survive the round trip.
     first: Condition = restored[0]
     assert isinstance(first, Magnetization)

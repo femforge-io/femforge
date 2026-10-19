@@ -48,7 +48,7 @@ __all__ = [
     "HeatFlux",
     "Convection",
     "HeatSource",
-    "FixedPotential",
+    "FixedVoltage",
     "JouleHeat",
     "CoilDrive",
     "CoilTerminal",
@@ -314,13 +314,13 @@ class HeatSource(Condition):
         return out
 
 
-class FixedPotential(Condition):
-    """A fixed electric potential on an electrode, one end of a phase's terminal pair.
+class FixedVoltage(Condition):
+    """A fixed voltage potential on an electrode, one end of a phase's terminal pair.
 
     The run also integrates the current through the electrode.
     """
 
-    kind: Literal["fixed_potential"] = "fixed_potential"
+    kind: Literal["fixed_voltage"] = "fixed_voltage"
     """Discriminator that names this condition type in a serialized config."""
 
     physics: Physics = Physics.CURRENT_CONDUCTION
@@ -332,7 +332,7 @@ class FixedPotential(Condition):
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
     value: Annotated[Voltage, ElmerKeyword(ElmerVariable.POTENTIAL, U.V)]
-    """`V` `[V]`: Electric potential imposed on the electrode boundary; the keyword is the solver variable's name (Elmer Dirichlet semantics), single-sourced via the enum."""
+    """`V` `[V]`: The voltage potential held on the boundary."""
 
     def to_elmer(self) -> dict[str, float | str]:
         """The electrode potential plus the ``Save Scalars`` flag that makes SaveScalars integrate the electrode current."""
@@ -629,9 +629,7 @@ class SurfaceForce(Condition):
 
 # A region holds a polymorphic ``list[Condition]``. A distinct ``kind`` per subclass lets Pydantic build a discriminated union so the list round-trips and exports clean JSON schema.
 ConditionUnion = Annotated[
-    Union[
-        Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedPotential, JouleHeat, CoilDrive, CoilTerminal, CalculateMagneticForce, FixedDisplacement, SurfaceForce
-    ],
+    Union[Magnetization, CurrentDensity, FixedTemperature, HeatFlux, Convection, HeatSource, FixedVoltage, JouleHeat, CoilDrive, CoilTerminal, CalculateMagneticForce, FixedDisplacement, SurfaceForce],
     Field(discriminator="kind"),
 ]
 """Any concrete condition, discriminated by its ``kind``."""

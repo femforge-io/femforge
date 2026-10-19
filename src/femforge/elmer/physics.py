@@ -41,7 +41,7 @@ def condition_physics(physics: Physics) -> frozenset[Physics]:
     if physics is Physics.JOULE_HEATING:
         return frozenset({Physics.JOULE_HEATING, Physics.CURRENT_CONDUCTION, Physics.THERMAL})
     if physics is Physics.COIL_MAGNETOSTATICS:
-        # CURRENT_CONDUCTION conditions (FixedPotential electrodes) are deliberately NOT activated: this stack has no
+        # CURRENT_CONDUCTION conditions (FixedVoltage electrodes) are deliberately NOT activated: this stack has no
         # Potential variable (the source stage is CoilSolver, not StatCurrent), so shared electrode tags stay inert here.
         return frozenset({Physics.COIL_MAGNETOSTATICS, Physics.MAGNETOSTATICS})
     if physics is Physics.MAGNETOSTATICS_2D:

@@ -25,8 +25,8 @@ def test_boundary_fluxes_tolerates_wording_variants() -> None:
 
 def test_read_boundary_names_parses_flat_yaml(tmp_path: Path) -> None:
     yml = tmp_path / "boundaries.yml"
-    _ = yml.write_text("1: COPPER_ENTRY__EXT_fixed_potential\n4: COPPER_EXIT__EXT_fixed_potential\n")
-    assert read_boundary_names(yml) == {1: "COPPER_ENTRY__EXT_fixed_potential", 4: "COPPER_EXIT__EXT_fixed_potential"}
+    _ = yml.write_text("1: COPPER_ENTRY__EXT_fixed_voltage\n4: COPPER_EXIT__EXT_fixed_voltage\n")
+    assert read_boundary_names(yml) == {1: "COPPER_ENTRY__EXT_fixed_voltage", 4: "COPPER_EXIT__EXT_fixed_voltage"}
 
 
 def test_read_boundary_names_skips_malformed_lines(tmp_path: Path) -> None:
@@ -36,9 +36,9 @@ def test_read_boundary_names_skips_malformed_lines(tmp_path: Path) -> None:
 
 
 def test_electrode_currents_joins_names() -> None:
-    names = {1: "COPPER_ENTRY__EXT_fixed_potential", 4: "COPPER_EXIT__EXT_fixed_potential"}
+    names = {1: "COPPER_ENTRY__EXT_fixed_voltage", 4: "COPPER_EXIT__EXT_fixed_voltage"}
     currents = electrode_currents(RAW, names)
-    assert currents == {"COPPER_ENTRY__EXT_fixed_potential": 5.95, "COPPER_EXIT__EXT_fixed_potential": -5.95}
+    assert currents == {"COPPER_ENTRY__EXT_fixed_voltage": 5.95, "COPPER_EXIT__EXT_fixed_voltage": -5.95}
     # A flux whose bc has no name entry is dropped rather than invented.
     assert electrode_currents(RAW, {1: "ONLY_THIS"}) == {"ONLY_THIS": 5.95}
 
@@ -47,11 +47,11 @@ def test_phase_currents_takes_dominant_flux_per_phase() -> None:
     # Internal electrode boundaries integrate one-sided: the pad side reads ~0, the conductor side the full
     # terminal current. The dominant |flux| wins per phase; names without a PHASE index are ignored.
     currents = {
-        "COPPER_ENTRY_PHASE0__COPPER_PHASE0_fixed_potential": 0.0,
-        "COPPER_ENTRY_PHASE0__EXT_fixed_potential": 1e-12,
-        "COPPER_EXIT_PHASE0__COPPER_PHASE0_fixed_potential": -5.95,
-        "COPPER_ENTRY_PHASE1__COPPER_PHASE1_fixed_potential": 3.10,
-        "SOMETHING_ELSE_fixed_potential": 99.0,
+        "COPPER_ENTRY_PHASE0__COPPER_PHASE0_fixed_voltage": 0.0,
+        "COPPER_ENTRY_PHASE0__EXT_fixed_voltage": 1e-12,
+        "COPPER_EXIT_PHASE0__COPPER_PHASE0_fixed_voltage": -5.95,
+        "COPPER_ENTRY_PHASE1__COPPER_PHASE1_fixed_voltage": 3.10,
+        "SOMETHING_ELSE_fixed_voltage": 99.0,
     }
     assert phase_currents(currents) == {"0": -5.95, "1": 3.10}
 

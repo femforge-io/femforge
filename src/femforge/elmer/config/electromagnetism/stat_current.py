@@ -34,7 +34,7 @@ from femforge.materials.properties import ElmerMaterialKeyword
 class StatCurrentSolver(SolverBase, LinearSystem, NonlinearSystem, SteadyState):
     """
     Static current conduction (Elmer's StatCurrentSolve): solves ``Potential`` from ∇·(σ∇φ) = 0, excited by per-phase
-    [`FixedPotential`][femforge.physical.conditions.FixedPotential] terminal pairs. The nonlinear block is inert while σ is Static.
+    [`FixedVoltage`][femforge.physical.conditions.FixedVoltage] terminal pairs. The nonlinear block is inert while σ is Static.
     """
 
     kind: Literal["StatCurrent"] = "StatCurrent"

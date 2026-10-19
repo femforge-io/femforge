@@ -207,12 +207,12 @@ def test_load_entities_empty_when_no_files(tmp_path: Path) -> None:
 
 
 def test_sif_join_prefers_the_longest_group_prefix(tmp_path: Path) -> None:
-    # "A__B_C_fixed_potential" must join to group "A__B_C", never to the shorter "A__B".
+    # "A__B_C_fixed_voltage" must join to group "A__B_C", never to the shorter "A__B".
     (tmp_path / "mesh.names").write_text(
         "! names for bodies\n$ A = 1\n! names for boundaries\n$ A__B = 2\n$ A__B_C = 3\n",
         encoding="utf-8",
     )
-    (tmp_path / "boundaries.yml").write_text("1: A__B_C_fixed_potential\n2: A__B\n", encoding="utf-8")
+    (tmp_path / "boundaries.yml").write_text("1: A__B_C_fixed_voltage\n2: A__B\n", encoding="utf-8")
     entities = load_entities(tmp_path)
     assert entities.boundaries["A__B_C"].sif_index == 1
     assert entities.boundaries["A__B"].sif_index == 2

@@ -63,7 +63,7 @@ The rows follow the chapters of the Elmer Models Manual. The femforge column nam
 | `ElectricForce` | The electrostatic force on a surface from a solved potential. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | `StatMagSolve` | Axisymmetric magnetoquasistatics; Elmer marks it obsolete. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 
-`Physics.ELECTROSTATICS` has a preset and documentation. `FixedPotential` feeds it only when its `physics` field is set to `ELECTROSTATICS`, and no example or test solves that path; the [Electrostatics](../user-guide/conditions/electrostatics.md) guide page shows the setup.
+`Physics.ELECTROSTATICS` has a preset and documentation. `FixedVoltage` feeds it only when its `physics` field is set to `ELECTROSTATICS`, and no example or test solves that path; the [Electrostatics](../user-guide/conditions/electrostatics.md) guide page shows the setup.
 
 ### Structural mechanics
 
@@ -168,7 +168,7 @@ The rows follow the chapters of the ElmerSolver Manual that describe a capabilit
 | Parallel runs | Mesh partitioning and MPI solves. | [DockerElmer][femforge.elmer.DockerElmer] with `mpi_processes`; see [Elmer: Native and Docker](../user-guide/elmer.md) | :material-check-circle:{ .ff-done title="Implemented" } |
 | Restart | A run that starts from saved solutions. | `SimulationSettings.output_file` writes a restart file; nothing reads one back | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | Time integration | Transient solves with BDF, Newmark and other schemes. | `SimulationType.TRANSIENT` and `TimesteppingMethod`; every preset is steady state | :material-circle-half-full:{ .ff-partial title="Partial" } |
-| Dirichlet conditions and limiters | Fixed values on boundaries, and soft limits on a solution. | Fixed values through `FixedTemperature`, `FixedPotential` and `FixedDisplacement`; no limiters | :material-circle-half-full:{ .ff-partial title="Partial" } |
+| Dirichlet conditions and limiters | Fixed values on boundaries, and soft limits on a solution. | Fixed values through `FixedTemperature`, `FixedVoltage` and `FixedDisplacement`; no limiters | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | Generic solver utilities | Solver activation, variable naming, exported variables and passive elements. | `exec_solver` and `variable` fields on [SolverBase][femforge.elmer.config.SolverBase] | :material-circle-half-full:{ .ff-partial title="Partial" } |
 | Eigenvalue problems | Modes and eigenfrequencies of a system. | | :material-circle-outline:{ .ff-todo title="Not started" } |
 | Shared boundary conditions | Periodic, mortar and conforming conditions between boundaries. | | :material-circle-outline:{ .ff-todo title="Not started" } |
