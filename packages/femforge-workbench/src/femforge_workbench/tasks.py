@@ -18,6 +18,7 @@ from typing import Annotated, Literal, Protocol, cast, overload
 import psutil
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field
 
+from femforge.artifacts.kind import BuiltinKind
 from femforge.common.log import RELAYED_ROUTE, TELEMETRY_ROUTE, LogKey, RelayedRecord, emit_relayed, get_console, log, parse_relayed
 from femforge.common.utils import title
 from femforge.elmer.solver_log import StallReason
@@ -134,6 +135,8 @@ class TaskPhase(StrEnum):
     MESHING = "meshing"
     SOLVING = "solving"
     FINISHING = "finishing"
+    RUNNING = "running"
+    """Runs the task's own code between or after its evaluations."""
     DONE = "done"
     REUSED = "reused"
     """Done, every evaluation answered by a finished bundle."""
@@ -188,7 +191,7 @@ class TaskPhase(StrEnum):
     @property
     def active(self) -> bool:
         """Whether a child process runs the task."""
-        return self in (TaskPhase.STARTING, TaskPhase.GEOMETRY, TaskPhase.WAITING, TaskPhase.MESHING, TaskPhase.SOLVING, TaskPhase.FINISHING)
+        return self in (TaskPhase.STARTING, TaskPhase.GEOMETRY, TaskPhase.WAITING, TaskPhase.MESHING, TaskPhase.SOLVING, TaskPhase.FINISHING, TaskPhase.RUNNING)
 
     @property
     def ended(self) -> bool:
@@ -196,7 +199,7 @@ class TaskPhase(StrEnum):
         return self in (TaskPhase.DONE, TaskPhase.REUSED, TaskPhase.FAILED, TaskPhase.STALLED, TaskPhase.STOPPED)
 
 
-FOCUS_ORDER = (TaskPhase.SOLVING, TaskPhase.MESHING, TaskPhase.GEOMETRY, TaskPhase.WAITING, TaskPhase.FINISHING, TaskPhase.STARTING, TaskPhase.QUEUED)
+FOCUS_ORDER = (TaskPhase.SOLVING, TaskPhase.MESHING, TaskPhase.GEOMETRY, TaskPhase.WAITING, TaskPhase.FINISHING, TaskPhase.RUNNING, TaskPhase.STARTING, TaskPhase.QUEUED)
 """The phases the collapsed strip leads with, most telling first."""
 
 
@@ -247,7 +250,11 @@ class TaskField(StrEnum):
     RUNS = "runs"
     SOLVES = "solves"
     REUSES = "reuses"
+    FETCHED = "fetched"
+    MESH_CACHED = "mesh_cached"
     SOLVER = "solver"
+    STACK = "stack"
+    DIRECT = "direct"
     PROGRESS = "progress"
     ITERATION = "iteration"
     MAX_ITERATIONS = "max_iterations"
@@ -299,11 +306,23 @@ class TaskRow(BaseModel):
     reuses: int = 0
     """How many of those runs reused a finished bundle."""
 
+    fetched: bool = False
+    """Whether a reused bundle came from the artifact cache rather than the run directory."""
+
+    mesh_cached: bool = False
+    """Whether the artifact cache served the running run's mesh."""
+
     solver: str | None = None
     """The solver the running solve last reported on."""
 
+    stack: list[str] = Field(default_factory=list)
+    """The running solve's solvers of a linear system, in sif order."""
+
+    direct: list[str] = Field(default_factory=list)
+    """Those of them that factorize their system instead of iterating."""
+
     progress: float | None = None
-    """`f` `[-]`: The share of the running solve's convergence covered, never moving back within a stage; None when unknown."""
+    """`f` `[-]`: The share of the running solve's convergence covered, never moving back within one solver's solve; None when unknown."""
 
     iteration: int | None = None
     """The running linear solve's latest iteration, from its progress line; None before one."""
@@ -347,16 +366,46 @@ class TaskRow(BaseModel):
                 return f"Queued · {ordinal(self.position)} In Line"
             case TaskPhase.WAITING:
                 return "Waiting · Another Process Is Solving It"
-            case TaskPhase.SOLVING if self.solver:
-                return f"Solving · {title(self.solver)}"
+            case TaskPhase.MESHING if self.mesh_cached:
+                return "Meshing · Cached"
+            case TaskPhase.SOLVING:
+                return " · ".join([self.phase.word, *([self.solving] if self.solving else [])])
             case TaskPhase.DONE if self.runs > 1:
                 return f"Done · {self.runs} Runs"
+            case TaskPhase.REUSED if self.fetched:
+                return "Reused · From Cache"
             case TaskPhase.FAILED if self.error:
                 return f"Failed · {self.error}"
             case TaskPhase.STALLED if self.stall:
                 return f"Stalled · {self.stall}"
             case _:
                 return self.phase.word
+
+    @property
+    def current(self) -> str | None:
+        """The solver solving now: the one last reported on, else the stack's first."""
+        return self.solver or next(iter(self.stack), None)
+
+    @property
+    def factorizing(self) -> bool:
+        """Whether the solver solving now factorizes its system, so no percent can show."""
+        return self.current is not None and self.current in self.direct
+
+    @property
+    def solving(self) -> str:
+        """The solve's qualifier: the solver, its place in a stack of several, and Direct for a factorization; empty when unknown."""
+        current = self.current
+        if current is None:
+            return ""
+
+        named = [title(current)]
+        if len(self.stack) > 1 and current in self.stack:
+            named.append(f"{self.stack.index(current) + 1}/{len(self.stack)}")
+
+        if self.factorizing:
+            named.append("Direct")
+
+        return " ".join(named)
 
     @computed_field
     @property
@@ -380,7 +429,7 @@ class TaskRow(BaseModel):
     @property
     def percent(self) -> str:
         """The progress as a whole percent, empty when unknown."""
-        return f"{self.progress * 100:.0f}%" if self.progress is not None else ""
+        return f"{self.progress * 100:.0f}%" if self.progress is not None and not self.factorizing else ""
 
     @computed_field
     @property
@@ -409,7 +458,7 @@ class TaskRow(BaseModel):
     @property
     def busy(self) -> bool:
         """Whether the task runs with no percent to show."""
-        return self.phase.active and self.progress is None
+        return self.phase.active and not self.percent
 
     @computed_field
     @property
@@ -443,7 +492,11 @@ class TaskRow(BaseModel):
             TaskField.RUNS: 0,
             TaskField.SOLVES: 0,
             TaskField.REUSES: 0,
+            TaskField.FETCHED: False,
+            TaskField.MESH_CACHED: False,
             TaskField.SOLVER: None,
+            TaskField.STACK: [],
+            TaskField.DIRECT: [],
             TaskField.PROGRESS: None,
             TaskField.ITERATION: None,
             TaskField.MAX_ITERATIONS: None,
@@ -460,7 +513,7 @@ class TaskRow(BaseModel):
 
 
 def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
-    """The row after one record of its task's child: a new run id starts a run, a stage or a claim wait moves the phase, a progress record moves the bar, a stall record says why."""
+    """The row after one record of its task's child: a new run id starts a run, a stage, a claim wait or a reuse moves the phase, a progress record moves the bar, a stall record says why."""
     extra = record["extra"]
     update: dict[str, object] = {}
 
@@ -470,8 +523,11 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
             TaskField.RUN_ID: run_id,
             TaskField.RUNS: row.runs + 1,
             TaskField.PHASE: TaskPhase.STARTING,
+            TaskField.MESH_CACHED: False,
             TaskField.PROGRESS: None,
             TaskField.SOLVER: None,
+            TaskField.STACK: [],
+            TaskField.DIRECT: [],
             TaskField.ITERATION: None,
             TaskField.MAX_ITERATIONS: None,
         }
@@ -479,8 +535,13 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
     if LogKey.HOLDER in extra:
         update[TaskField.PHASE] = TaskPhase.WAITING
 
-    if isinstance(extra.get(LogKey.ORIGIN), str):
-        update[TaskField.REUSES] = row.reuses + 1
+    cached = extra.get(LogKey.CACHED)
+    if cached == BuiltinKind.ELMER_MESH:
+        update[TaskField.MESH_CACHED] = True
+    elif isinstance(extra.get(LogKey.ORIGIN), str):
+        update |= {TaskField.REUSES: row.reuses + 1, TaskField.PHASE: TaskPhase.RUNNING}
+        if cached == BuiltinKind.RUN_BUNDLE:
+            update[TaskField.FETCHED] = True
 
     if isinstance(extra.get(LogKey.RUN_DIR), str):
         update[TaskField.SOLVES] = row.solves + 1
@@ -489,7 +550,8 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
 
     stage = extra.get(LogKey.STAGE)
     if isinstance(stage, str) and stage in tuple(Stage):
-        phase = TaskPhase.of(Stage(stage))
+        ended = Stage(stage) is Stage.CLEANUP and extra.get(LogKey.ENDED) is True
+        phase = TaskPhase.RUNNING if ended else TaskPhase.of(Stage(stage))
         moved = phase is not row.phase
         kept = not moved and phase is TaskPhase.SOLVING
         update |= {
@@ -500,14 +562,22 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
         }
 
     phase = update.get(TaskField.PHASE, row.phase)
+    solvers = extra.get(LogKey.LINEAR_SOLVERS)
+    direct = extra.get(LogKey.DIRECT_SOLVERS)
+    if isinstance(solvers, list) and isinstance(direct, list):
+        update |= {TaskField.STACK: [str(name) for name in cast("list[object]", solvers)], TaskField.DIRECT: [str(name) for name in cast("list[object]", direct)]}
+
+    solver = extra.get(LogKey.SOLVER)
+    if phase is TaskPhase.SOLVING and isinstance(solver, str) and solver:
+        if solver != update.get(TaskField.SOLVER, row.solver):
+            update |= {TaskField.PROGRESS: None, TaskField.ITERATION: None, TaskField.MAX_ITERATIONS: None}
+
+        update[TaskField.SOLVER] = solver
+
     progress = extra.get(LogKey.PROGRESS)
     if phase is TaskPhase.SOLVING and isinstance(progress, int | float):
         known = update.get(TaskField.PROGRESS, row.progress)
         update[TaskField.PROGRESS] = max(float(progress), known) if isinstance(known, float) else float(progress)
-
-    solver = extra.get(LogKey.SOLVER)
-    if phase is TaskPhase.SOLVING and isinstance(solver, str) and solver:
-        update[TaskField.SOLVER] = solver
 
     iteration = extra.get(LogKey.ITERATION)
     if phase is TaskPhase.SOLVING and isinstance(iteration, int):
@@ -543,6 +613,9 @@ class TaskJob(BaseModel):
 
     path: str | None = None
     """The directory put first on the child's import path, so the script's own modules import; None leaves the path alone."""
+
+    sys_path: list[str] = Field(default_factory=list)
+    """The server's import path when it started the task, put after `path`, so the path edits of the script and its imports hold in the child."""
 
 
 class OutcomeKind(StrEnum):
@@ -741,6 +814,9 @@ class TaskView(BaseModel):
 
     focus: TaskRow | None
     """The row the collapsed strip leads with: the most telling active one, else the last failure, else none."""
+
+    reused: int
+    """How many tasks ended their last run on finished bundles alone."""
 
     failed: int
     """How many tasks failed their last run."""
@@ -953,6 +1029,7 @@ class TaskBoard:
             summary=summary,
             count=f"{done}/{len(shown)}",
             focus=focus,
+            reused=counts[TaskPhase.REUSED],
             failed=counts[TaskPhase.FAILED],
             stalled=counts[TaskPhase.STALLED],
             error=self.error,
@@ -1006,7 +1083,7 @@ class TaskBoard:
         folder = Path(tempfile.mkdtemp(prefix="femforge-task-"))
         started = time.monotonic()
         try:
-            process = await self.spawn(TaskJob(factory=self.factory, label=label, path=self.path), folder)
+            process = await self.spawn(TaskJob(factory=self.factory, label=label, path=self.path, sys_path=list(sys.path)), folder)
         except BaseException:
             shutil.rmtree(folder, ignore_errors=True)
             raise

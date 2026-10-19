@@ -683,9 +683,11 @@ def missing_fields(run: Run) -> str | None:
     return "The solve wrote no fields"
 
 
-def solving_notice(entry: RunEntry) -> str:
-    """What the empty view says while the open run is still solving."""
-    return f"{entry.name} is still solving. Its fields appear here when it finishes; the solver's terminal shows its progress."
+def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
+    """What the empty view says while the open run is still solving: where its progress shows, the task strip when the workbench runs tasks."""
+    where = "the task strip below" if tasks else "the solver's terminal"
+
+    return f"{entry.name} is still solving. Its fields appear here when it finishes; {where} shows its progress."
 
 
 def captioned(label: str) -> Field:
@@ -1112,7 +1114,7 @@ class FieldViewerController(TrameComponent):
             self.seen = None
             offered = self.adopt(opened, run.path)
             if waiting:
-                self.clear(solving_notice(offered), status=f"{offered.name} is solving")
+                self.clear(solving_notice(offered, tasks=self.app.board is not None), status=f"{offered.name} is solving")
                 with self.quiet():
                     self.state[FieldVar.SOLVED_AS] = SOLVING_AS
 

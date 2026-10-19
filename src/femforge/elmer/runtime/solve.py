@@ -91,6 +91,10 @@ def solve_case(
     samples: list[ConvergenceSample] = []
     messages: list[SolverMessage] = []
     stream: IO[str] | None = (sim_dir / BundleFile.CONVERGENCE).open("w", encoding="utf-8") if convergence_jsonl else None
+    if linear_targets:
+        solvers = [target.solver for target in linear_targets]
+        direct = [target.solver for target in linear_targets if not target.iterative]
+        log.bind(**{str(LogKey.LINEAR_SOLVERS): solvers, str(LogKey.DIRECT_SOLVERS): direct}).debug("Linear solvers listed.")
 
     def watch(residual: LinearResidual) -> None:
         verdict: StallVerdict | None = detector.feed(residual)

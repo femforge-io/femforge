@@ -36,8 +36,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     outcome = Path(args[1])
     log_to_stdout_json(process=job.label)
     _ = signal.signal(BREAK_SIGNUM, interrupt)
-    if job.path is not None:
-        sys.path.insert(0, job.path)
+    served = [entry for entry in job.sys_path if entry not in sys.path and entry != job.path]
+    sys.path[0:0] = [job.path, *served] if job.path is not None else served
 
     try:
         factory = resolve(job.factory)

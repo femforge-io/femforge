@@ -80,14 +80,15 @@ if __name__ == "__main__":
     ff.workbench.show(viewer, tasks=solves)
 ```
 
-`tasks` takes a module-level function that lists `Task`s; the workbench runs them one at a time in child processes while it serves, shows each in the status strip, and lists them again on every save. A [Task][femforge.workbench.Task] pairs a label, unique in the list, with a function that takes no arguments; `Task(export)` labels a named function `Export`, and a `partial` or a lambda needs a label of its own. Each child imports the script by module name, calls the function again and runs the task with the same label, so a `partial` or a lambda works and nothing is pickled. Guard the `show` call under `if __name__ == "__main__":`, or every child serves a workbench of its own.
+`tasks` takes a module-level function that lists `Task`s; the workbench runs them one at a time in child processes while it serves, shows each in the status strip, and lists them again on every save. A [Task][femforge.workbench.Task] pairs a label, unique in the list, with a function that takes no arguments; `Task(export)` labels a named function `Export`, and a `partial` or a lambda needs a label of its own. Each child imports the script by module name, from the script's own directory with the server's `sys.path` behind it, calls the function again and runs the task with the same label, so a `partial` or a lambda works, nothing is pickled, and the `sys.path` edits the script makes hold in the child. Guard the `show` call under `if __name__ == "__main__":`, or every child serves a workbench of its own.
 
 | The strip shows | When |
 |---|---|
 | `Queued`, with its place in line | the task waits for the one before it |
-| `Starting`, `Preparing Geometry`, `Meshing`, `Solving`, `Finishing` | the stage its child reports; `Solving` names the solver and, once known, the percent converged, and the sheet adds the linear iteration |
+| `Starting`, `Preparing Geometry`, `Meshing`, `Solving`, `Finishing` | the stage its child reports; `Meshing · Cached` when the artifact cache served the mesh. `Solving` names the solver, its place in a stack of several such as `2/3`, and the percent converged once known, or `Direct` for a solver that factorizes; the sheet adds the linear iteration |
+| `Running` | the task's own code runs between or after its runs |
 | `Waiting · Another Process Is Solving It` | another process holds the claim on the same run; the task reuses that run once it lands |
-| `Done`, `Reused` | the task returned; `Reused` when every run it asked for was solved before. The summary counts each apart |
+| `Done`, `Reused` | the task returned; `Reused` when every run it asked for was solved before, `Reused · From Cache` when the artifact cache served it. The summary counts each apart, and the strip shows `↺ N Reused` beside it |
 | `Failed`, with the error | the task raised, or its child died; Details shows the traceback |
 | `Stalled`, with the reason | the watchdog stopped a linear solve of the task; Log shows the child's last log lines |
 | `Cancelling` | Cancel, pressed twice, is stopping the task; it gets up to 10 s to release its run |

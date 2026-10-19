@@ -72,6 +72,9 @@ TASK_ROW = "task"
 CONFIRM_S = 3.0
 """`t_confirm` `[s]`: How long a pressed Cancel waits for the second press before it reverts."""
 
+COPIED_MS = 2000
+"""`t_copied` `[ms]`: How long a Copy button reads Copied after it copied."""
+
 
 class WidgetLibrary(Protocol):
     """A trame widget package whose initialize() enables its client module on a server."""
@@ -138,6 +141,7 @@ class Cls(StrEnum):
     TASK_END = "ml-auto flex min-w-0 shrink-0 items-center gap-2"
     TASK_ALERT = "max-w-96 truncate text-destructive"
     TASK_COUNT = "shrink-0 text-destructive"
+    TASK_REUSED = "flex shrink-0 items-center gap-2 text-muted-foreground max-[800px]:hidden"
     TASK_SHEET = "absolute inset-x-0 bottom-full z-40 flex max-h-[40vh] flex-col border-t border-border bg-background shadow-lg"
     TASK_HEADER = "flex h-7 shrink-0 items-center gap-2 border-b border-border px-2 text-label"
     TASK_MUTED = "text-muted-foreground"
@@ -191,11 +195,13 @@ class StateVar(StrEnum):
     TASK_FOCUS = "wb_task_focus"
     TASK_FAILED = "wb_task_failed"
     TASK_STALLED = "wb_task_stalled"
+    TASK_REUSED = "wb_task_reused"
     TASK_ERROR = "wb_task_error"
     TASK_RELOADED = "wb_task_reloaded"
     TASK_SHEET = "wb_task_sheet"
     TASK_CONFIRM = "wb_task_confirm"
     TASK_DETAILS = "wb_task_details"
+    TASK_COPIED = "wb_task_copied"
 
 
 class TourKey(StrEnum):
@@ -367,11 +373,13 @@ class Workbench(TrameApp):
                 StateVar.TASK_FOCUS: None,
                 StateVar.TASK_FAILED: 0,
                 StateVar.TASK_STALLED: 0,
+                StateVar.TASK_REUSED: 0,
                 StateVar.TASK_ERROR: None,
                 StateVar.TASK_RELOADED: "",
                 StateVar.TASK_SHEET: bool((self.persist.load(self.scope, StateKey.TASK_SHEET) or {}).get(TaskSheetKey.OPEN)),
                 StateVar.TASK_CONFIRM: "",
                 StateVar.TASK_DETAILS: "",
+                StateVar.TASK_COPIED: "",
                 TITLE_VAR: title,
                 FAVICON_VAR: asset_url(FAVICON),
             }
@@ -458,8 +466,9 @@ class Workbench(TrameApp):
         def focus(name: TaskField) -> str:
             return f"{StateVar.TASK_FOCUS}.{name}"
 
+        every = react.Bind(f"{StateVar.TASK_SHEET} ? 'Hide Every Task' : 'Show Every Task'")
         with html.Div(classes=str(Cls.TASK_STRIP)):
-            toggle = html.Button(id=TASK_TOGGLE_ID, type="button", classes=str(Cls.TASK_TOGGLE), title="Show Every Task", on_click=react.Callback(self.toggle_tasks))
+            toggle = html.Button(id=TASK_TOGGLE_ID, type="button", classes=str(Cls.TASK_TOGGLE), title=every, on_click=react.Callback(self.toggle_tasks))
             _ = aria(toggle, aria_expanded=react.Bind(StateVar.TASK_SHEET), aria_controls=TASK_SHEET_ID, aria_label=react.Bind(f"'Tasks, ' + {StateVar.TASK_SUMMARY}"))
             with toggle:
                 _ = aria(html.Span([react.Bind(f"{StateVar.TASK_SHEET} ? '▾' : '▴'")]), aria_hidden="true")
@@ -467,10 +476,14 @@ class Workbench(TrameApp):
                 _ = aria(html.Span([react.Bind(StateVar.TASK_SUMMARY)], classes=str(Cls.TASK_SUMMARY)), role="status", aria_live="polite")
                 _ = aria(html.Span([react.Bind(StateVar.TASK_COUNT)], classes=str(Cls.TASK_NARROW)), aria_hidden="true")
 
+            with react.If(StateVar.TASK_REUSED), html.Div(classes=str(Cls.TASK_REUSED)):
+                _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
+                html.Span(["↺ ", react.Bind(StateVar.TASK_REUSED), " Reused"], title="Tasks That Reused a Finished Run")
+
             with react.If(StateVar.TASK_FOCUS):
                 _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
                 with html.Div(classes=str(Cls.TASK_FOCUS)):
-                    with html.Div(classes=str(Cls.TASK_SUMMARY_LINE), title="Show Every Task", on_click=react.Callback(self.toggle_tasks)):
+                    with html.Div(classes=str(Cls.TASK_SUMMARY_LINE), title=every, on_click=react.Callback(self.toggle_tasks)):
                         _ = aria(html.Span([react.Bind(focus(TaskField.GLYPH))], classes=react.Bind(f"{focus(TaskField.FAILED)} ? 'text-destructive' : ''")), aria_hidden="true")
                         html.Span([react.Bind(focus(TaskField.TITLE))], classes=str(Cls.TASK_LABEL))
                         html.Span(
@@ -566,12 +579,15 @@ class Workbench(TrameApp):
                                 )
 
                             with react.If(row(TaskField.TRACEBACK)):
-                                Button(
-                                    [react.Bind(f"({row(TaskField.STALLED)} ? 'Log' : 'Details') + ({StateVar.TASK_DETAILS} === {row(TaskField.LABEL)} ? ' ▴' : ' ▾')")],
+                                shown = f"{StateVar.TASK_DETAILS} === {row(TaskField.LABEL)}"
+                                details = Button(
+                                    [react.Bind(f"({row(TaskField.STALLED)} ? 'Log' : 'Details') + ({shown} ? ' ▴' : ' ▾')")],
                                     size="xs",
                                     variant="ghost",
+                                    aria_label=react.Bind(f"({row(TaskField.STALLED)} ? 'Log for ' : 'Details for ') + {row(TaskField.TITLE)}"),
                                     on_click=react.Callback(self.toggle_task_details, args=f"[{row(TaskField.LABEL)}]"),
                                 )
+                                _ = aria(details, aria_expanded=react.Bind(shown))
 
                             with react.If(row(TaskField.CANCELLABLE)):
                                 Button(
@@ -593,13 +609,17 @@ class Workbench(TrameApp):
 
                     with react.If(f"{StateVar.TASK_DETAILS} === {row(TaskField.LABEL)} && {row(TaskField.TRACEBACK)}"), html.Tr(), html.Td(colspan=6):
                         html.Pre([react.Bind(row(TaskField.TRACEBACK))], classes=str(Cls.TASK_DETAIL))
+                        copied = json.dumps(str(StateVar.TASK_COPIED))
+                        revert = f"setTimeout(() => trame.state.get({copied}) === label && trame.state.set({copied}, ''), {COPIED_MS})"
+                        copy = f"(label => navigator.clipboard.writeText({row(TaskField.TRACEBACK)}).then(() => (trame.state.set({copied}, label), {revert})))({row(TaskField.LABEL)})"
                         with html.Div(classes=str(Cls.TASK_ACTIONS)):
-                            Button(
-                                [react.Bind(f"{row(TaskField.STALLED)} ? 'Copy Log' : 'Copy Traceback'")],
+                            button = Button(
+                                [react.Bind(f"{StateVar.TASK_COPIED} === {row(TaskField.LABEL)} ? 'Copied' : {row(TaskField.STALLED)} ? 'Copy Log' : 'Copy Traceback'")],
                                 size="xs",
                                 variant="ghost",
-                                on_click=react.Callback(f"navigator.clipboard.writeText({row(TaskField.TRACEBACK)})"),
+                                on_click=react.Callback(copy),
                             )
+                            _ = aria(button, aria_live="polite")
 
     def show_tasks(self, view: TaskView) -> None:
         """Shows the task board's rows, summary and focus row in the strip and its sheet."""
@@ -612,6 +632,7 @@ class Workbench(TrameApp):
             self.state[StateVar.TASK_FOCUS] = focus
             self.state[StateVar.TASK_FAILED] = view.failed
             self.state[StateVar.TASK_STALLED] = view.stalled
+            self.state[StateVar.TASK_REUSED] = view.reused
             self.state[StateVar.TASK_ERROR] = view.error
             self.state[StateVar.TASK_RELOADED] = view.reloaded
 

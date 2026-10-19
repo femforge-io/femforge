@@ -16,6 +16,7 @@ BUILTIN_GROUP = "Built-in"
 CLI_MODULE = "femforge_workbench.cli"
 LEGACY_ATTR = "main"
 MAIN_MODULE = "__main__"
+PACKAGE_INIT = "__init__"
 
 type Target = str | Callable[[], object]
 """A `pkg.module:attr` string, or the module-level function it names."""
@@ -151,6 +152,22 @@ def script_module() -> str:
         raise ValueError("an interactive session has no module a workbench can be imported from")
 
     return Path(file).stem
+
+
+def import_root(function: Callable[[], object]) -> Path | None:
+    """The directory a module-level function's module imports from: the running script's own directory, else the one holding its top package; None for a module with no file."""
+    module = sys.modules.get(function.__module__)
+    file = getattr(module, "__file__", None)
+    if not isinstance(file, str):
+        return None
+
+    spec = getattr(module, "__spec__", None)
+    name = getattr(spec, "name", None)
+    path = Path(file).resolve()
+    dotted = name if isinstance(name, str) else path.stem
+    depth = dotted.count(".") + (path.stem == PACKAGE_INIT)
+
+    return path.parents[depth]
 
 
 def target_of(target: Target) -> str:

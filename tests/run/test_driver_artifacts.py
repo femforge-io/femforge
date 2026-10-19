@@ -13,7 +13,7 @@ import pytest
 
 from femforge.artifacts.cache import ArtifactCache
 from femforge.artifacts.keys import ArtifactKey
-from femforge.artifacts.kind import Produced
+from femforge.artifacts.kind import BuiltinKind, Produced
 from femforge.artifacts.local import LocalArtifactStore
 from femforge.artifacts.lock import LOCK_SUFFIX, OWNER_FILE, DirLock, LockOwner
 from femforge.artifacts.sidecar import ArtifactOrigin
@@ -310,12 +310,20 @@ def test_a_cache_publishes_the_bundle_and_serves_it_to_another_runs_dir(tmp_path
     assert stored.tools.elmer == "9.0"
     assert cache.local.path(RUN_BUNDLE, ArtifactKey[RunSpec](manifest.cache_key)).name == _run_name(config)
 
-    second = Driver(
-        runs_dir=tmp_path / "b",
-        code_sha="sha1",
-        solver=solver,
-        artifacts=cache,
-    ).evaluate(config)
+    records: list[tuple[str, dict[str, object]]] = []
+    sink_id: int = log.add(lambda message: records.append((message.record["message"], dict(message.record["extra"]))), level="INFO")
+    try:
+        second = Driver(
+            runs_dir=tmp_path / "b",
+            code_sha="sha1",
+            solver=solver,
+            artifacts=cache,
+        ).evaluate(config)
+    finally:
+        log.remove(sink_id)
+
+    reused = [extra for message, extra in records if message == "Reusing bundle."]
+    assert [(extra[LogKey.ORIGIN], extra[LogKey.CACHED]) for extra in reused] == [(ArtifactOrigin.LOCAL, BuiltinKind.RUN_BUNDLE)], "the strip reads From Cache off it"
     assert solver.calls == 1
     assert second.run_id == first.run_id
     assert second.run_dir == tmp_path / "b" / _run_name(config)
@@ -610,10 +618,18 @@ def test_a_cached_mesh_is_produced_once_and_rebound_per_config(tmp_path: Path) -
     down = _magnet_config(Direction(0, 0, -1))
     driver = _MeshCachingDriver(runs_dir=tmp_path / "runs", code_sha="sha1", artifacts=cache)
 
-    first = driver.evaluate(up)
-    second = driver.evaluate(down)
+    records: list[tuple[str, dict[str, object]]] = []
+    sink_id: int = log.add(lambda message: records.append((message.record["message"], dict(message.record["extra"]))), level="INFO")
+    try:
+        first = driver.evaluate(up)
+        second = driver.evaluate(down)
+    finally:
+        log.remove(sink_id)
+
+    served = [(extra[LogKey.RUN_ID], extra[LogKey.ORIGIN], extra[LogKey.CACHED]) for message, extra in records if message == "Mesh served from the cache."]
     assert first.status == RunStatus.OK and second.status == RunStatus.OK
     assert len(PRODUCTIONS) == 1
+    assert served == [(_run_name(down), ArtifactOrigin.LOCAL, BuiltinKind.ELMER_MESH)], "only the mesh the cache served is noted"
 
     for config, expected_origin in ((up, ArtifactOrigin.PRODUCED), (down, ArtifactOrigin.LOCAL)):
         bundle = tmp_path / "runs" / _run_name(config)

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from femforge.artifacts.cache import ArtifactCache, ArtifactHandle
 from femforge.artifacts.keys import ArtifactKey, artifact_key
-from femforge.artifacts.kind import Produced
+from femforge.artifacts.kind import BuiltinKind, Produced
 from femforge.artifacts.lock import HEARTBEAT_S, LOCK_SUFFIX, DirLock, keep_alive
 from femforge.artifacts.sidecar import ArtifactOrigin, ArtifactRef, ToolVersions
 from femforge.common.files import BundleFile, BundleGlob, RunFile
@@ -261,7 +261,7 @@ class Driver:
         if handle is None:
             return None
 
-        log.bind(**{str(LogKey.RUN_ID): sim_dir.name, str(LogKey.ORIGIN): handle.origin}).info("Reusing bundle.")
+        log.bind(**{str(LogKey.RUN_ID): sim_dir.name, str(LogKey.ORIGIN): handle.origin, str(LogKey.CACHED): BuiltinKind.RUN_BUNDLE}).info("Reusing bundle.")
         return Result.load(sim_dir)
 
     def _reusable_local(self, key: ArtifactKey[RunSpec], sim_dir: Path) -> Result | None:
@@ -546,7 +546,7 @@ class Driver:
 
         manifest, sim_dir = self._active
 
-        staged = log.bind(**{str(LogKey.STAGE): str(event.stage)})
+        staged = log.bind(**{str(LogKey.STAGE): str(event.stage), str(LogKey.ENDED): event.finished_at is not None})
         if event.finished_at is None:
             staged.info(f"[{event.stage.name}] started.")
             manifest.stage_history.append(event)
@@ -614,6 +614,8 @@ class Driver:
                 produce=partial(self._produce_mesh, state),
             )
             self._record_artifact(handle)
+            if handle.origin is not ArtifactOrigin.PRODUCED:
+                log.bind(**{str(LogKey.ORIGIN): handle.origin, str(LogKey.CACHED): BuiltinKind.ELMER_MESH}).info("Mesh served from the cache.")
 
         self._adopt_mesh(state, MeshGroupsFile.load(state.sim_dir))
 

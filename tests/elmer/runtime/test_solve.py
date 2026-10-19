@@ -252,6 +252,17 @@ def test_a_long_linear_solve_logs_a_progress_line_with_its_fields(tmp_path: Path
     assert extra["iteration"] == 31 and extra["method"] == "CG" and extra["elapsed"] == 30.0
 
 
+def test_a_solve_lists_its_linear_solvers_and_those_that_factorize(tmp_path: Path) -> None:
+    stack = (*ELASTICITY, LinearTarget(solver="heat equation", iterative=False, method=None, tolerance=None, max_iterations=None))
+
+    _, listed = _records("DEBUG", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path, linear_targets=stack))
+    _, unlisted = _records("DEBUG", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path))
+
+    solvers = [(extra[LogKey.LINEAR_SOLVERS], extra[LogKey.DIRECT_SOLVERS]) for _, extra in listed if LogKey.LINEAR_SOLVERS in extra]
+    assert solvers == [(["linear elasticity", "heat equation"], ["heat equation"])], "the task strip names the solver place and Direct off it"
+    assert not [extra for _, extra in unlisted if LogKey.LINEAR_SOLVERS in extra]
+
+
 def test_the_convergence_and_progress_lines_bind_their_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     targets: ConvergenceTargets = {("mgdyn", "NS"): LoopTargets(max_iterations=50, tolerance=1e-10)}
     _, converging = _records("INFO", lambda: solve_case(_ScriptedBackend(FIXTURE_LINES), tmp_path, targets=targets))

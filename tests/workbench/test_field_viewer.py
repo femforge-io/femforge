@@ -606,6 +606,29 @@ def test_a_run_still_solving_empties_the_views_and_opens_once_it_ends(tmp_path: 
     asyncio.run(run())
 
 
+def test_with_tasks_a_run_still_solving_points_at_the_task_strip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def solving(_: object) -> bool:
+        return True
+
+    monkeypatch.setattr("femforge_workbench.panels.field_viewer.solving", solving)
+
+    async def run() -> str:
+        app = _shell("solving-tasks", tmp_path, monkeypatch)
+        app.board = TaskBoard(app, "main:tasks", [Task("Solve", time.time)], path=None, roots=[])
+        controller = _controller(app)
+        pending = _bundle(tmp_path / "pending", _hex_grid())
+        (pending / "case_t0001.vtu").unlink()
+
+        await controller.load(pending)
+        waiting = controller.wait_task
+        assert waiting is not None
+        _ = waiting.cancel()
+
+        return cast("str", app.state[app.panel(FieldPanel.VIEW_3D, FieldViewerPanel).key(SceneVar.NOTICE)])
+
+    assert asyncio.run(run()) == "pending is still solving. Its fields appear here when it finishes; the task strip below shows its progress."
+
+
 def test_a_solid_body_the_next_run_lacks_leaves_the_plotter_with_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> tuple[list[str], list[str]]:
         monkeypatch.delenv(TELEMETRY_ENV, raising=False)

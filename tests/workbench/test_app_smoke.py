@@ -22,7 +22,7 @@ pytest.importorskip("pyvista")
 import pyvista as pv  # noqa: E402
 from trame.app import get_server  # noqa: E402
 
-from femforge_workbench.app import QUIET_LIBRARIES, StateVar, Template, Workbench  # noqa: E402
+from femforge_workbench.app import COPIED_MS, QUIET_LIBRARIES, StateVar, Template, Workbench  # noqa: E402
 from femforge_workbench.demo import ALL_SERIES, ROWS, SERIES_COLUMN, DemoPanel, DemoVar, workbench  # noqa: E402
 from femforge_workbench.launcher import workbench as launcher  # noqa: E402
 from femforge_workbench.panels.figure import FigurePanel  # noqa: E402
@@ -369,10 +369,23 @@ def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path
     assert cast("dict[str, object]", app.state[StateVar.TASK_FOCUS])["label"] == "Solve 3D"
 
     escape = [node for node in find(root, "div") if prop(node, "onKeyDown") is not None]
-    lines = [node for node in find(root, "div") if prop(node, "title") == "Show Every Task"]
+    every = {"js": f"{StateVar.TASK_SHEET} ? 'Hide Every Task' : 'Show Every Task'"}
+    lines = [node for node in find(root, "div") if prop(node, "title") == every]
     narrow = [node for node in find(root, "span") if prop(node, "className") == "hidden tabular-nums max-[800px]:inline"]
     assert len(escape) == 1 and "Escape" in str(prop(escape[0], "onKeyDown")) and "task-toggle" in str(prop(escape[0], "onKeyDown")), "Escape closes the sheet and hands focus back to the toggle"
     assert prop(toggles[0], "id") == "task-toggle" and len(lines) == 1 and prop(lines[0], "onClick") is not None, "the summary line opens the sheet too"
+    assert prop(toggles[0], "title") == every, "the toggle names what a press does: show, or hide once open"
+
+    buttons = find(root, "ff-button")
+    details = [node for node in buttons if "Details for " in str(prop(node, "aria-label"))]
+    copies = [node for node in buttons if "Copy Traceback" in str(node.get("children"))]
+    reused = [node for node in find(root, "span") if prop(node, "title") == "Tasks That Reused a Finished Run"]
+    assert len(details) == 1 and prop(details[0], "aria-expanded") == {"js": f"{StateVar.TASK_DETAILS} === task.label"}
+    assert prop(details[0], "aria-label") == {"js": "(task.stalled ? 'Log for ' : 'Details for ') + task.title"}, "the toggle names its task"
+    assert len(copies) == 1 and "'Copied'" in str(copies[0].get("children")) and prop(copies[0], "aria-live") == "polite"
+    copy = str(prop(copies[0], "onClick"))
+    assert "navigator.clipboard.writeText(task.traceback)" in copy and f'trame.state.set("{StateVar.TASK_COPIED}", label)' in copy and f"{COPIED_MS})" in copy, "Copy reads Copied for a moment"
+    assert len(reused) == 1 and reused[0].get("children") == ["↺ ", {"js": str(StateVar.TASK_REUSED)}, " Reused"] and app.state[StateVar.TASK_REUSED] == 0
     assert len(narrow) == 1 and app.state[StateVar.TASK_COUNT] == "0/2"
 
     app.state.ready()

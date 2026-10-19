@@ -24,6 +24,7 @@ from femforge_workbench.registry import (
     WorkbenchKind,
     WorkbenchSpec,
     discover,
+    import_root,
     legacy,
     panel,
     renderable,
@@ -142,6 +143,28 @@ def test_a_function_of_the_running_script_is_named_by_the_module_its_file_import
     running.__spec__ = ModuleSpec("lab.bearing_seat", None)
 
     assert as_file == "bearing_seat:flux" and target_of(flux) == "lab.bearing_seat:flux"
+
+
+def test_a_function_imports_from_its_script_directory_or_from_above_its_top_package(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def flux() -> None: ...
+
+    flux.__module__ = "__main__"
+    running = ModuleType("__main__")
+    monkeypatch.setitem(sys.modules, "__main__", running)
+    no_file = import_root(flux)
+
+    running.__file__ = str(tmp_path / "lab" / "main.py")
+    as_script = import_root(flux)
+    running.__spec__ = ModuleSpec("lab.main", None)
+    as_module = import_root(flux)
+    running.__file__ = str(tmp_path / "lab" / "board" / "__init__.py")
+    running.__spec__ = ModuleSpec("lab.board", None)
+    as_package = import_root(flux)
+
+    assert no_file is None
+    assert as_script == (tmp_path / "lab").resolve(), "a script imports from its own directory"
+    assert as_module == as_package == tmp_path.resolve(), "a package module imports from above its top package"
+    assert import_root(discover) == Path(registry.__file__).resolve().parents[1]
 
 
 def test_discover_merges_builtins_with_entry_points_sorted_by_group_and_title() -> None:

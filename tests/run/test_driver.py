@@ -1029,8 +1029,9 @@ def test_the_records_of_a_run_name_its_directory_and_each_stage_and_a_reuse_its_
     run_id = _run_name(config)
     begun = [extra for message, extra in records if message == "Beginning evaluation."]
     staged = [extra[LogKey.STAGE] for _, extra in records if LogKey.STAGE in extra]
+    ended = [extra[LogKey.ENDED] for _, extra in records if LogKey.STAGE in extra]
     reused = [extra for message, extra in records if message == "Reusing bundle."]
 
     assert [extra[LogKey.RUN_DIR] for extra in begun] == [str(tmp_path / run_id)]
-    assert staged == [Stage.CLEANUP, Stage.CLEANUP], "the cleanup stage starts and finishes"
+    assert staged == [Stage.CLEANUP, Stage.CLEANUP] and ended == [False, True], "the cleanup stage starts and finishes"
     assert [(extra[LogKey.RUN_ID], extra[LogKey.ORIGIN]) for extra in reused] == [(run_id, ArtifactOrigin.LOCAL)]

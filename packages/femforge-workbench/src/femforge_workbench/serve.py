@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +12,7 @@ from femforge_workbench.app import Window, Workbench
 from femforge_workbench.dock import Panel, Split
 from femforge_workbench.panels.scene import SceneViewerPanel
 from femforge_workbench.persist import LocalJsonStore, UiStateStore
-from femforge_workbench.registry import LAUNCHER, WorkbenchKind, WorkbenchSpec, discover, panel, resolve, split_target, target_of
+from femforge_workbench.registry import LAUNCHER, WorkbenchKind, WorkbenchSpec, discover, import_root, panel, resolve, split_target, target_of
 from femforge_workbench.reload import default_roots
 from femforge_workbench.tasks import TaskBoard, TaskFactory, plan_of
 
@@ -100,7 +99,8 @@ def attach(app: Workbench, tasks: TaskFactory | None, watch: Sequence[Path]) -> 
 
     target = target_of(tasks)
     roots = [*default_roots(split_target(target)[0]), *watch]
-    board = TaskBoard(app, target, plan_of(tasks()), path=str(Path(sys.path[0]).resolve()), roots=roots)
+    root = import_root(tasks)
+    board = TaskBoard(app, target, plan_of(tasks()), path=str(root) if root is not None else None, roots=roots)
     app.board = board
     app.when_ready(board.start)
 

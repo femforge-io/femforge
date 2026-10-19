@@ -75,11 +75,20 @@ class LogKey(StrEnum):
     STAGE = "stage"
     """The pipeline stage a stage record starts or ends."""
 
+    ENDED = "ended"
+    """Whether a stage record ends its stage rather than starting it."""
+
     PROGRESS = "progress"
     """The share of a solve's convergence covered so far, between 0 and 1."""
 
     SOLVER = "solver"
     """The solver a convergence or progress record reports on."""
+
+    LINEAR_SOLVERS = "linear_solvers"
+    """The stack's solvers of a linear system in sif order, on the record that starts a solve."""
+
+    DIRECT_SOLVERS = "direct_solvers"
+    """Those of them that factorize their system instead of iterating."""
 
     ITERATION = "iteration"
     """The latest iteration of the linear solve a progress record reports on."""
@@ -98,6 +107,9 @@ class LogKey(StrEnum):
 
     ORIGIN = "origin"
     """Where a reused bundle came from."""
+
+    CACHED = "cached"
+    """The kind of the artifact the artifact cache served a run, on the record noting it."""
 
     TASK = "task"
     """The workbench task a board record is about."""

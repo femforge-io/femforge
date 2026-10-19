@@ -1,6 +1,7 @@
 """Background tasks: the plan, the phases, the rows records move, the serial queue across saves, failures, and the stop sequence on real child processes."""
 
 import asyncio
+import importlib
 import json
 import os
 import sys
@@ -17,6 +18,7 @@ import femforge
 import femforge_workbench
 from femforge.common.log import RelayedRecord
 from femforge.run.stages import Stage
+from femforge_workbench.registry import import_root, target_of
 from femforge_workbench.tasks import (
     OUTCOME_FILE,
     Task,
@@ -211,7 +213,7 @@ def test_records_move_the_row() -> None:
     assert meshing.phase is TaskPhase.MESHING and meshing.progress is None and meshing.busy
     assert progressed.phase is TaskPhase.SOLVING and progressed.progress == 0.42 and progressed.percent == "42%"
     assert progressed.state == "Solving · Linear Elasticity"
-    assert bumped.progress == 0.42, "the bar never moves back within a stage"
+    assert bumped.progress == 0.42, "the bar never moves back within one solver's solve"
     assert beat.iterations == "It 412/5000" and observe(solving, _record(run_id="r1", iteration=7)).iterations == "It 7"
     assert finishing.phase is TaskPhase.FINISHING and finishing.progress is None and finishing.iterations == ""
     assert observe(row, _record(stage="not a stage")) is row
@@ -238,6 +240,50 @@ def test_a_reuse_and_a_solve_are_counted_by_their_records() -> None:
     reused = observe(observe(row, _record(run_id="r1", origin="local")), _record(run_id="r2", run_dir="runs/r2"))
 
     assert (reused.runs, reused.reuses, reused.solves) == (2, 1, 1)
+
+
+def test_the_bar_restarts_for_each_solver_and_a_stack_of_several_names_the_solver_place() -> None:
+    solving = observe(TaskRow(label="a", title="A"), _record(run_id="r1", stage="run_solver"))
+    stacked = observe(solving, _record(linear_solvers=["heat equation", "linear elasticity", "stress"], direct_solvers=[]))
+
+    first = observe(stacked, _record(progress=0.9, solver="heat equation", iteration=400))
+    second = observe(first, _record(progress=0.1, solver="linear elasticity"))
+    single = observe(solving, _record(linear_solvers=["linear elasticity"], direct_solvers=[]))
+
+    assert (first.percent, first.state) == ("90%", "Solving · Heat Equation 1/3")
+    assert (second.progress, second.percent, second.iteration) == (0.1, "10%", None), "the next solver's percent, not the best of the last"
+    assert second.state == "Solving · Linear Elasticity 2/3"
+    assert observe(single, _record(solver="linear elasticity")).state == "Solving · Linear Elasticity", "one linear solver takes no place"
+    assert solving.state == "Solving" and observe(solving, _record(linear_solvers="heat", direct_solvers=[])) is solving
+
+
+def test_a_direct_solve_reads_direct_with_the_pulse_and_no_percent() -> None:
+    solving = observe(TaskRow(label="a", title="A"), _record(run_id="r1", stage="run_solver"))
+    direct = observe(solving, _record(linear_solvers=["linear elasticity"], direct_solvers=["linear elasticity"]))
+    converged = observe(direct, _record(progress=0.5, solver="linear elasticity"))
+    mixed = observe(solving, _record(linear_solvers=["heat equation", "linear elasticity"], direct_solvers=["heat equation"]))
+
+    assert (direct.state, direct.percent, direct.busy) == ("Solving · Linear Elasticity Direct", "", True), "the stack's first solver solves before any record names it"
+    assert (converged.state, converged.percent, converged.busy) == ("Solving · Linear Elasticity Direct", "", True)
+    assert mixed.state == "Solving · Heat Equation 1/2 Direct"
+    assert observe(mixed, _record(progress=0.3, solver="linear elasticity")).percent == "30%"
+
+
+def test_a_cached_mesh_a_fetched_bundle_and_the_task_code_after_a_run_read_in_the_strip() -> None:
+    row = TaskRow(label="a", title="A")
+
+    meshing = observe(observe(row, _record(run_id="r1")), _record(stage="mesh"))
+    cached = observe(meshing, _record(origin="local", cached="elmer_mesh"))
+    fetched = observe(row, _record(run_id="r2", origin="local", cached="run_bundle"))
+    finishing = observe(cached, _record(stage="cleanup", ended=False))
+    running = observe(cached, _record(stage="cleanup", ended=True))
+
+    assert (meshing.state, cached.state, cached.reuses) == ("Meshing", "Meshing · Cached", 0), "a cached mesh is no reused run"
+    assert (fetched.phase, fetched.state, fetched.reuses, fetched.fetched) == (TaskPhase.RUNNING, "Running", 1, True), "the task's own code runs after a reuse"
+    assert fetched.model_copy(update={"phase": TaskPhase.REUSED}).state == "Reused · From Cache"
+    assert TaskRow(label="a", title="A", phase=TaskPhase.REUSED, reuses=1).state == "Reused"
+    assert finishing.phase is TaskPhase.FINISHING and (running.phase, running.state, running.active, running.busy) == (TaskPhase.RUNNING, "Running", True, True)
+    assert observe(running, _record(run_id="r3")).mesh_cached is False, "a new run starts without the last one's mesh"
 
 
 def test_the_strip_copy_names_the_queue_place_the_runs_and_the_failure() -> None:
@@ -425,7 +471,7 @@ def test_a_stalled_run_ends_its_task_stalled_with_its_log_and_the_summary_counts
     assert [row.phase for row in board.by_label.values()] == [TaskPhase.STALLED, TaskPhase.STALLED, TaskPhase.REUSED, TaskPhase.DONE, TaskPhase.FAILED]
     assert stalled.state == "Stalled · Residual Flat at 3.14e-08 by It 1339" and stalled.error is None
     assert stalled.traceback == "m\nm", "a stalled row shows the child's last log messages"
-    assert view.summary == "5 Tasks · 1 Done · 1 Reused · 1 Failed · 2 Stalled" and (view.failed, view.stalled) == (1, 2)
+    assert view.summary == "5 Tasks · 1 Done · 1 Reused · 1 Failed · 2 Stalled" and (view.reused, view.failed, view.stalled) == (1, 1, 2)
     assert view.focus is not None and view.focus.label == "fails"
 
 
@@ -637,3 +683,57 @@ def test_shutdown_kills_a_deaf_child_and_reaps_its_claim(tmp_path: Path) -> None
     assert not lock.exists(), "the reap broke the claim the killed child left"
     assert elapsed < 3.0
     assert board.by_label["Hold"].phase is TaskPhase.STOPPED
+
+
+PREPENDING_PLAN = """
+import sys
+
+sys.path.insert(0, {other!r})
+
+import prepended_helper
+import served_helper
+from femforge_workbench.tasks import Task
+
+
+def use():
+    assert prepended_helper.VALUE + served_helper.VALUE == 7
+
+
+def solves():
+    return [Task("Use", use)]
+"""
+"""A plan whose import prepends another directory to sys.path and needs a module only the server's own path finds."""
+
+
+@pytest.mark.usefixtures("child_env")
+def test_a_plan_that_prepends_to_sys_path_still_imports_its_own_module_in_the_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script, other, shared = (tmp_path / name for name in ("script", "other", "shared"))
+    for folder in (script, other, shared):
+        folder.mkdir()
+
+    _ = (script / "prepending_plan.py").write_text(PREPENDING_PLAN.format(other=str(other)), encoding="utf-8")
+    _ = (other / "prepended_helper.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _ = (shared / "served_helper.py").write_text("VALUE = 4\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "path", [str(script), str(shared), *sys.path])
+    try:
+        module = importlib.import_module("prepending_plan")
+        factory = cast("Callable[[], list[Task]]", module.solves)
+        prepended = sys.path[0]
+        root = import_root(factory)
+
+        async def scenario() -> TaskBoard:
+            board = TaskBoard(Host(), target_of(factory), plan_of(factory()), path=str(root), roots=[tmp_path])
+            board.start()
+            await _until(lambda: board.by_label["Use"].phase.ended)
+            board.shutdown()
+
+            return board
+
+        board = asyncio.run(scenario())
+    finally:
+        for name in ("prepending_plan", "prepended_helper", "served_helper"):
+            _ = sys.modules.pop(name, None)
+
+    assert prepended == str(other), "the plan's import put another directory first"
+    assert root == script.resolve(), "the child imports from the plan's own directory, not sys.path[0]"
+    assert board.by_label["Use"].phase is TaskPhase.DONE, board.by_label["Use"].traceback
