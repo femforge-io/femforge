@@ -170,7 +170,7 @@ Two context managers route records:
 | `telemetry_scope(root)` | binds a route key, so the records inside land in that root's own sink; one sink per folder lives for the process | `src/femforge/common/log.py:384-419` |
 | `run_log_context(run_id, dir)` | binds `run_id` and writes every record that carries it, at `DEBUG` and above, to the bundle's `run.log` | `src/femforge/common/log.py:422-452` |
 
-[Driver.evaluate][femforge.run.Driver.evaluate] wraps a whole evaluation in `telemetry_scope(self.telemetry)`, so its records land in the driver's root and not the process default (`src/femforge/run/driver.py:204-205`).
+[Driver.evaluate][femforge.run.Driver.evaluate] wraps a whole evaluation in `telemetry_scope(self.telemetry)`, so its records land in the driver's root and not the process default (`src/femforge/run/driver.py:205-206`).
 
 A child process relays its records instead of writing its own. `log_to_stdout_json` replaces the terminal sink with one JSON line per record on stdout (`src/femforge/common/log.py:326-334`). The parent passes each output line to `relay_record`, which logs a JSON record at its own level with the child's module, function and line patched in, and any other line at `DEBUG` (`src/femforge/common/log.py:344-361`). The mesh worker works this way (`src/femforge/meshing/backend.py:245`).
 

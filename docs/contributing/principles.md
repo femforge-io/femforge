@@ -27,9 +27,9 @@ print(CoolingConfig.model_fields["ambient_temperature"].description)
 
 ## Runs
 
-**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:128`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:187-204`).
+**Execution settings never enter the run identity.** The same config names the same run on every machine, so a bundle solved in Docker on four ranks is reused by a native single-rank driver. The [Driver][femforge.run.Driver] docstring states it (`src/femforge/run/driver.py:129`), and [cache_key][femforge.run.cache_key] hashes only the config, the geometry key, the resolved solver stack and `RUN_PRODUCER_VERSION`, with `meta` excluded (`src/femforge/run/kinds.py:190-207`).
 
-**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:182-184`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
+**A run meshes first, then solves on that mesh.** The mesh identity holds only what decides the mesh files and their group names, so configs that differ in materials, conditions or physics share one cached mesh. [mesh_key][femforge.run.mesh_key] is invariant to those inputs (`src/femforge/run/kinds.py:185-187`), and `MeshSpec` says so in its docstring (`src/femforge/meshing/spec.py:25-26`).
 
 ## Units and values
 
