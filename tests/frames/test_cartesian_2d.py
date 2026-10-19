@@ -200,7 +200,7 @@ class _Prism(Build123dGeometry):
 
 
 class _Toroid(Build123dGeometry):
-    """The toroidal flexure: the upper half of a notched 100 x 20 profile revolved about X."""
+    """The toroidal flexure: the lower half of a notched 100 x 20 profile revolved about X."""
 
     def model(self) -> TaggedCompound:
         return TaggedCompound(children=[TaggedPart([toroidal_flexure()], name="TorodialFlexure")])
