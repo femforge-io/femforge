@@ -1,6 +1,7 @@
 """Background tasks: the plan, the phases, the rows records move, the serial queue across saves, failures, and the stop sequence on real child processes."""
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -8,6 +9,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -27,6 +29,7 @@ from femforge_workbench.tasks import (
     TaskProcess,
     TaskRow,
     TaskView,
+    break_until_exit,
     clock,
     observe,
     ordinal,
@@ -52,7 +55,7 @@ EXPECTED_PHASES = {
 
 
 def solve_all() -> None:
-    """A named function, labelled by its name."""
+    """A task function that does nothing."""
 
 
 def _record(**extra: object) -> RelayedRecord:
@@ -142,6 +145,10 @@ async def _until(condition: Callable[[], bool]) -> None:
         await asyncio.sleep(0.02)
 
 
+def _line(**extra: object) -> str:
+    return json.dumps(_record(**extra)) + "\n"
+
+
 def _plan(*labels: str) -> list[Task]:
     return [Task(label, solve_all) for label in labels]
 
@@ -155,10 +162,10 @@ def test_every_stage_maps_to_a_phase(stage: Stage) -> None:
     assert TaskPhase.of(stage) is EXPECTED_PHASES[stage]
 
 
-def test_a_plan_labels_named_functions_and_refuses_duplicate_empty_or_unnamed_entries() -> None:
-    plan = plan_of([Task("Export", solve_all), solve_all])
+def test_a_plan_refuses_duplicate_empty_or_foreign_entries() -> None:
+    plan = plan_of([Task("Export", solve_all), Task("shell comparison", solve_all)])
 
-    assert [task.label for task in plan] == ["Export", "Solve All"]
+    assert [task.label for task in plan] == ["Export", "shell comparison"]
     assert [shown_label(label) for label in ("Gap 0.5 mm", "shell comparison")] == ["Gap 0.5 mm", "Shell Comparison"], "a label with a capital is shown as written"
     with pytest.raises(ValueError, match="'Export'"):
         _ = plan_of([Task("Export", solve_all), Task("Export", solve_all)])
@@ -166,12 +173,10 @@ def test_a_plan_labels_named_functions_and_refuses_duplicate_empty_or_unnamed_en
         _ = plan_of([])
     with pytest.raises(ValueError, match="empty"):
         _ = plan_of([Task(" ", solve_all)])
-    with pytest.raises(TypeError, match="label"):
-        _ = plan_of([partial(solve_all)])
-    with pytest.raises(TypeError, match="label"):
-        _ = plan_of([lambda: None])
-    with pytest.raises(TypeError, match="label"):
-        _ = plan_of([3])
+    with pytest.raises(TypeError, match="tuple"):
+        _ = plan_of((Task("Export", solve_all),))
+    with pytest.raises(TypeError, match="function"):
+        _ = plan_of([solve_all])
     with pytest.raises(TypeError, match="str"):
         _ = plan_of("Export")
 
@@ -188,14 +193,16 @@ def test_records_move_the_row() -> None:
     solving = observe(meshing, _record(run_id="r1", stage="run_solver"))
     progressed = observe(solving, _record(run_id="r1", progress=0.42, solver="linear elasticity"))
     bumped = observe(progressed, _record(run_id="r1", progress=0.3))
-    finishing = observe(bumped, _record(run_id="r1", stage="cleanup"))
+    beat = observe(bumped, _record(run_id="r1", iteration=412, max_iterations=5000))
+    finishing = observe(beat, _record(run_id="r1", stage="cleanup"))
 
     assert (started.phase, started.run_id, started.runs) == (TaskPhase.STARTING, "r1", 1)
     assert meshing.phase is TaskPhase.MESHING and meshing.progress is None and meshing.busy
     assert progressed.phase is TaskPhase.SOLVING and progressed.progress == 0.42 and progressed.percent == "42%"
     assert progressed.state == "Solving · Linear Elasticity"
     assert bumped.progress == 0.42, "the bar never moves back within a stage"
-    assert finishing.phase is TaskPhase.FINISHING and finishing.progress is None
+    assert beat.iterations == "It 412/5000" and observe(solving, _record(run_id="r1", iteration=7)).iterations == "It 7"
+    assert finishing.phase is TaskPhase.FINISHING and finishing.progress is None and finishing.iterations == ""
     assert observe(row, _record(stage="not a stage")) is row
     assert observe(meshing, _record(run_id="r1", progress=0.5)).progress is None, "a percent outside the solve is no solve progress"
 
@@ -214,9 +221,10 @@ def test_the_strip_copy_names_the_queue_place_the_runs_and_the_failure() -> None
     failed = TaskRow(label="a", title="A", phase=TaskPhase.FAILED, error="RuntimeError: boom")
 
     assert queued.state == "Queued · 2nd In Line" and TaskRow(label="a", title="A", position=1).state == "Queued"
-    assert done.state == "Done · 2 Runs" and done.glyph == "●" and done.retryable and not done.cancellable
-    assert failed.state == "Failed · RuntimeError: boom" and failed.failed and failed.glyph == "⊘"
-    assert TaskRow(label="a", title="A", phase=TaskPhase.STOPPED).state == "Cancelled"
+    assert done.state == "Done · 2 Runs" and done.glyph == "●" and not done.retryable and not done.cancellable
+    assert failed.state == "Failed · RuntimeError: boom" and failed.failed and failed.glyph == "⊘" and failed.retryable
+    assert TaskRow(label="a", title="A", phase=TaskPhase.STOPPED).state == "Cancelled" and TaskRow(label="a", title="A", phase=TaskPhase.STOPPED).retryable
+    assert not TaskRow(label="a", title="A", phase=TaskPhase.REUSED).retryable, "Done and Reused rows offer Open only"
     assert TaskRow(label="a", title="A", phase=TaskPhase.GEOMETRY).state == "Preparing Geometry"
     assert [ordinal(number) for number in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23)] == ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd"]
     assert [clock(seconds) for seconds in (None, 0.3, 12.0, 72.0, 2463.0, 3720.0)] == ["—", "0.3s", "12s", "1m 12s", "41m 03s", "1h 02m"]
@@ -227,29 +235,31 @@ def test_the_queue_runs_in_plan_order_and_a_save_reruns_after_the_running_task(t
     release = asyncio.Event()
 
     def scripts(label: str, nth: int) -> Script:
-        return Script(hold=release if (label, nth) == ("b", 1) else None)
+        return Script(lines=[_line(run_id=f"{label}{nth}")], hold=release if (label, nth) == ("b", 1) else None)
 
     spawner = Spawner(scripts)
 
-    async def scenario() -> tuple[bool, bool, list[str]]:
+    async def scenario() -> tuple[bool, bool, list[str], tuple[str | None, str]]:
         board = TaskBoard(host, "main:tasks", _plan("a", "b", "c"), path=None, roots=[tmp_path], spawn=spawner)
         board.start()
         await _until(lambda: spawner.spawned == ["a", "b"])
         board.submit(_plan("a", "b", "c"))
-        again = board.rows["b"].again
+        again = board.by_label["b"].again
         queued = [row.state for row in board.view().rows]
+        requeued = (board.by_label["a"].run_id, board.by_label["a"].clock)
         release.set()
         await _until(lambda: _idle(board) and len(spawner.spawned) == 5)
-        settled = board.rows["b"].again
+        settled = board.by_label["b"].again
         board.shutdown()
 
-        return again, settled, queued
+        return again, settled, queued, requeued
 
-    again, settled, queued = asyncio.run(scenario())
+    again, settled, queued, requeued = asyncio.run(scenario())
 
     assert spawner.spawned == ["a", "b", "a", "b", "c"]
     assert again and not settled, "b runs again after its first run ends"
     assert queued == ["Queued", "Starting", "Queued · 3rd In Line"]
+    assert requeued == (None, "—"), "a queued row shows no run and no clock until it starts again"
     assert host.views[-1].summary == "3 Tasks · 3 Done" and host.views[-1].focus is None
 
 
@@ -272,8 +282,8 @@ def test_a_failed_task_never_stops_the_queue(tmp_path: Path) -> None:
 
     board = asyncio.run(scenario())
 
-    assert [row.phase for row in board.rows.values()] == [TaskPhase.FAILED, TaskPhase.DONE, TaskPhase.DONE]
-    assert board.rows["a"].error == "RuntimeError: boom" and board.rows["a"].traceback is not None
+    assert [row.phase for row in board.by_label.values()] == [TaskPhase.FAILED, TaskPhase.DONE, TaskPhase.DONE]
+    assert board.by_label["a"].error == "RuntimeError: boom" and board.by_label["a"].traceback is not None
     assert host.views[-1].summary == "3 Tasks · 2 Done · 1 Failed" and host.views[-1].failed == 1
     assert host.views[-1].focus is not None and host.views[-1].focus.label == "a", "the last failure leads an idle strip"
 
@@ -285,12 +295,12 @@ def test_a_child_that_dies_without_an_outcome_shows_its_exit_code_and_last_lines
     async def scenario() -> TaskBoard:
         board = TaskBoard(host, "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=spawner)
         board.start()
-        await _until(lambda: _idle(board) and board.rows["a"].phase.ended)
+        await _until(lambda: _idle(board) and board.by_label["a"].phase.ended)
         board.shutdown()
 
         return board
 
-    row = asyncio.run(scenario()).rows["a"]
+    row = asyncio.run(scenario()).by_label["a"]
 
     assert row.phase is TaskPhase.FAILED and row.error == "Task Process Exited (3)"
     assert row.traceback == "Traceback (most recent call last):\nMemoryError"
@@ -307,12 +317,12 @@ def test_a_task_dropped_by_a_save_finishes_then_leaves(tmp_path: Path) -> None:
         await _until(lambda: spawner.spawned == ["a", "b"])
         board.submit(_plan("a", "c"))
         queue = list(board.queue)
-        note = board.rows["b"].note
+        note = board.by_label["b"].note
         release.set()
         await _until(lambda: _idle(board) and len(spawner.spawned) == 4)
         board.shutdown()
 
-        return queue, note, list(board.rows)
+        return queue, note, list(board.by_label)
 
     queue, note, rows = asyncio.run(scenario())
 
@@ -337,7 +347,7 @@ def test_a_newer_run_of_a_task_is_followed_and_a_reused_one_reads_reused(tmp_pat
         for runs in (1, 2, 3):
             await _until(lambda runs=runs: _idle(board) and len(spawner.spawned) == runs)
             if runs < 3:
-                board.retry("a")
+                board.submit(_plan("a"))
 
         board.shutdown()
 
@@ -346,7 +356,7 @@ def test_a_newer_run_of_a_task_is_followed_and_a_reused_one_reads_reused(tmp_pat
     board = asyncio.run(scenario())
 
     assert host.follows == [("r1", "r2")], "a reuse of the run shown has nothing newer to follow"
-    assert board.rows["a"].phase is TaskPhase.REUSED and board.rows["a"].state == "Reused"
+    assert board.by_label["a"].phase is TaskPhase.REUSED and board.by_label["a"].state == "Reused"
 
 
 def test_cancel_takes_a_queued_task_out_and_stops_the_running_one(tmp_path: Path) -> None:
@@ -362,7 +372,7 @@ def test_cancel_takes_a_queued_task_out_and_stops_the_running_one(tmp_path: Path
         board.cancel("a")
         await asyncio.sleep(0)
         release.set()
-        await _until(lambda: _idle(board) and board.rows["a"].phase.ended)
+        await _until(lambda: _idle(board) and board.by_label["a"].phase.ended)
         board.shutdown()
 
         return board
@@ -370,7 +380,73 @@ def test_cancel_takes_a_queued_task_out_and_stops_the_running_one(tmp_path: Path
     board = asyncio.run(scenario())
 
     assert spawner.spawned == ["a"]
-    assert [row.phase for row in board.rows.values()] == [TaskPhase.STOPPED, TaskPhase.STOPPED]
+    assert [row.phase for row in board.by_label.values()] == [TaskPhase.STOPPED, TaskPhase.STOPPED]
+
+
+def test_a_cancel_that_lands_after_the_task_returned_reads_done(tmp_path: Path) -> None:
+    host = Host()
+    release = asyncio.Event()
+    spawner = Spawner(lambda label, nth: Script(hold=release))
+
+    async def scenario() -> TaskBoard:
+        board = TaskBoard(host, "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=spawner)
+        board.start()
+        await _until(lambda: board.running is not None)
+        board.cancel("a")
+        release.set()
+        await _until(lambda: _idle(board) and board.by_label["a"].phase.ended)
+        board.shutdown()
+
+        return board
+
+    board = asyncio.run(scenario())
+
+    assert board.by_label["a"].phase is TaskPhase.DONE, "the task returned before the break, so its run stands"
+
+
+def test_retry_queues_only_a_failed_or_cancelled_task(tmp_path: Path) -> None:
+    board = TaskBoard(Host(), "main:tasks", _plan("a", "b", "c"), path=None, roots=[tmp_path], spawn=Spawner(lambda label, nth: Script()))
+    board.queue.clear()
+    board.by_label["a"] = board.by_label["a"].model_copy(update={"phase": TaskPhase.DONE, "run_id": "r1", "elapsed": 2.0})
+    board.by_label["b"] = board.by_label["b"].model_copy(update={"phase": TaskPhase.FAILED, "error": "RuntimeError: boom", "run_id": "r2", "elapsed": 1.0})
+    board.by_label["c"] = board.by_label["c"].model_copy(update={"phase": TaskPhase.STOPPED})
+
+    for label in ("a", "b", "c", "b"):
+        board.retry(label)
+
+    retried = board.by_label["b"]
+    assert board.queue == ["b", "c"] and board.by_label["a"].phase is TaskPhase.DONE
+    assert (retried.phase, retried.run_id, retried.clock, retried.error) == (TaskPhase.QUEUED, None, "—", None)
+
+
+@dataclass
+class Deaf:
+    """A process that exits only once it saw `needed` breaks, or never; `console` False refuses every break."""
+
+    needed: int | None
+    console: bool = True
+    breaks: int = 0
+    pid: int = 0
+
+    def interrupt(self) -> bool:
+        self.breaks += self.console
+
+        return self.console
+
+    def wait_for(self, timeout: float) -> bool:
+        time.sleep(timeout)
+
+        return self.needed is not None and self.breaks >= self.needed
+
+
+def test_the_break_is_sent_again_until_the_process_exits() -> None:
+    late = Deaf(needed=3)
+    deaf = Deaf(needed=None)
+    alone = Deaf(needed=1, console=False)
+
+    assert break_until_exit(cast("TaskProcess", late), 5.0) and late.breaks == 3, "a process that missed the first breaks exits on a later one"
+    assert not break_until_exit(cast("TaskProcess", deaf), 1.2) and deaf.breaks == 3
+    assert not break_until_exit(cast("TaskProcess", alone), 5.0) and alone.breaks == 0, "without a console the stop goes straight to the kill"
 
 
 def test_a_save_that_lists_no_tasks_keeps_the_rows_and_says_why(tmp_path: Path) -> None:
@@ -378,11 +454,11 @@ def test_a_save_that_lists_no_tasks_keeps_the_rows_and_says_why(tmp_path: Path) 
     board = TaskBoard(host, "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=Spawner(lambda label, nth: Script()))
 
     board.apply("not a plan", 0.1)
-    kept = list(board.rows)
+    kept = list(board.by_label)
     board.apply(_plan("a", "b"), 0.1)
 
-    assert kept == ["a"] and host.views[-2].error == "TypeError: tasks must list Task entries, not a str"
-    assert list(board.rows) == ["a", "b"] and host.views[-1].error is None
+    assert kept == ["a"] and host.views[-2].error == "TypeError: tasks must be a list of Task, not a str"
+    assert list(board.by_label) == ["a", "b"] and host.views[-1].error is None
 
 
 @pytest.fixture
@@ -458,7 +534,7 @@ def test_shutdown_lets_a_cooperative_child_release_its_claim(tmp_path: Path) -> 
 
     assert not lock.exists(), "the child's own cleanup released the claim"
     assert elapsed < 2.0
-    assert board.rows["Hold"].phase is TaskPhase.STOPPED
+    assert board.by_label["Hold"].phase is TaskPhase.STOPPED
 
 
 @pytest.mark.usefixtures("child_env")
@@ -467,4 +543,4 @@ def test_shutdown_kills_a_deaf_child_and_reaps_its_claim(tmp_path: Path) -> None
 
     assert not lock.exists(), "the reap broke the claim the killed child left"
     assert elapsed < 3.0
-    assert board.rows["Hold"].phase is TaskPhase.STOPPED
+    assert board.by_label["Hold"].phase is TaskPhase.STOPPED

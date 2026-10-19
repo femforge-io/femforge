@@ -263,3 +263,4 @@ def test_the_convergence_and_progress_lines_bind_their_progress(tmp_path: Path, 
     beats = [extra for message, extra in linear if " r = " in message]
     assert computed[0][LogKey.PROGRESS] == 0.0 and computed[0][LogKey.SOLVER] == "mgdyn"
     assert [extra[LogKey.PROGRESS] for extra in beats] == [beats[0]["fraction"]]
+    assert (beats[0][LogKey.ITERATION], beats[0][LogKey.MAX_ITERATIONS], beats[0][LogKey.SOLVER]) == (31, 5000, "linear elasticity"), "the task strip reads the iteration off these keys"

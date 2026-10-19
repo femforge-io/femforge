@@ -35,6 +35,9 @@ PUBLISH_PERIOD_S = 1.0
 KILL_WAIT_S = 5.0
 """`t_kill` `[s]`: How long a killed task process gets to vanish before its claims are reaped."""
 
+BREAK_REPEAT_S = 0.5
+"""`t_break` `[s]`: How often a stopping task's process group gets the break again; a process started after a break never saw it."""
+
 WORKER_MODULE = "femforge_workbench.task_worker"
 """The module a task's child process runs."""
 
@@ -55,10 +58,7 @@ class Task:
     """What the child process calls; its return value is dropped."""
 
 
-type TaskEntry = Task | Callable[[], object]
-"""A Task, or a module-level function, which is labelled by its name in Title Case."""
-
-type TaskFactory = Callable[[], Sequence[TaskEntry]]
+type TaskFactory = Callable[[], list[Task]]
 """A module-level function listing a script's tasks; called again after every save and in every task's child process."""
 
 
@@ -71,22 +71,16 @@ def shown_label(label: str) -> str:
 
 
 def plan_of(tasks: object) -> tuple[Task, ...]:
-    """The tasks a factory listed, each named function labelled by its name; TypeError for anything but a list of tasks, ValueError for an empty plan or a label used twice."""
-    if isinstance(tasks, str) or not isinstance(tasks, Sequence):
-        raise TypeError(f"tasks must list Task entries, not a {type(tasks).__name__}")
+    """The tasks a factory listed; TypeError for anything but a list of Task, ValueError for an empty plan, an empty label or a label used twice."""
+    if not isinstance(tasks, list):
+        raise TypeError(f"tasks must be a list of Task, not a {type(tasks).__name__}")
 
-    def as_task(entry: object) -> Task:
-        if isinstance(entry, Task):
-            return entry
+    entries = cast("list[object]", tasks)
+    foreign = [entry for entry in entries if not isinstance(entry, Task)]
+    if foreign:
+        raise TypeError(f"tasks must be a list of Task; {foreign[0]!r} is a {type(foreign[0]).__name__}")
 
-        name = getattr(entry, "__name__", None)
-        if not callable(entry) or not isinstance(name, str) or not name.isidentifier():
-            raise TypeError(f"{entry!r} has no name to label it by; list it as Task(label, ...)")
-
-        return Task(title(name), entry)
-
-    entries = cast("Sequence[object]", tasks)
-    plan = tuple(as_task(entry) for entry in entries)
+    plan = tuple(cast("list[Task]", entries))
     if not plan:
         raise ValueError("tasks lists no task")
 
@@ -240,6 +234,12 @@ class TaskRow(BaseModel):
     progress: float | None = None
     """`f` `[-]`: The share of the running solve's convergence covered, never moving back within a stage; None when unknown."""
 
+    iteration: int | None = None
+    """The running linear solve's latest iteration, from its progress line; None before one."""
+
+    max_iterations: int | None = None
+    """The running linear solve's iteration cap; None when unknown."""
+
     elapsed: float | None = None
     """`t` `[s]`: Wall time of the task's current or last run; None before it first starts."""
 
@@ -300,6 +300,17 @@ class TaskRow(BaseModel):
 
     @computed_field
     @property
+    def iterations(self) -> str:
+        """The linear iteration against its cap, `It 412/5000`, empty before the first progress line."""
+        if self.iteration is None:
+            return ""
+
+        cap = f"/{self.max_iterations}" if self.max_iterations is not None else ""
+
+        return f"It {self.iteration}{cap}"
+
+    @computed_field
+    @property
     def clock(self) -> str:
         """The elapsed time as the strip shows it."""
         return clock(self.elapsed)
@@ -331,8 +342,29 @@ class TaskRow(BaseModel):
     @computed_field
     @property
     def retryable(self) -> bool:
-        """Whether Retry applies: the task's last run ended."""
-        return self.phase.ended
+        """Whether Retry applies: the task's last run failed or was cancelled."""
+        return self.phase in (TaskPhase.FAILED, TaskPhase.STOPPED)
+
+    def queued(self) -> "TaskRow":
+        """The row queued afresh: no run, no clock and no failure until the task starts again."""
+        update: dict[str, object] = {
+            "phase": TaskPhase.QUEUED,
+            "run_id": None,
+            "runs": 0,
+            "solves": 0,
+            "reuses": 0,
+            "solver": None,
+            "progress": None,
+            "iteration": None,
+            "max_iterations": None,
+            "elapsed": None,
+            "error": None,
+            "traceback": None,
+            "again": False,
+            "removed": False,
+        }
+
+        return self.model_copy(update=update)
 
 
 class TaskField(StrEnum):
@@ -347,6 +379,8 @@ class TaskField(StrEnum):
     REUSES = "reuses"
     SOLVER = "solver"
     PROGRESS = "progress"
+    ITERATION = "iteration"
+    MAX_ITERATIONS = "max_iterations"
     ELAPSED = "elapsed"
     ERROR = "error"
     TRACEBACK = "traceback"
@@ -357,6 +391,7 @@ class TaskField(StrEnum):
     NOTE = "note"
     GLYPH = "glyph"
     PERCENT = "percent"
+    ITERATIONS = "iterations"
     CLOCK = "clock"
     ACTIVE = "active"
     BUSY = "busy"
@@ -372,7 +407,15 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
 
     run_id = extra.get(LogKey.RUN_ID)
     if isinstance(run_id, str) and run_id != row.run_id:
-        update |= {"run_id": run_id, "runs": row.runs + 1, "phase": TaskPhase.STARTING, "progress": None, "solver": None}
+        update |= {
+            "run_id": run_id,
+            "runs": row.runs + 1,
+            "phase": TaskPhase.STARTING,
+            "progress": None,
+            "solver": None,
+            "iteration": None,
+            "max_iterations": None,
+        }
 
     if isinstance(extra.get(LogKey.ORIGIN), str):
         update["reuses"] = row.reuses + 1
@@ -384,7 +427,13 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
     if isinstance(stage, str) and stage in tuple(Stage):
         phase = TaskPhase.of(Stage(stage))
         moved = phase is not row.phase
-        update |= {"phase": phase, "progress": None if moved or phase is not TaskPhase.SOLVING else row.progress}
+        kept = not moved and phase is TaskPhase.SOLVING
+        update |= {
+            "phase": phase,
+            "progress": row.progress if kept else None,
+            "iteration": row.iteration if kept else None,
+            "max_iterations": row.max_iterations if kept else None,
+        }
 
     phase = update.get("phase", row.phase)
     progress = extra.get(LogKey.PROGRESS)
@@ -395,6 +444,11 @@ def observe(row: TaskRow, record: RelayedRecord) -> TaskRow:
     solver = extra.get(LogKey.SOLVER)
     if phase is TaskPhase.SOLVING and isinstance(solver, str) and solver:
         update["solver"] = solver
+
+    iteration = extra.get(LogKey.ITERATION)
+    if phase is TaskPhase.SOLVING and isinstance(iteration, int):
+        cap = extra.get(LogKey.MAX_ITERATIONS)
+        update |= {"iteration": iteration, "max_iterations": cap if isinstance(cap, int) else None}
 
     return row.model_copy(update=update) if update else row
 
@@ -605,6 +659,9 @@ class TaskView(BaseModel):
     summary: str
     """How many tasks are done, as the strip's first words."""
 
+    count: str
+    """The done count as a narrow strip shows it, `1/3`."""
+
     focus: TaskRow | None
     """The row the collapsed strip leads with: the most telling active one, else the last failure, else none."""
 
@@ -668,7 +725,8 @@ class TaskBoard:
         self.roots = list(roots)
         self.spawn = spawn
         self.plan: tuple[Task, ...] = ()
-        self.rows: dict[str, TaskRow] = {}
+        self.by_label: dict[str, TaskRow] = {}
+        """Each task's row by label, in the order the strip lists them."""
         self.queue: list[str] = []
         self.running: Running | None = None
         self.last_runs: dict[str, str] = {}
@@ -732,28 +790,29 @@ class TaskBoard:
 
         rows: dict[str, TaskRow] = {}
         for task in self.plan:
-            row = self.rows.get(task.label) or TaskRow(label=task.label, title=shown_label(task.label))
+            row = self.by_label.get(task.label) or TaskRow(label=task.label, title=shown_label(task.label))
             if task.label == running:
                 rows[task.label] = row.model_copy(update={"again": True, "removed": False})
             else:
-                rows[task.label] = row.model_copy(update={"phase": TaskPhase.QUEUED, "again": False, "removed": False})
+                rows[task.label] = row.queued()
 
         if running is not None and running not in rows:
-            rows[running] = self.rows[running].model_copy(update={"again": False, "removed": True})
+            rows[running] = self.by_label[running].model_copy(update={"again": False, "removed": True})
 
-        self.rows = rows
+        self.by_label = rows
         self.queue = [task.label for task in self.plan]
         self.publish(now=True)
         if self.wake is not None:
             self.wake.set()
 
     def retry(self, label: str) -> None:
-        """Queues one task of the plan again, after those already queued."""
-        if label in self.queue or label not in self.rows or not self.rows[label].phase.ended:
+        """Queues a failed or cancelled task of the plan again, after those already queued."""
+        row = self.by_label.get(label)
+        if label in self.queue or row is None or not row.retryable:
             return
 
         self.queue.append(label)
-        self.rows[label] = self.rows[label].model_copy(update={"phase": TaskPhase.QUEUED})
+        self.by_label[label] = row.queued()
         self.publish(now=True)
         if self.wake is not None:
             self.wake.set()
@@ -771,17 +830,17 @@ class TaskBoard:
             return
 
         self.queue.remove(label)
-        self.rows[label] = self.rows[label].model_copy(update={"phase": TaskPhase.STOPPED})
+        self.by_label[label] = self.by_label[label].model_copy(update={"phase": TaskPhase.STOPPED})
         self.publish(now=True)
 
-    def rows_now(self) -> list[TaskRow]:
+    def rows(self) -> list[TaskRow]:
         """The rows in order, the running one's elapsed time and each queued one's place brought up to date."""
         running = self.running
-        if running is not None and running.label in self.rows:
-            self.rows[running.label] = self.rows[running.label].model_copy(update={"elapsed": time.monotonic() - running.started})
+        if running is not None and running.label in self.by_label:
+            self.by_label[running.label] = self.by_label[running.label].model_copy(update={"elapsed": time.monotonic() - running.started})
 
         rows: list[TaskRow] = []
-        for label, row in self.rows.items():
+        for label, row in self.by_label.items():
             queued = label in self.queue and not row.phase.active
             position = self.queue.index(label) + 1 if queued else None
             rows.append(row.model_copy(update={"position": position}) if row.position != position else row)
@@ -790,7 +849,7 @@ class TaskBoard:
 
     def view(self) -> TaskView:
         """The rows, the summary and the focus row as the strip shows them."""
-        rows = self.rows_now()
+        rows = self.rows()
         shown = [row for row in rows if not row.removed]
         done = sum(row.phase in (TaskPhase.DONE, TaskPhase.REUSED) for row in shown)
         failed = sum(row.phase is TaskPhase.FAILED for row in shown)
@@ -803,7 +862,15 @@ class TaskBoard:
         failures = [row for row in rows if row.phase is TaskPhase.FAILED]
         focus = ranked[0] if ranked else failures[-1] if failures else None
 
-        return TaskView(rows=rows, summary=summary, focus=focus, failed=failed, error=self.error, reloaded=self.reloaded)
+        return TaskView(
+            rows=rows,
+            summary=summary,
+            count=f"{done}/{len(shown)}",
+            focus=focus,
+            failed=failed,
+            error=self.error,
+            reloaded=self.reloaded,
+        )
 
     def publish(self, *, now: bool = False) -> None:
         """Pushes the rows to the client now, or marks them for the next tick."""
@@ -837,31 +904,18 @@ class TaskBoard:
                 continue
 
             label = self.queue.pop(0)
-            if label not in self.rows:
+            if label not in self.by_label:
                 continue
 
             try:
                 await self.run_one(label)
             except Exception as error:  # noqa: BLE001 - a broken task run fails its row, never the server
-                log.opt(exception=True).bind(task=label).error("Task run failed.")
+                log.opt(exception=True).bind(**{str(LogKey.TASK): label}).error("Task run failed.")
                 self.end(label, phase=TaskPhase.FAILED, error=f"{type(error).__name__}: {error}")
 
     async def run_one(self, label: str) -> None:
         """Runs one task in its own child process, relaying its records and moving its row, then settles the row by its outcome."""
-        self.rows[label] = self.rows[label].model_copy(
-            update={
-                "phase": TaskPhase.STARTING,
-                "run_id": None,
-                "runs": 0,
-                "solves": 0,
-                "reuses": 0,
-                "solver": None,
-                "progress": None,
-                "elapsed": 0.0,
-                "error": None,
-                "traceback": None,
-            }
-        )
+        self.by_label[label] = self.by_label[label].queued().model_copy(update={"phase": TaskPhase.STARTING, "elapsed": 0.0})
         folder = Path(tempfile.mkdtemp(prefix="femforge-task-"))
         started = time.monotonic()
         try:
@@ -873,7 +927,7 @@ class TaskBoard:
         running = Running(label, process, folder, started)
         self.running = running
         self.publish(now=True)
-        log.bind(task=label, pid=process.pid).info("Task started.")
+        log.bind(**{str(LogKey.TASK): label}, pid=process.pid).info("Task started.")
 
         tail: deque[str] = deque(maxlen=LOG_TAIL)
         try:
@@ -913,14 +967,14 @@ class TaskBoard:
         if isinstance(run_dir, str):
             running.run_dir = Path(run_dir)
 
-        if running.label in self.rows:
-            self.rows[running.label] = observe(self.rows[running.label], record)
+        if running.label in self.by_label:
+            self.by_label[running.label] = observe(self.by_label[running.label], record)
             self.publish()
 
         emit_relayed(record, **bound)
 
     def settle(self, running: Running, code: int, outcome: TaskDone | TaskFailed | None, tail: Sequence[str]) -> None:
-        """Ends the row by how the child exited: stopped, done, reused, failed with its error, or failed without an outcome.
+        """Ends the row by how the child exited: done or reused when the task returned, else cancelled when stopped, else failed with its error or its exit code.
 
         Args:
             running: The task whose child exited.
@@ -929,15 +983,15 @@ class TaskBoard:
             tail: The child's last plain lines.
         """
         label = running.label
-        row = self.rows.get(label)
+        row = self.by_label.get(label)
         if row is None:
             return
 
-        if running.stopping:
-            self.end(label, phase=TaskPhase.STOPPED)
-        elif isinstance(outcome, TaskDone):
+        if isinstance(outcome, TaskDone):
             reused = row.reuses > 0 and row.solves == 0
             self.end(label, phase=TaskPhase.REUSED if reused else TaskPhase.DONE)
+        elif running.stopping:
+            self.end(label, phase=TaskPhase.STOPPED)
         elif isinstance(outcome, TaskFailed):
             first = outcome.message.strip().splitlines()[0] if outcome.message.strip() else ""
             error = f"{outcome.error}: {first}" if first else outcome.error
@@ -946,8 +1000,8 @@ class TaskBoard:
         else:
             self.end(label, phase=TaskPhase.FAILED, error=f"Task Process Exited ({code})", traceback="\n".join(tail) or None)
 
-        if running.label in self.rows:
-            self.rows[label] = self.rows[label].model_copy(update={"elapsed": time.monotonic() - running.started})
+        if running.label in self.by_label:
+            self.by_label[label] = self.by_label[label].model_copy(update={"elapsed": time.monotonic() - running.started})
 
     def end(self, label: str, *, phase: TaskPhase, error: str | None = None, traceback: str | None = None) -> None:
         """Sets a row's final phase, follows its newer run into the viewer, and drops a row a save removed.
@@ -958,12 +1012,12 @@ class TaskBoard:
             error: The failure's one-line summary.
             traceback: The failure's traceback or last output lines.
         """
-        row = self.rows.get(label)
+        row = self.by_label.get(label)
         if row is None:
             return
 
         ended = row.model_copy(update={"phase": phase, "error": error, "traceback": traceback, "progress": None, "again": False})
-        log.bind(task=label, phase=str(phase), run_id=ended.run_id, error=error).info("Task ended.")
+        log.bind(**{str(LogKey.TASK): label}, phase=str(phase), error=error).info("Task ended.")
 
         previous = self.last_runs.get(label)
         if ended.run_id is not None:
@@ -973,31 +1027,36 @@ class TaskBoard:
             self.last_runs[label] = ended.run_id
 
         if ended.removed:
-            del self.rows[label]
+            del self.by_label[label]
         else:
-            self.rows[label] = ended
+            self.by_label[label] = ended
 
         self.publish(now=True)
 
     async def stop(self, running: Running) -> None:
-        """Breaks the running task, kills its tree when it is still there after the grace, and reaps the claim a kill left."""
+        """Breaks the running task until it exits, kills its tree when it is still there after the grace, then reaps the claim it left."""
         running.stopping = True
         self.publish(now=True)
-        log.bind(task=running.label).info("Stopping the task.")
-        if running.process.interrupt():
+        log.bind(**{str(LogKey.TASK): running.label}).info("Stopping the task.")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + STOP_GRACE_S
+        exited = False
+        while not exited and running.process.interrupt() and loop.time() < deadline:
             try:
-                _ = await asyncio.wait_for(running.exited.wait(), STOP_GRACE_S)
+                _ = await asyncio.wait_for(running.exited.wait(), min(BREAK_REPEAT_S, deadline - loop.time()))
             except TimeoutError:
-                pass
-            else:
-                return
+                continue
 
-        running.process.kill()
-        _ = await running.exited.wait()
-        reap(running)
+            exited = True
+
+        if not exited:
+            running.process.kill()
+            _ = await running.exited.wait()
+
+        await asyncio.to_thread(reap, running, gone=True)
 
     def shutdown(self, grace: float = STOP_GRACE_S) -> None:
-        """Stops the board for good: empties the queue, breaks the running task and waits up to `grace` seconds for it, then kills its tree and reaps what a kill left."""
+        """Stops the board for good: empties the queue, breaks the running task until it exits or `grace` seconds pass, kills what is left, and reaps the claim it left."""
         if self.closed:
             return
 
@@ -1014,25 +1073,45 @@ class TaskBoard:
             return
 
         running.stopping = True
-        exited = running.process.interrupt() and running.process.wait_for(grace)
+        exited = break_until_exit(running.process, grace)
         running.process.close()
-        if not exited:
-            _ = running.process.wait_for(KILL_WAIT_S)
-            reap(running)
-
+        gone = exited or running.process.wait_for(KILL_WAIT_S)
+        reap(running, gone=gone)
+        outcome = read_outcome(running.folder / OUTCOME_FILE)
         shutil.rmtree(running.folder, ignore_errors=True)
-        if running.label in self.rows:
-            self.rows[running.label] = self.rows[running.label].model_copy(update={"phase": TaskPhase.STOPPED})
+        if running.label in self.by_label:
+            phase = TaskPhase.DONE if isinstance(outcome, TaskDone) else TaskPhase.STOPPED
+            self.by_label[running.label] = self.by_label[running.label].model_copy(update={"phase": phase})
 
-        log.bind(task=running.label, graceful=exited).info("Task stopped with the workbench.")
+        log.bind(**{str(LogKey.TASK): running.label}, graceful=exited).info("Task stopped with the workbench.")
 
 
-def reap(running: Running) -> None:
-    """Breaks the claim a killed task left on its run, so the next run of it need not wait for the claim to go stale."""
+def break_until_exit(process: TaskProcess, grace: float) -> bool:
+    """Sends the break every `BREAK_REPEAT_S` until the process exits or `grace` seconds pass; whether it exited, False at once without a console."""
+    deadline = time.monotonic() + grace
+    while process.interrupt():
+        left = deadline - time.monotonic()
+        if process.wait_for(max(min(BREAK_REPEAT_S, left), 0.0)):
+            return True
+
+        if time.monotonic() >= deadline:
+            return False
+
+    return False
+
+
+def reap(running: Running, *, gone: bool) -> None:
+    """Breaks the claims a stopped task left on its runs, its own process counted dead once `gone`, so the next run need not wait for them to go stale."""
     if running.run_dir is None:
         return
 
     from femforge.run.reap import reap_runs
 
-    reaped = reap_runs(running.run_dir.parent)
-    log.bind(task=running.label, reaped=[run.run_id for run in reaped]).info("Claims of the stopped task reaped.")
+    def alive(pid: int) -> bool:
+        if gone and pid == running.process.pid:
+            return False
+
+        return psutil.pid_exists(pid)
+
+    reaped = reap_runs(running.run_dir.parent, alive=alive)
+    log.bind(**{str(LogKey.TASK): running.label}, reaped=[run.run_id for run in reaped]).info("Claims of the stopped task reaped.")

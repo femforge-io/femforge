@@ -81,6 +81,12 @@ class LogKey(StrEnum):
     SOLVER = "solver"
     """The solver a convergence or progress record reports on."""
 
+    ITERATION = "iteration"
+    """The latest iteration of the linear solve a progress record reports on."""
+
+    MAX_ITERATIONS = "max_iterations"
+    """That linear solve's iteration cap."""
+
     ORIGIN = "origin"
     """Where a reused bundle came from."""
 

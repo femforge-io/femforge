@@ -765,13 +765,13 @@ def test_a_save_resubmits_the_edited_plan_and_a_broken_one_keeps_the_rows(tmp_pa
         board = TaskBoard(host, "taskplan.plan:tasks", [Task("First", time.time)], path=None, roots=[src], spawn=Spawner(lambda label, nth: Script()))
         board.start()
         save(PLAN.format(label="Second"), 2)
-        await _await(lambda: "Second" in board.rows)
-        edited = list(board.rows)
+        await _await(lambda: "Second" in board.by_label)
+        edited = list(board.by_label)
         save(BROKEN, 3)
         await _await(lambda: board.error is not None)
         board.shutdown()
 
-        return edited, list(board.rows), host.views[-1].error
+        return edited, list(board.by_label), host.views[-1].error
 
     try:
         with _Modules():

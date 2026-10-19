@@ -20,7 +20,8 @@ else:
 
 
 def interrupt(signum: int, frame: FrameType | None) -> None:
-    """Turns the break into KeyboardInterrupt, so the task's own cleanup releases its run."""
+    """Turns the first break into KeyboardInterrupt, so the task's own cleanup releases its run; the breaks the board repeats after it are ignored."""
+    _ = signal.signal(BREAK_SIGNUM, signal.SIG_IGN)
     raise KeyboardInterrupt
 
 
@@ -49,6 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         log.bind(**{str(LogKey.TASK): job.label}).info("Task running.")
         _ = task.run()
+        _ = signal.signal(BREAK_SIGNUM, signal.SIG_IGN)
     except Exception as error:  # noqa: BLE001 - every failure becomes an outcome the board reads
         log.bind(**{str(LogKey.TASK): job.label}).error(f"Task failed: {type(error).__name__}: {error}")
         failed = TaskFailed(error=type(error).__name__, message=str(error), traceback=traceback.format_exc())
