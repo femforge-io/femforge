@@ -103,7 +103,13 @@ def _table(path: Path, width: int) -> NDArray[np.float64]:
     """The whitespace-separated numeric rows of ``path``, ragged rows padded with NaN to ``width`` columns."""
     import pandas as pd
 
-    frame: pd.DataFrame = pd.read_csv(path, sep=" ", header=None, names=list(range(width)), skipinitialspace=True)
+    frame: pd.DataFrame = pd.read_csv(
+        path,
+        sep=" ",
+        header=None,
+        names=list(range(width)),
+        skipinitialspace=True,
+    )
 
     return cast("NDArray[np.float64]", frame.to_numpy(dtype=np.float64))
 

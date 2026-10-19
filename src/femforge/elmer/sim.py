@@ -439,30 +439,63 @@ class Sim:
                 body.body_force = sif.BodyForce(sim, f"{group.name}_body_force", data)
 
                 for cond, emitted in forcing:
-                    self._land(group.name, cond, self._tag_of(group.tags, cond), body.body_force, emitted)
+                    self._land(
+                        group.name,
+                        cond,
+                        self._tag_of(group.tags, cond),
+                        body.body_force,
+                        emitted,
+                    )
 
         # The Component blocks CoilSolver reads; the Body references resolve to their sif ids at write time.
         for tag, drive, bodies in coil_components.values():
             emitted = drive.to_elmer()
-            component: sif.Component = sif.Component(sim, f"{tag.name}_coil", master_bodies=bodies, data=emitted)
+            component: sif.Component = sif.Component(
+                sim,
+                f"{tag.name}_coil",
+                master_bodies=bodies,
+                data=emitted,
+            )
 
             for coil_body in bodies:
-                self._land(coil_body.name, drive, tag, component, emitted)
+                self._land(
+                    coil_body.name,
+                    drive,
+                    tag,
+                    component,
+                    emitted,
+                )
 
         # The force/torque-lumping Components CalcFields fills and SaveScalars exports.
         for tag, cond, bodies in force_components.values():
             label: str | None = cast("_Labelled", cond).label
             emitted = cond.to_elmer()
-            component = sif.Component(sim, label or tag.name, master_bodies=bodies, data=emitted)
+            component = sif.Component(
+                sim,
+                label or tag.name,
+                master_bodies=bodies,
+                data=emitted,
+            )
 
             for force_body in bodies:
-                self._land(force_body.name, cond, tag, component, emitted)
+                self._land(
+                    force_body.name,
+                    cond,
+                    tag,
+                    component,
+                    emitted,
+                )
 
         # Every magnet body gets force scalars without authoring; named by group so run.magnetic's name join works.
         for group_name, magnet_body in auto_force_bodies:
             auto_force: CalculateMagneticForce = CalculateMagneticForce()
             emitted = auto_force.to_elmer()
-            component = sif.Component(sim, group_name, master_bodies=[magnet_body], data=emitted)
+            component = sif.Component(
+                sim,
+                group_name,
+                master_bodies=[magnet_body],
+                data=emitted,
+            )
             self.landings.append(
                 SifLanding(
                     group=group_name,
@@ -520,7 +553,12 @@ class Sim:
                 merged.update(emission.keywords)
 
             name = f"{bg.name}_{'_'.join(emission.kind for emission in emissions)}"
-            block: sif.Boundary = sif.Boundary(sim, name, [bg.id], data=merged)
+            block: sif.Boundary = sif.Boundary(
+                sim,
+                name,
+                [bg.id],
+                data=merged,
+            )
 
             for emission in emissions:
                 landing: SifLanding = SifLanding(
@@ -577,7 +615,14 @@ class Sim:
 
         for cond in self._boundary_conditions(bg, tags_by_body):
             kind: str = cast("_DiscriminatedCondition", cond).kind
-            specs.append(_Emission(kind=kind, condition=cond, tag=self._tag_of(tags, cond), keywords=dict(cond.on_boundary(site))))
+            specs.append(
+                _Emission(
+                    kind=kind,
+                    condition=cond,
+                    tag=self._tag_of(tags, cond),
+                    keywords=dict(cond.on_boundary(site)),
+                )
+            )
 
         if self.physics in _MAGNETIC_FIELD_PHYSICS and bg.is_external:
             # Far field: Dirichlet A=0 on the outer shell. The WhitneyAV stacks pin the edge DOFs (`AV {e}`, the
@@ -585,13 +630,34 @@ class Sim:
             # approximation is fragile and gave nonsensical fields here. The axisymmetric scalar stack pins its
             # nodal Potential instead.
             if self.physics is Physics.MAGNETOSTATICS_2D:
-                specs.append(_Emission(kind=BoundaryKind.FAR_FIELD, condition=None, tag=None, keywords={str(ElmerVariable.POTENTIAL): "Real 0"}))
+                specs.append(
+                    _Emission(
+                        kind=BoundaryKind.FAR_FIELD,
+                        condition=None,
+                        tag=None,
+                        keywords={str(ElmerVariable.POTENTIAL): "Real 0"},
+                    )
+                )
             else:
-                specs.append(_Emission(kind=BoundaryKind.FAR_FIELD, condition=None, tag=None, keywords={"AV {e}": "Real 0"}))
+                specs.append(
+                    _Emission(
+                        kind=BoundaryKind.FAR_FIELD,
+                        condition=None,
+                        tag=None,
+                        keywords={"AV {e}": "Real 0"},
+                    )
+                )
 
         if self.physics is Physics.MAGNETOSTATICS_2D and bg.is_axis:
             # The same Dirichlet as the far field, but on r=0 it is the EXACT axis condition A_phi = 0, not an approximation.
-            specs.append(_Emission(kind=BoundaryKind.SYMMETRY_AXIS, condition=None, tag=None, keywords={str(ElmerVariable.POTENTIAL): "Real 0"}))
+            specs.append(
+                _Emission(
+                    kind=BoundaryKind.SYMMETRY_AXIS,
+                    condition=None,
+                    tag=None,
+                    keywords={str(ElmerVariable.POTENTIAL): "Real 0"},
+                )
+            )
 
         return specs
 
@@ -628,7 +694,13 @@ class Sim:
         body.material = sif.Material(sim, group.name, data=data)
 
         if magnetization is not None:
-            self._land(group.name, magnetization, self._tag_of(group.tags, magnetization), body.material, emitted)
+            self._land(
+                group.name,
+                magnetization,
+                self._tag_of(group.tags, magnetization),
+                body.material,
+                emitted,
+            )
 
     # -- output --------------------------------------------------------------
 
