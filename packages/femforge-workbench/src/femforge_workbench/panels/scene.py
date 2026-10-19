@@ -46,6 +46,8 @@ if TYPE_CHECKING:
 
 
 STILL_SCALE = 2
+STREAM_RATIO = "p"
+"""The field of the stream's size event that carries the device pixel ratio."""
 TARGET_FPS = 30
 INTERACTIVE_QUALITY = 60
 STILL_QUALITY = 92
@@ -395,14 +397,16 @@ class Triad:
 class InteractiveCap(RcaViewAdapter):
     """Caps the encoded pixels while a button is held and lifts the cap after the release, so a 4K stream interacts at INTERACTIVE_PIXELS and settles on one 2x still."""
 
-    def __init__(self, window: object, name: str, *, scheduler: RcaImageRenderScheduler, sized: Callable[[], None] | None = None, pixels: int = INTERACTIVE_PIXELS, delay: float = LIFT_DELAY) -> None:
+    def __init__(
+        self, window: object, name: str, *, scheduler: RcaImageRenderScheduler, sized: Callable[[float], None] | None = None, pixels: int = INTERACTIVE_PIXELS, delay: float = LIFT_DELAY
+    ) -> None:
         """Sets the adapter up with the cap lifted.
 
         Args:
             window: The wrapped render window the stream encodes.
             name: The remote-controlled area the adapter serves.
             scheduler: The scheduler that renders and encodes the frames.
-            sized: Called after every resize of the window; None calls nothing.
+            sized: Called with the browser's device pixel ratio after every resize of the window; None calls nothing.
             pixels: The encoded pixel count while a button is held.
             delay: Seconds after the release before the cap lifts.
         """
@@ -458,10 +462,10 @@ class InteractiveCap(RcaViewAdapter):
         self.max_pixel_count = 0
 
     def update_size(self, origin: object, size: Mapping[str, object]) -> None:
-        """Sizes the window to the client's box, then tells the panel, which drew its scene before any viewer had a size."""
+        """Sizes the window to the client's box, then tells the panel the device pixel ratio, since it drew its scene before any viewer had a size."""
         super().update_size(origin, size)
         if self.sized is not None:
-            self.sized()
+            self.sized(float(cast("float", size.get(STREAM_RATIO, 1.0))))
 
     def cancel_lift(self) -> None:
         """Drops a lift still due, so it never resizes a window the panel has already closed."""
@@ -499,11 +503,14 @@ class ScenePanel(PanelComponent):
         self.interactor.SetInteractorStyle(vtkInteractorStyleTrackballCamera())
         self.triad = Triad(self.window())
 
+        self.pixel_ratio = 1.0
+        self.stream_ratio = 1.0
+        """The device pixel ratio of the browser showing the stream."""
         self.mode = self.saved_mode(app, id) or mode
         if self.mode is ViewMode.CLIENT:
             self.claim_mirror(app)
 
-        self.scale_fonts(STILL_SCALE if self.mode is ViewMode.SERVER else 1)
+        self.scale_fonts(self.window_scale())
         self.renderable: Renderable | None = None
         self.view: vtklocal.LocalView | None = None
         self.sync: SceneSync | None = None
@@ -515,7 +522,6 @@ class ScenePanel(PanelComponent):
         """The mirror's canvas in device pixels, None until the browser has reported it."""
         self.framed = False
         """Whether the camera has been fitted against a viewer's size; the scene is drawn before any viewer has one."""
-        self.pixel_ratio = 1.0
         self.closing: asyncio.Task[None] | None = None
         """The stream's close, held while it runs."""
         self.axes_shown = False
@@ -550,13 +556,21 @@ class ScenePanel(PanelComponent):
         """The persisted document of this panel's view mode."""
         return f"{STORE_PREFIX}{self.id}"
 
-    def scale_fonts(self, factor: int) -> None:
+    def scale_fonts(self, factor: float) -> None:
         """Scales a copy of the theme's fonts by `factor`: text actors are sized in window pixels, and the theme shares its font object with pyvista's global theme."""
         font = copy.deepcopy(self.base_font)
-        font.size = self.base_font.size * factor
-        font.title_size = self.base_font.title_size * factor
-        font.label_size = self.base_font.label_size * factor
+        font.size = round(self.base_font.size * factor)
+        font.title_size = round(self.base_font.title_size * factor)
+        font.label_size = round(self.base_font.label_size * factor)
         self.plotter.theme.font = font
+
+    def rescale(self) -> None:
+        """Sizes the text for the window pixels per CSS pixel and redraws the scene with the camera kept, after that factor changed."""
+        self.scale_fonts(self.window_scale())
+        if self.renderable is not None:
+            _ = self.draw(self.renderable, keep_camera=True)
+
+        self.push()
 
     def build(self) -> None:
         """Builds the camera presets, the mode toggle and the axes and screenshot buttons over the view."""
@@ -708,7 +722,7 @@ class ScenePanel(PanelComponent):
 
         self.adopt_camera()
         self.mode = mode
-        self.scale_fonts(STILL_SCALE if mode is ViewMode.SERVER else 1)
+        self.scale_fonts(self.window_scale())
         self.match_canvas()
         with self.state:
             self.state[self.key(StateVar.MODE)] = str(mode)
@@ -876,9 +890,14 @@ class ScenePanel(PanelComponent):
             return
 
         self.canvas = (width, height)
-        self.pixel_ratio = float(cast("float", size.get(SizeKey.RATIO, 1.0)))
+        ratio = float(cast("float", size.get(SizeKey.RATIO, 1.0)))
+        rescaled = ratio != self.pixel_ratio
+        self.pixel_ratio = ratio
         self.match_canvas()
         log.bind(panel=self.id, width=width, height=height, ratio=self.pixel_ratio, framed=self.framed).info("Mirror canvas sized.")
+        if rescaled:
+            self.rescale()
+
         if self.framed:
             self.push()
             return
@@ -886,8 +905,13 @@ class ScenePanel(PanelComponent):
         self.framed = True
         self.refit()
 
-    def on_stream_size(self) -> None:
-        """The stream sizes the window itself; the first size still has to frame the scene, drawn before any viewer had one."""
+    def on_stream_size(self, ratio: float = 1.0) -> None:
+        """The stream sizes the window itself; a new device pixel ratio rescales the text, and the first size still has to frame the scene, drawn before any viewer had one."""
+        if ratio != self.stream_ratio:
+            self.stream_ratio = ratio
+            if self.mode is ViewMode.SERVER:
+                self.rescale()
+
         if self.framed:
             return
 
@@ -955,8 +979,8 @@ class ScenePanel(PanelComponent):
             renderer.hide_axes()
 
     def window_scale(self) -> float:
-        """How many window pixels the panel already has per CSS pixel: the stream renders at STILL_SCALE, the mirror at the device ratio."""
-        return STILL_SCALE if self.mode is ViewMode.SERVER else self.pixel_ratio
+        """How many window pixels the panel already has per CSS pixel: the stream renders at STILL_SCALE times the device ratio, the mirror at the device ratio."""
+        return STILL_SCALE * self.stream_ratio if self.mode is ViewMode.SERVER else self.pixel_ratio
 
     def screenshot(self) -> None:
         """Saves a PNG of SCREENSHOT_SCALE times the panel, whatever the window is already scaled by, under the user's pictures directory and names it in the status line."""
