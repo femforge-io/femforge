@@ -44,44 +44,63 @@ def _symmetric[S: AnyShape](first: S, second: S, measure: Callable[[AnyShape | N
     return measure(first - second) + measure(second - first)
 
 
-def _measured(leaves: list[TaggedPart | TaggedFace], measure: Callable[[TaggedPart | TaggedFace], list[BodyMismatch]], check: FrameCheck, started: float) -> list[BodyMismatch]:
-    """Every leaf's measurements, a leaf whose boolean raises skipped with a warning."""
+def _named(leaves: list[TaggedPart | TaggedFace]) -> list[tuple[str, list[TaggedPart | TaggedFace]]]:
+    """The leaves grouped by kind and tags, in the order each name first appears."""
+    keys: list[tuple[int, str]] = list(dict.fromkeys((leaf.dim, leaf.tags_str()) for leaf in leaves))
+
+    return [(tags, [leaf for leaf in leaves if (leaf.dim, leaf.tags_str()) == (dim, tags)]) for dim, tags in keys]
+
+
+def _joined(members: list[TaggedPart | TaggedFace]) -> b3d.Part | b3d.Compound:
+    """One name's leaves as one shape, fused across the seams a CAD export may split a named body or surface at."""
+    solids: list[b3d.Solid] = [solid for leaf in members for solid in leaf.solids()]
+
+    if solids:
+        fused_solids: AnyShape = solids[0] if len(solids) == 1 else solids[0] + solids[1:]
+
+        return b3d.Part(list(fused_solids.solids()))
+
+    faces: list[b3d.Face] = [face for leaf in members for face in leaf.faces()]
+    fused_faces: AnyShape = faces[0] if len(faces) == 1 else faces[0] + faces[1:]
+
+    return b3d.Compound(list(fused_faces.faces()))
+
+
+def _measured(leaves: list[TaggedPart | TaggedFace], measure: Callable[[str, b3d.Part | b3d.Compound], list[BodyMismatch]], check: FrameCheck, started: float) -> list[BodyMismatch]:
+    """Every name's measurements, its leaves joined, a name whose boolean raises skipped with a warning."""
+    named: list[tuple[str, list[TaggedPart | TaggedFace]]] = _named(leaves)
     measured: list[BodyMismatch] = []
 
-    for leaf in leaves:
-        # OCC returns a null shape on some near-coincident NURBS booleans; a skipped leaf beats a false rejection.
+    for tags, members in named:
+        # OCC returns a null shape on some near-coincident NURBS booleans; a skipped name beats a false rejection.
         try:
-            measured.extend(measure(leaf))
+            measured.extend(measure(tags, _joined(members)))
         except ValueError as error:
-            log.bind(body=leaf.tags_str(), check=check, error=str(error)).warning("Frame check skipped.")
+            log.bind(body=tags, check=check, error=str(error)).warning("Frame check skipped.")
 
-    bodies: int = sum(isinstance(leaf, TaggedPart) for leaf in leaves)
-    log.bind(bodies=bodies, faces=len(leaves) - bodies, elapsed=time.perf_counter() - started).debug("Frame geometry checked.")
+    bodies: int = sum(isinstance(members[0], TaggedPart) for _, members in named)
+    log.bind(bodies=bodies, faces=len(named) - bodies, elapsed=time.perf_counter() - started).debug("Frame geometry checked.")
 
     return measured
 
 
 def revolution_mismatches(compound: TaggedCompound, axis: Axis) -> list[BodyMismatch]:
-    """The ``TURNED`` mismatch of every body and named face of the authored ``compound``: its change when turned ``TURN_DEGREES`` about ``axis``, a share of its volume or area."""
+    """The ``TURNED`` mismatch of every body and named face of the ``compound``, each name's leaves fused: its change when turned ``TURN_DEGREES`` about ``axis``, a share of its volume or area."""
     started: float = time.perf_counter()
     turn = b3d.Axis(axis.origin.to_tuple(), axis.direction.to_tuple())
     leaves: list[TaggedPart | TaggedFace] = [leaf for leaf in compound.placed_leaves() if isinstance(leaf, (TaggedPart, TaggedFace))]
 
-    def measure(leaf: TaggedPart | TaggedFace) -> list[BodyMismatch]:
-        if isinstance(leaf, TaggedPart):
-            body = b3d.Part(list(leaf.solids()))
-            fraction: float = _symmetric(body, body.rotate(turn, TURN_DEGREES), _volume) / _volume(body)
-        else:
-            face: b3d.Face = leaf.faces()[0]
-            fraction = _symmetric(face, face.rotate(turn, TURN_DEGREES), _area) / _area(face)
+    def measure(tags: str, shape: b3d.Part | b3d.Compound) -> list[BodyMismatch]:
+        measure_of: Callable[[AnyShape | None], float] = _volume if isinstance(shape, b3d.Part) else _area
+        fraction: float = _symmetric(shape, shape.rotate(turn, TURN_DEGREES), measure_of) / measure_of(shape)
 
-        return [BodyMismatch(body=leaf.tags_str(), check=FrameCheck.TURNED, fraction=fraction)]
+        return [BodyMismatch(body=tags, check=FrameCheck.TURNED, fraction=fraction)]
 
     return _measured(leaves, measure, FrameCheck.TURNED, started)
 
 
 def prism_mismatches(compound: TaggedCompound, plane: SolvePlane, thickness: Length) -> list[BodyMismatch]:
-    """The ``DEPTH`` and ``PRISM`` mismatches of every body, and the ``PRISM`` mismatch of every named face, of the authored ``compound`` sectioned on ``plane``.
+    """The ``DEPTH`` and ``PRISM`` mismatches of every body, and the ``PRISM`` mismatch of every named face, of the authored ``compound`` sectioned on ``plane``, each name's leaves fused.
 
     A body is compared with its mid-depth section extruded through the model's depth, the bodies' joint extent along the normal; a named face must span that depth.
 
@@ -111,36 +130,34 @@ def prism_mismatches(compound: TaggedCompound, plane: SolvePlane, thickness: Len
     def sheet(z: float) -> b3d.Sketch:
         return cast("b3d.Sketch", b3d.Pos(left, bottom, z) * b3d.Rectangle(width, height, align=(b3d.Align.MIN, b3d.Align.MIN)))
 
-    def measure_body(leaf: TaggedPart) -> list[BodyMismatch]:
-        box: b3d.BoundBox = leaf.bounding_box()
+    def measure_body(tags: str, body: b3d.Part) -> list[BodyMismatch]:
+        box: b3d.BoundBox = body.bounding_box()
         extent: float = box.max.Z - box.min.Z
-        body = b3d.Part(list(leaf.solids()))
         section = body & sheet(mid)
         faces: list[b3d.Face] = [] if section is None else list(section.faces())
-        depth_mismatch = BodyMismatch(body=leaf.tags_str(), check=FrameCheck.DEPTH, fraction=abs(extent - target) / target)
+        depth_mismatch = BodyMismatch(body=tags, check=FrameCheck.DEPTH, fraction=abs(extent - target) / target)
 
         if not faces:
-            return [depth_mismatch, BodyMismatch(body=leaf.tags_str(), check=FrameCheck.PRISM, fraction=1.0)]
+            return [depth_mismatch, BodyMismatch(body=tags, check=FrameCheck.PRISM, fraction=1.0)]
 
         extruded_solids: list[b3d.Solid] = [b3d.Solid.extrude(face.moved(b3d.Location((0, 0, z0 - mid))), b3d.Vector(0, 0, depth)) for face in faces]
         fraction: float = _symmetric(body, b3d.Part(extruded_solids), _volume) / _volume(body)
 
-        return [depth_mismatch, BodyMismatch(body=leaf.tags_str(), check=FrameCheck.PRISM, fraction=fraction)]
+        return [depth_mismatch, BodyMismatch(body=tags, check=FrameCheck.PRISM, fraction=fraction)]
 
-    def measure_face(leaf: TaggedFace) -> list[BodyMismatch]:
-        face: b3d.Face = leaf.faces()[0]
-        reference: float = _length(face & sheet(mid))
+    def measure_face(tags: str, surface: b3d.Compound) -> list[BodyMismatch]:
+        reference: float = _length(surface & sheet(mid))
 
         if reference == 0.0:
-            return [BodyMismatch(body=leaf.tags_str(), check=FrameCheck.PRISM, fraction=1.0)]
+            return [BodyMismatch(body=tags, check=FrameCheck.PRISM, fraction=1.0)]
 
-        box: b3d.BoundBox = face.bounding_box()
+        box: b3d.BoundBox = surface.bounding_box()
         span: float = max(abs(box.min.Z - z0), abs(box.max.Z - z1)) / depth
-        ends: list[float] = [abs(_length(face & sheet(z)) - reference) / reference for z in (z0 + END_INSET * depth, z1 - END_INSET * depth)]
+        ends: list[float] = [abs(_length(surface & sheet(z)) - reference) / reference for z in (z0 + END_INSET * depth, z1 - END_INSET * depth)]
 
-        return [BodyMismatch(body=leaf.tags_str(), check=FrameCheck.PRISM, fraction=max(span, *ends))]
+        return [BodyMismatch(body=tags, check=FrameCheck.PRISM, fraction=max(span, *ends))]
 
-    def measure(leaf: TaggedPart | TaggedFace) -> list[BodyMismatch]:
-        return measure_body(leaf) if isinstance(leaf, TaggedPart) else measure_face(leaf)
+    def measure(tags: str, shape: b3d.Part | b3d.Compound) -> list[BodyMismatch]:
+        return measure_body(tags, shape) if isinstance(shape, b3d.Part) else measure_face(tags, shape)
 
     return _measured(leaves, measure, FrameCheck.PRISM, started)

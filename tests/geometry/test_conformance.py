@@ -95,6 +95,25 @@ def test_a_half_side_face_fails_while_its_cylinder_passes() -> None:
     assert failing == [("Name=HalfSide", FrameCheck.TURNED, pytest.approx(0.411, rel=1e-2))]
 
 
+def test_a_side_face_split_at_its_seams_under_one_name_is_measured_whole() -> None:
+    side = CYLINDER.faces().filter_by(b3d.GeomType.CYLINDER)[0]
+    halves: list[b3d.Face] = [cast("b3d.Part", side & b3d.Box(40, 40, 40, align=(align, b3d.Align.CENTER, b3d.Align.CENTER))).faces()[0] for align in (b3d.Align.MIN, b3d.Align.MAX)]
+    model = TaggedCompound(children=[TaggedPart([CYLINDER], name="Rod"), *[TaggedFace(half, name="Side") for half in halves]])
+
+    measured = revolution_mismatches(model, Axis.Z)
+
+    assert [(measurement.body, measurement.check) for measurement in measured] == [("Name=Rod", FrameCheck.TURNED), ("Name=Side", FrameCheck.TURNED)]
+    assert _failing(measured) == []
+
+
+def test_two_bodies_under_one_name_are_measured_together() -> None:
+    model = TaggedCompound(children=[TaggedPart([CYLINDER], name="Rod"), TaggedPart([b3d.Pos(0, 0, 40) * CYLINDER], name="Rod")])
+    measured = revolution_mismatches(model, Axis.Z)
+
+    assert [(measurement.body, measurement.check) for measurement in measured] == [("Name=Rod", FrameCheck.TURNED)]
+    assert _failing(measured) == []
+
+
 def test_the_toroidal_flexure_revolves_about_x_and_the_notch_flexure_does_not() -> None:
     assert _failing(revolution_mismatches(_model(toroidal_flexure()), Axis.X)) == []
 
@@ -122,6 +141,26 @@ def test_a_box_with_named_end_faces_is_a_prism_through_its_thickness() -> None:
         ("Name=Left", FrameCheck.PRISM),
         ("Name=Right", FrameCheck.PRISM),
     ]
+    assert _failing(measured) == []
+
+
+def test_an_end_face_split_through_its_depth_under_one_name_is_a_prism() -> None:
+    left = BOX.faces().sort_by(b3d.Axis.X)[0]
+    cutters: list[b3d.Part] = [b3d.Pos(0, 10, 5) * b3d.Box(10, 40, 10, align=(b3d.Align.CENTER, b3d.Align.CENTER, align)) for align in (b3d.Align.MAX, b3d.Align.MIN)]
+    halves: list[b3d.Face] = [cast("b3d.Part", left & cutter).faces()[0] for cutter in cutters]
+    model = TaggedCompound(children=[TaggedPart([BOX], name="Bar"), *[TaggedFace(half, name="Left") for half in halves]])
+
+    measured = _prism(model)
+
+    assert [(measurement.body, measurement.check) for measurement in measured] == [("Name=Bar", FrameCheck.DEPTH), ("Name=Bar", FrameCheck.PRISM), ("Name=Left", FrameCheck.PRISM)]
+    assert _failing(measured) == []
+
+
+def test_a_body_split_at_mid_depth_under_one_name_is_a_prism() -> None:
+    layers: list[b3d.Part] = [b3d.Pos(0, 0, z) * b3d.Box(100, 20, 5, align=(b3d.Align.MIN, b3d.Align.MIN, b3d.Align.MIN)) for z in (0.0, 5.0)]
+    measured = _prism(TaggedCompound(children=[TaggedPart([layer], name="Bar") for layer in layers]))
+
+    assert [(measurement.body, measurement.check) for measurement in measured] == [("Name=Bar", FrameCheck.DEPTH), ("Name=Bar", FrameCheck.PRISM)]
     assert _failing(measured) == []
 
 

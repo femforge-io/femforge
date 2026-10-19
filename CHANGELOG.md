@@ -21,7 +21,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - The field viewer's Deformation section draws the bodies displaced by the solved displacement, at a scale that starts where the largest displacement moves a tenth of the model's size. `DisplaySpec.warp` and `DisplaySpec.warp_scale` hold the choice.
 - `default_display(run)` picks the display a run opens on: its solver stack's primary field (`PhysicsConfig.primary_variable`), the component its surface forces share, and field lines with opacity mapping only for a flux, field or current (`ElmerVariable.lines_by_default`).
 - The driver stops a linear solve whose residual stops improving, marks the run `stalled`, and records the reason and the last residuals in the manifest; a linear solve logs a progress line every 30 s.
-- `Axisymmetric` and `Cartesian2D` check the authored model before sectioning it. `Frame.check_geometry` raises `FrameGeometryError`, listing every body or named face that is not a solid of revolution about the axis, or not a prism through the thickness, with its mismatch. `boundary_cylinder` bounds an axisymmetric model with a cylinder of air, and the run manifest records the check as `geometry_check`, on a pass and on a failure.
+- `Axisymmetric` and `Cartesian2D` check the authored model before sectioning it. `Frame.check_geometry` raises `FrameGeometryError`, listing every body or named face that is not a solid of revolution about the axis, or not a prism through the thickness, with its mismatch; the solids or faces that share a name are measured as one. `boundary_cylinder` bounds an axisymmetric model with a cylinder of air, and the run manifest records the check as `geometry_check`, on a pass and on a failure.
 
 ### Changed
 
