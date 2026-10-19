@@ -9,6 +9,18 @@ import numpy as np
 import pytest
 
 from femforge.common.files import BundleFile
+from femforge.common.tags import TagKey
+from femforge.common.vector import Vec3
+from femforge.config import SimulationConfig
+from femforge.elmer.config import PhysicsSelection, ResultOutputSolver
+from femforge.elmer.physics import Physics
+from femforge.frames import Axis, Cartesian2D, Solid
+from femforge.meshing.config import MeshConfig
+from femforge.physical.conditions import SurfaceForce
+from femforge.physical.domain import DomainConfig, EntityTag
+from femforge.physical.units import U, quantity
+from femforge.run.bundle import write_manifest
+from femforge.run.manifest import RunManifest
 from femforge.run.entities import Bodies, Body, BodyRecord, EntitiesFile
 from femforge.run.inspect import Run
 from femforge.run.mechanical import VOIGT_COMPONENTS, derived_arrays
@@ -27,11 +39,13 @@ from femforge.viz.field_display import (
     bar_placement,
     camera_needs_reset,
     color_range,
+    default_display,
     feature_outline,
     field_infos,
     field_kind,
     line_vectors,
     list_fields,
+    load_mode,
     model_dim_of,
     polar_angle,
     polar_rgba,
@@ -1249,3 +1263,66 @@ def test_an_elemental_displacement_is_averaged_onto_the_points_before_the_warp()
     assert _block(scene, "LEFT").bounds[5] == pytest.approx(2.0) and _block(scene, "RIGHT").bounds[5] == pytest.approx(4.0)
     assert np.allclose(shift[:, 2], np.repeat([1.0, 3.0], 8)), "each point takes the value of the cells around it"
     assert "displacement e" not in _block(scene, "LEFT").point_data, "the averaging leaves the arrays as solved"
+
+
+# --- default display --------------------------------------------------------
+
+
+def _config(physics: Physics = Physics.MAGNETOSTATICS, frame: Solid | Cartesian2D | None = None, forces: tuple[Vec3, ...] = ()) -> SimulationConfig:
+    tags = [EntityTag(selector={TagKey.NAME: f"FACE{index}"}, conditions=[SurfaceForce(force=quantity(force, "N"))]) for index, force in enumerate(forces)]
+
+    return SimulationConfig(
+        frame=frame or Solid(),
+        mesh=MeshConfig(step="data/does-not-exist.step"),
+        domain=DomainConfig(tags=tags),
+        physics=PhysicsSelection(selected=physics),
+    )
+
+
+def _manifested(root: Path, config: SimulationConfig) -> Run:
+    manifest = RunManifest.build(config, status="ok", run_id=root.name)
+    _ = write_manifest(root, manifest)
+
+    return Run(root)
+
+
+@pytest.mark.parametrize(
+    ("frame", "forces", "mode"),
+    [
+        (Solid(), (Vec3(0, 500, 0),), DisplayMode.Y),
+        (Solid(), (Vec3(0, 0, -100),), DisplayMode.Z),
+        (Solid(), (Vec3(100, 0, 0), Vec3(0, 5, 0)), DisplayMode.X),
+        (Solid(), (Vec3(100, 0, 0), Vec3(0, 50, 0)), DisplayMode.MAGNITUDE),
+        (Solid(), (Vec3(100, 0, 0), Vec3(-100, 0, 0)), DisplayMode.MAGNITUDE),
+        (Solid(), (Vec3(1, 1, 0),), DisplayMode.MAGNITUDE),
+        (Solid(), (), DisplayMode.MAGNITUDE),
+        (Cartesian2D(thickness=5 * U.mm), (Vec3(100, 0, 0),), DisplayMode.X),
+        (Cartesian2D(normal=Axis.X, thickness=5 * U.mm), (Vec3(0, 0, 1000),), DisplayMode.Y),
+    ],
+)
+def test_load_mode_follows_the_shared_load_axis(frame: Solid | Cartesian2D, forces: tuple[Vec3, ...], mode: DisplayMode) -> None:
+    assert load_mode(_config(Physics.LINEAR_ELASTICITY, frame, forces)) is mode
+
+
+def test_default_display_opens_on_the_primary_field(tmp_path: Path) -> None:
+    pulled = default_display(_manifested(tmp_path / "pulled", _config(Physics.LINEAR_ELASTICITY, forces=(Vec3(0, 500, 0),))))
+    magnetic = default_display(_manifested(tmp_path / "magnetic", _config()))
+    thermal = default_display(_manifested(tmp_path / "thermal", _config(Physics.THERMAL)))
+    temperature = FieldInfo(name="temperature", association=Association.POINT, components=1, dtype="float64")
+
+    assert (pulled.field, pulled.mode, pulled.streamlines, pulled.opacity_map) == ("displacement", DisplayMode.Y, None, None)
+    assert (magnetic.field, magnetic.mode, magnetic.opacity_map) == ("magnetic flux density", DisplayMode.MAGNITUDE, (0.15, 1.0))
+    assert magnetic.streamlines is not None
+    assert thermal.field == "temperature" and thermal.fitted([temperature]).mode is DisplayMode.VALUE
+
+
+def test_default_display_falls_back_without_a_manifest_or_a_primary(tmp_path: Path) -> None:
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    config = _config()
+    manifest = RunManifest.build(config, status="ok", run_id="unnamed")
+    unnamed = manifest.model_copy(update={"physics_config": manifest.physics_config.model_copy(update={"solvers": [ResultOutputSolver()]})})
+    _ = write_manifest(tmp_path / "unnamed", unnamed)
+
+    assert default_display(Run(bare)) == DisplaySpec()
+    assert default_display(Run(tmp_path / "unnamed")) == DisplaySpec()

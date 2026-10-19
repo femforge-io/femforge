@@ -47,7 +47,7 @@ from .run.driver import Driver as Driver
 from .run.inspect import Run as Run, find_runs as find_runs
 from .run.result import Result as Result
 from .telemetry.paths import Telemetry as Telemetry
-from .viz.field_display import BodyPaint as BodyPaint, BodyStyle as BodyStyle, DisplayMode as DisplayMode, DisplaySpec as DisplaySpec
+from .viz.field_display import BodyPaint as BodyPaint, BodyStyle as BodyStyle, DisplayMode as DisplayMode, DisplaySpec as DisplaySpec, default_display as default_display
 from .viz.field_lines import FieldLineOptions as FieldLineOptions, SeedPlacement as SeedPlacement
 
 __version__: str
