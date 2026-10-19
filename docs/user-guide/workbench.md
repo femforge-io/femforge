@@ -186,18 +186,18 @@ Field lines follow the shown vector field. While a scalar or a principal value i
 
 ### The Setup tab
 
-**Setup shows what the solver received.** The second tab beside the controls lists every body and boundary group with its material or measure and each condition in the solve frame, such as `Traction 500 kPa` for a 100 N pull on a 20 mm × 10 mm face; a component the frame drops reads `–`, and its tooltip and the row's spoken name say which solve axes the frame keeps. The values come from the run's `conditions.json`, the record of what each sif block got, so a condition the frame mapped differently from how it was authored reads as solved. A run from before that record lists its groups without conditions and says so.
+**Setup shows what the solver received.** The second tab beside the controls lists every body and boundary group with its material or measure and each condition in the solve frame, beside the authored value: a 100 N pull along X on a 20 mm × 10 mm face reads `Surface Force 100 N Along (1, 0, 0)` over `Traction (500, 0) kPa`, the signed traction in solve order; a component the frame drops reads `–`, and its tooltip and the row's spoken name say which solve axes the frame keeps. The values come from the run's `conditions.json`, the record of what each sif block got, so a condition the frame mapped differently from how it was authored reads as solved. A run from before that record lists its groups without conditions and says so.
 
 | Section | Shows |
 |---|---|
-| Frame | The solve frame, where its plane sits and how its axes run in the authored model, the thickness and plane state of a Cartesian 2D run, how a revolved section is shown, and the geometry check. A 2D run adds the Section Outline and Authored Body Ghost switches. |
+| Frame | The solve frame's kind, which way its plane faces, where it sits and how its axes run in the authored model, the thickness and plane state of a Cartesian 2D run, how a revolved section is shown, and the geometry check. A 2D run adds the Section Outline and Authored Body Ghost switches. |
 | Bodies | One row per body, under a row for a material several bodies share, with its material and its conditions. |
-| Boundaries | One row per boundary group, named faces first, with its measure and its conditions. With Conditions lists only the groups that received one, the default above 12 groups. |
+| Boundaries | One row per boundary group, named faces first, with its measure and its conditions. With Conditions lists only the groups that received one, the default above 12 groups; a run without `conditions.json` lists every group. |
 | Glyphs | One row per glyph kind the run draws, with how many groups draw it and a switch for the kind. |
 
 - **Glyphs show only while the tab does.** The scene then draws each condition as a shape on a neutral fill with its value, and Show Glyphs turns them all off. A row's icon toggles its own glyph.
 - **Plain Bodies** paints every body grey while it is on, so the glyphs read clearly.
-- **Select a row to highlight its group** in the accent. Click it again or press `Esc` to clear the selection, and double-click it or press `F` to fit the camera to it. A row whose group has no cells to draw is dimmed, and a body hidden in the Field Viewer offers Show, or `S`.
+- **Select a row to highlight its group** in the accent. Click it again or press `Esc` to clear the selection, and double-click it, press `F` or use the fit button that shows on the row to fit the camera to it. A row whose group has no cells to draw is dimmed, and a body hidden in the Field Viewer offers Show, or `S`.
 - **Search** matches names, Elmer group names, materials and condition kinds. Press `/` to reach it from the tab, and `Esc` to clear it.
 - **A run without fields** opens on the Setup tab: one still solving or one that failed after meshing draws its glyphs on the mesh, and one that failed before meshing lists its authored tags. A run whose mesh was purged lists its rows without glyphs. Show Glyphs, Plain Bodies, the 2D switches and the legend switches act only while the view draws the run, and hide or disable otherwise.
 - **A new run resets** the row and kind toggles, the selection and the filter. A solving run that reopens with its fields keeps them, and the search carries over either way.

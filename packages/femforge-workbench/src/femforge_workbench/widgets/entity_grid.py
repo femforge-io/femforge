@@ -54,6 +54,12 @@ class EntityRow(TypedDict, total=False):
     glyph_shown: bool
     """Whether the row's glyph is shown; absent while no scene draws it, which leaves the icon without a toggle."""
 
+    glyph_note: str
+    """Why the scene hides the row's glyph whatever its toggle says, such as a legend switch; absent while the toggle decides."""
+
+    fit: bool
+    """Whether the row offers to fit the view to its group, true while a scene draws the run and has the group's cells."""
+
     group: bool
     """Whether the row heads the bodies of one material."""
 
@@ -82,6 +88,7 @@ class EntityGrid(Element):
         rows: Prop[Sequence[EntityRow]] = None,
         selected: Prop[str] = None,
         label: Prop[str] = None,
+        columns: Prop[Sequence[str]] = None,
         on_select: Event = None,
         on_toggle_glyph: Event = None,
         on_frame: Event = None,
@@ -94,6 +101,7 @@ class EntityGrid(Element):
             rows: The rows, in order.
             selected: The id of the selected row.
             label: The grid's accessible name.
+            columns: The header of each column: the name, the detail and the glyph.
             on_select: Receives the id of a row clicked or chosen with Enter, or an empty id for Escape.
             on_toggle_glyph: Receives the id of a row whose glyph toggle was pressed.
             on_frame: Receives the id of a row double-clicked or framed with F.

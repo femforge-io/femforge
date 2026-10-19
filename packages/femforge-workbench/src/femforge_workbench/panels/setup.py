@@ -15,7 +15,7 @@ from femforge.common.log import log
 from femforge.common.tags import TagDict, TagKey, parse_tags
 from femforge.common.utils import title
 from femforge.elmer.variables import ElmerVariable
-from femforge.frames import Frame, GeometryCheck
+from femforge.frames import BodyMismatch, Frame, GeometryCheck
 from femforge.frames.base import axis_word
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.naming import name_fragment
@@ -30,7 +30,7 @@ from femforge.run.manifest import RunManifest
 from femforge.viz.glyphs import EntityKind, EntityRef
 from femforge.viz.symmetry import Expansion
 from femforge_workbench.panels import Cls, PanelComponent
-from femforge_workbench.panels.field_viewer import BUSY_FULL, STACK, FieldVar, expansion_label, names_of, setting
+from femforge_workbench.panels.field_viewer import BUSY_FULL, PRECISION, STACK, TIMES, FieldVar, expansion_label, names_of, setting
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.element import EVENT, setter
@@ -52,29 +52,38 @@ FILTER_ABOVE = 12
 """The boundary-group count above which the Boundaries table starts on the groups that received a condition."""
 
 SEARCH_ID = "ff-setup-search"
-NO_RUN = "No Run Open"
+NO_RUN = "No run open. Pick one in the Run list or paste a bundle path above."
 NO_CONDITIONS = "No Conditions"
-NO_GLYPHS = "No Glyphs in This Run"
-ARROW_NOTE = "Arrow Length Scales With |F|"
-NO_GHOST = "No Authored Geometry in This Bundle"
-NO_CELLS_FIELDS = "Not in the Fields File: No Condition Landed Here"
-NO_CELLS_MESH = "Not in the Mesh Files: Re-solve to Restore the Mesh"
-HIDDEN_LABEL = "Hidden in Field Viewer; Press S to Show"
-CELLS_UNREADABLE = "Highlight Unavailable: The Scene's Groups Failed to Load"
-DASH = "—"
+NO_GLYPHS = "No glyphs in this run."
+NO_GLYPHS_AUTHORED = "Glyphs need a mesh; this run failed before meshing."
+ARROW_NOTE = "Arrow length scales with |F|."
+NO_GHOST = "No authored geometry in this bundle."
+GHOST_WARPED = "Undeformed; the solved body is warped "
+NO_CELLS_FIELDS = "Not in the fields file: no condition landed here."
+NO_CELLS_MESH = "Not in the mesh files: re-solve to restore the mesh."
+HIDDEN_LABEL = "Hidden in the Field Viewer; press S to show it."
+CELLS_UNREADABLE = "Highlight unavailable: the scene's groups failed to load."
+GLYPH_SHOWN = "Glyph Shown"
+GLYPH_HIDDEN = "Glyph Hidden"
+HIDDEN_BY_LEGEND = "Glyph hidden by the legend"
+HIDDEN_BY_SWITCH = "Glyph hidden by Show Glyphs"
 DROPPED = "–"
 SEPARATOR = " · "
 AUTOMATIC = "(Set by femforge)"
 OVERRIDDEN = "(Overridden)"
 OVERRIDDEN_TIP = "A later condition on this group set the same keywords, so these never reached the solver."
-LEGACY_NAMES = "Names Recovered From mesh.names"
-SOLVING_MESH = "Solving · Glyphs Drawn on the Mesh"
-NO_FIELDS_MESH = "No Fields · Glyphs Drawn on the Mesh"
-SOLVING_PLAIN = "Solving · Showing the Mesh"
-NO_FIELDS_PLAIN = "No Fields · Showing the Mesh"
-NO_MESH = "Glyphs Need the Mesh; Re-solve to Restore It."
+LEGACY_NAMES = "Names recovered from mesh.names."
+SOLVING_MESH = "Solving · glyphs drawn on the mesh."
+NO_FIELDS_MESH = "No fields · glyphs drawn on the mesh."
+SOLVING_PLAIN = "Solving · showing the mesh."
+NO_FIELDS_PLAIN = "No fields · showing the mesh."
+NO_MESH = "Glyphs need the mesh; re-solve to restore it."
 NO_FRAME = "Frame Not Recorded"
-FAILED_BEFORE_MESH = "The run failed before meshing. Showing the authored tags; groups appear once a mesh exists."
+FAILED_BEFORE_MESH = "The run failed before meshing. Showing the authored tags; re-run it to mesh and list its groups."
+NAME_COLUMN = "Name"
+GLYPH_COLUMN = "Glyph"
+TAG_COLUMN = "Tag"
+MATERIAL_COLUMN = "Material"
 NO_SIDECAR = "This run recorded no conditions.json, so its conditions are not listed; re-solve it to list what each group received."
 SETS_NONE = "This run sets no conditions; every boundary takes the solver's natural condition."
 MATERIAL_PREFIX = "material:"
@@ -140,9 +149,17 @@ class SetupVar(StrEnum):
     FRAME_TITLE = "setup_frame_title"
     FRAME_FACTS = "setup_frame_facts"
     CHECK = "setup_check"
+    """The Geometry Check lines: one per failing body and test, worst first, or the single verdict."""
+
     CHECK_FAILED = "setup_check_failed"
     IS_2D = "setup_is_2d"
     HAS_GHOST = "setup_has_ghost"
+    HAS_CONDITIONS = "setup_has_conditions"
+    """Whether the run recorded its conditions, the only time the Boundaries filter can tell which groups received one."""
+
+    BOUNDARY_COLUMNS = "setup_boundary_columns"
+    """The Boundaries table's column headers, its measure named by the frame."""
+
     HAS_SCENE = "setup_has_scene"
     """Whether the Field Viewer draws a scene of the open run, the only time the scene switches do anything."""
 
@@ -261,6 +278,12 @@ class RowView:
 
     drawn: bool = True
     """Whether the Field Viewer draws a scene of the run, the only time a row's glyph toggle does anything."""
+
+    glyphs: bool = True
+    """Whether Show Glyphs is on."""
+
+    kinds_off: frozenset[str] = frozenset()
+    """The glyph kinds the legend switched off."""
 
 
 @dataclass(frozen=True)
@@ -429,7 +452,7 @@ def line_of(lead: str, parts: Sequence[tuple[str, bool, str]]) -> ConditionLine:
 
 
 def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[ConditionLine]:
-    """The lines one emission reads as: its kind and summary, an axis the frame dropped as a muted ``–`` with the reason, and whether a later emission overrode it."""
+    """The lines one emission reads as: its kind and the solver-side summary, each authored field the frame dropped as a muted ``–`` with the reason, and whether a later emission overrode it."""
     kind = title(record.kind)
     condition = record.condition
     if condition is None:
@@ -448,6 +471,10 @@ def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[Condit
     lines: list[ConditionLine] = []
     for number, summary in enumerate(condition.summary(emitted)):
         parts = [read(part) for part in summary]
+        read_fields = {part.component for part in summary}
+        if number == 0:
+            parts.extend((f"{field.upper()} {DROPPED}", True, dropped_tip(field, frame)) for field in record.dropped if field not in read_fields)
+
         if number == 0 and overridden:
             parts.append((OVERRIDDEN, True, OVERRIDDEN_TIP))
 
@@ -462,16 +489,16 @@ def line_text(line: ConditionLine) -> str:
 
 
 def measure_cell(boundary: Boundary, frame: Frame | None) -> tuple[str, str]:
-    """A boundary's measure column and its tooltip: the area in 3D, the length of a 2D line with the surface it stands for, a dash when unmeasured."""
+    """A boundary's measure column and its tooltip: the area in 3D, the length of a 2D line with the surface it stands for, empty when unmeasured."""
     if frame is None or frame.model_dim == 3:
         area = boundary.measure
-        text = readout(quantity(area, "m**2")) if area is not None else DASH
+        text = readout(quantity(area, "m**2")) if area is not None else ""
 
         return text, ""
 
     length = boundary.length
     if length is None:
-        return DASH, ""
+        return "", ""
 
     fact = frame.face_measure(length, boundary.centroid) if boundary.centroid is not None else None
     tip = f"{fact.label} {fact.value}" if fact is not None else ""
@@ -513,8 +540,18 @@ def records_for(model: SetupModel, kind: EntityKind, name: str) -> list[Conditio
     return list(group.conditions) if group is not None else []
 
 
-def entity_row(model: SetupModel, view: RowView, ref: EntityRef, name: str, records: Sequence[ConditionRecord]) -> EntityRow:
-    """The row of one group: its lines, glyph toggle, highlight state and accessible name; the caller adds the detail and the tooltip.
+def entity_row(
+    model: SetupModel,
+    view: RowView,
+    ref: EntityRef,
+    name: str,
+    records: Sequence[ConditionRecord],
+    *,
+    detail: str = "",
+    detail_tip: str = "",
+    tip: Sequence[str] = (),
+) -> EntityRow:
+    """The row of one group: its detail, tooltip facts, lines, glyph toggle, highlight state and an accessible name that reads them all.
 
     Args:
         model: The run.
@@ -522,6 +559,9 @@ def entity_row(model: SetupModel, view: RowView, ref: EntityRef, name: str, reco
         ref: The group.
         name: The name the row reads.
         records: The emissions the group received.
+        detail: The material or measure column.
+        detail_tip: The detail's tooltip.
+        tip: The name tooltip's facts, the Elmer name first.
     """
 
     def drawn_glyph() -> tuple[ConditionGlyph, bool] | None:
@@ -550,18 +590,27 @@ def entity_row(model: SetupModel, view: RowView, ref: EntityRef, name: str, reco
     if not lines and model.conditions is not None:
         lines = [line_of(NO_CONDITIONS, [])]
 
-    row: EntityRow = {"id": ref.id, "name": name, "lines": lines}
+    row: EntityRow = {"id": ref.id, "name": name, "lines": lines, "detail": detail, "tip": list(tip)}
+    if detail_tip:
+        row["detail_tip"] = detail_tip
+
     glyphed = drawn_glyph()
-    spoken = [name, *(spoken_text(line) for line in lines)]
+    read_detail = f"{detail} ({detail_tip})" if detail and detail_tip else detail
+    spoken = [name, read_detail, *(spoken_text(line) for line in lines)]
     if glyphed is not None:
         glyph, negative = glyphed
         row["icon"] = icon_of(glyph, negative=negative)
 
     if glyphed is not None and view.drawn:
         shown = ref.id not in view.rows_off
+        overruled = HIDDEN_BY_SWITCH if not view.glyphs else HIDDEN_BY_LEGEND if glyphed[0].value in view.kinds_off else ""
         row["glyph_shown"] = shown
-        spoken.append("Glyph Shown" if shown else "Glyph Hidden")
+        if overruled:
+            row["glyph_note"] = overruled
 
+        spoken.append(overruled or (GLYPH_SHOWN if shown else GLYPH_HIDDEN))
+
+    spoken.extend(tip)
     unlit = view.highlightable is not None and ref.id not in view.highlightable
     if view.unreadable or unlit:
         cause = NO_CELLS_FIELDS if model.has_fields else NO_CELLS_MESH
@@ -569,7 +618,10 @@ def entity_row(model: SetupModel, view: RowView, ref: EntityRef, name: str, reco
         row["dim_tip"] = CELLS_UNREADABLE if view.unreadable else cause
         spoken.append(row["dim_tip"])
 
-    row["label"] = ", ".join(spoken)
+    if view.drawn and not row.get("dimmed"):
+        row["fit"] = True
+
+    row["label"] = ", ".join(text for text in spoken if text)
 
     return row
 
@@ -589,17 +641,25 @@ def body_rows(model: SetupModel, view: RowView) -> Listing:
 
         return f"Volume {readout(quantity(measure, 'm**3'), unit=U.mm**3)}"
 
+    def material_name(tag: str) -> str:
+        return next((candidate.name for candidate in model.materials if candidate.tag == tag), "")
+
     def row(body: Body, *, member: bool) -> EntityRow:
         ref = EntityRef(EntityKind.BODY, body.name)
         records = records_for(model, EntityKind.BODY, body.name)
-        entry = entity_row(model, view, ref, display_name(body.name, names), records)
-        material = next((candidate for candidate in model.materials if candidate.tag == body.material), None)
         facts = [body.name, "Body", body_measure(body), *blocks_of(records)]
-        entry["detail"] = body.material or DASH
-        entry["tip"] = [fact for fact in facts if fact]
-        if material is not None:
-            entry["detail_tip"] = material.name
-
+        material = body.material or ""
+        shown = "" if member else material
+        entry = entity_row(
+            model,
+            view,
+            ref,
+            display_name(body.name, names),
+            records,
+            detail=shown,
+            detail_tip=material_name(shown) if shown else "",
+            tip=[fact for fact in facts if fact],
+        )
         if member:
             entry["member"] = True
 
@@ -624,7 +684,13 @@ def body_rows(model: SetupModel, view: RowView) -> Listing:
         if not members:
             continue
 
-        rows.append({"id": f"{MATERIAL_PREFIX}{material}", "name": material, "detail": f"{len(members)} Bodies", "group": True, "label": f"{material}, {len(members)} Bodies"})
+        heading: EntityRow = {"id": f"{MATERIAL_PREFIX}{material}", "name": material, "detail": f"{len(members)} Bodies", "group": True}
+        full = material_name(material)
+        if full:
+            heading["tip"] = [material, full]
+
+        heading["label"] = ", ".join(text for text in (material, full, f"{len(members)} Bodies") if text)
+        rows.append(heading)
         rows.extend(row(body, member=True) for body in members)
 
     rows.extend(row(body, member=False) for body in shown if body.material not in shared)
@@ -664,19 +730,14 @@ def boundary_rows(model: SetupModel, view: RowView) -> Listing:
     def row(boundary: Boundary) -> EntityRow:
         ref = EntityRef(EntityKind.BOUNDARY, boundary.name)
         records = records_for(model, EntityKind.BOUNDARY, boundary.name)
-        entry = entity_row(model, view, ref, boundary_name(boundary, names), records)
         detail, tip = measure_cell(boundary, model.frame)
         bordering = ", ".join(display_name(body, names) for body in boundary.bodies)
         facts = [boundary.name, kind_word(boundary.kind), f"Borders {bordering}" if bordering else "", *blocks_of(records)]
-        entry["detail"] = detail
-        entry["tip"] = [fact for fact in facts if fact]
-        if tip:
-            entry["detail_tip"] = tip
 
-        return entry
+        return entity_row(model, view, ref, boundary_name(boundary, names), records, detail=detail, detail_tip=tip, tip=[fact for fact in facts if fact])
 
     matched = sorted((boundary for boundary in boundaries if found(boundary)), key=rank)
-    filtering = view.filter is FilterChoice.WITH_CONDITIONS
+    filtering = view.filter is FilterChoice.WITH_CONDITIONS and model.conditions is not None
     listed = [boundary for boundary in matched if not filtering or records_for(model, EntityKind.BOUNDARY, boundary.name)]
 
     return Listing(rows=[row(boundary) for boundary in listed], total=len(boundaries), unlisted=len(matched) - len(listed))
@@ -699,7 +760,12 @@ def tag_rows(model: SetupModel, query: str) -> Listing:
         if not matches([name, *texts], query):
             continue
 
-        rows.append({"id": f"{TAG_PREFIX}{index}", "name": name, "lines": lines, "label": ", ".join([name, *texts])})
+        row: EntityRow = {"id": f"{TAG_PREFIX}{index}", "name": name, "lines": lines, "label": ", ".join([name, *texts])}
+        glyph = next((condition.glyph for condition in tag.conditions if condition.glyph is not None), None)
+        if glyph is not None:
+            row["icon"] = icon_of(glyph)
+
+        rows.append(row)
 
     return Listing(rows=rows, total=len(model.tags))
 
@@ -733,20 +799,21 @@ def frame_facts(model: SetupModel, expansion: Expansion, sweep: float) -> list[F
     return rows
 
 
-def check_line(check: GeometryCheck | None, frame: Frame | None) -> tuple[str, bool]:
-    """The Geometry Check row and whether it failed: ``Passed``, the worst mismatch, or empty for a frame that checks nothing."""
+def check_line(check: GeometryCheck | None, frame: Frame | None) -> tuple[list[str], bool]:
+    """The Geometry Check lines and whether the check failed: ``Passed``, one line per failing body and test worst first, or none for a frame that checks nothing."""
     if check is None:
-        return ("Not Recorded" if frame is not None and frame.plane is not None else ""), False
+        return (["Not Recorded"] if frame is not None and frame.plane is not None else []), False
 
     mismatches = sorted(check.mismatches, key=lambda mismatch: mismatch.fraction, reverse=True)
     if not mismatches:
-        return "Passed", False
+        return ["Passed"], False
 
-    worst = mismatches[0]
-    body = parse_tags(worst.body).get(TagKey.NAME, worst.body)
-    more = f" and {len(mismatches) - 1} More" if len(mismatches) > 1 else ""
+    def line(mismatch: BodyMismatch) -> str:
+        body = parse_tags(mismatch.body).get(TagKey.NAME, mismatch.body)
 
-    return f"{body} Fails {title(worst.check.value)} Test (Mismatch {100.0 * worst.fraction:.3g} %){more}", True
+        return f"{body} Fails {title(mismatch.check.value)} Test (Mismatch {100.0 * mismatch.fraction:.3g} %)"
+
+    return [line(mismatch) for mismatch in mismatches], True
 
 
 def notice_of(model: SetupModel) -> tuple[str, NoticeLevel]:
@@ -788,7 +855,14 @@ def miss_text(query: str, shown: int) -> str:
     if not query.strip() or shown:
         return ""
 
-    return f"No Bodies or Boundaries Match '{query.strip()}'."
+    return f"No bodies or boundaries match '{query.strip()}'."
+
+
+def boundary_columns(frame: Frame | None) -> list[str]:
+    """The Boundaries table's column headers: the measure reads Length for a frame that meshes faces as lines, Area otherwise."""
+    measure = "Length" if frame is not None and frame.model_dim == 2 else "Area"
+
+    return [NAME_COLUMN, measure, GLYPH_COLUMN]
 
 
 class SetupPanel(PanelComponent):
@@ -814,10 +888,12 @@ class SetupPanel(PanelComponent):
             SetupVar.FILTER: str(FilterChoice.ALL),
             SetupVar.FRAME_TITLE: NO_FRAME,
             SetupVar.FRAME_FACTS: [],
-            SetupVar.CHECK: "",
+            SetupVar.CHECK: [],
             SetupVar.CHECK_FAILED: False,
             SetupVar.IS_2D: False,
             SetupVar.HAS_GHOST: False,
+            SetupVar.HAS_CONDITIONS: False,
+            SetupVar.BOUNDARY_COLUMNS: boundary_columns(None),
             SetupVar.HAS_SCENE: False,
             SetupVar.BODY_ROWS: [],
             SetupVar.BOUNDARY_ROWS: [],
@@ -857,6 +933,8 @@ class SetupPanel(PanelComponent):
             highlightable=controller.highlightable,
             unreadable=controller.cells_unreadable,
             drawn=controller.scene is not None or controller.groups is not None,
+            glyphs=bool(state[FieldVar.GLYPHS]),
+            kinds_off=frozenset(names_of(state[FieldVar.GLYPH_KINDS_OFF])),
         )
 
     def show_run(self, model: SetupModel | None, *, fresh: bool = True) -> None:
@@ -877,7 +955,8 @@ class SetupPanel(PanelComponent):
             self.state[FieldVar.SELECTED_ENTITY] = ""
             self.state[SetupVar.ANNOUNCE] = ""
             if model is not None:
-                self.state[SetupVar.FILTER] = str(FilterChoice.WITH_CONDITIONS if len(model.entities.boundaries) > FILTER_ABOVE else FilterChoice.ALL)
+                many = len(model.entities.boundaries) > FILTER_ABOVE and model.conditions is not None
+                self.state[SetupVar.FILTER] = str(FilterChoice.WITH_CONDITIONS if many else FilterChoice.ALL)
 
         self.publish()
 
@@ -907,11 +986,13 @@ class SetupPanel(PanelComponent):
         self.rows = [*bodies.rows, *boundaries.rows]
         with self.state:
             self.state[SetupVar.STATE] = str(state)
-            self.state[SetupVar.FRAME_TITLE] = title(model.frame.label) if model.frame is not None else NO_FRAME
+            self.state[SetupVar.FRAME_TITLE] = title(model.frame.kind) if model.frame is not None else NO_FRAME
             self.state[SetupVar.CHECK] = check
             self.state[SetupVar.CHECK_FAILED] = failed
             self.state[SetupVar.IS_2D] = model.frame is not None and model.frame.model_dim == 2
             self.state[SetupVar.HAS_GHOST] = model.has_ghost
+            self.state[SetupVar.HAS_CONDITIONS] = model.conditions is not None
+            self.state[SetupVar.BOUNDARY_COLUMNS] = boundary_columns(model.frame)
             self.state[SetupVar.HAS_SCENE] = view.drawn
             self.state[SetupVar.BODY_ROWS] = bodies.rows
             self.state[SetupVar.BOUNDARY_ROWS] = boundaries.rows
@@ -919,7 +1000,7 @@ class SetupPanel(PanelComponent):
             self.state[SetupVar.BODY_COUNT] = count_text(sum(not row.get("group") for row in bodies.rows), bodies.total)
             self.state[SetupVar.BOUNDARY_COUNT] = count_text(len(boundaries.rows), boundaries.total)
             self.state[SetupVar.TAG_COUNT] = count_text(len(tags.rows), tags.total)
-            self.state[SetupVar.MORE] = f"{boundaries.unlisted} More Without Conditions{SEPARATOR}All" if boundaries.unlisted else ""
+            self.state[SetupVar.MORE] = f"{boundaries.unlisted} More Without Conditions{SEPARATOR}All" if boundaries.unlisted and model.conditions is not None else ""
             self.state[SetupVar.LEGEND_ROWS] = legend_rows(model)
             self.state[SetupVar.NOTICE] = notice
             self.state[SetupVar.NOTICE_LEVEL] = str(level)
@@ -1011,9 +1092,9 @@ class SetupPanel(PanelComponent):
         with self.state:
             self.state[SetupVar.FILTER] = str(FilterChoice.ALL)
 
-    @change(SetupVar.QUERY, SetupVar.FILTER, FieldVar.VISIBLE_BODIES, FieldVar.GLYPH_ROWS_OFF)
+    @change(SetupVar.QUERY, SetupVar.FILTER, FieldVar.VISIBLE_BODIES, FieldVar.GLYPH_ROWS_OFF, FieldVar.GLYPHS, FieldVar.GLYPH_KINDS_OFF)
     def on_rows(self, **_: object) -> None:
-        """Republishes the tables after the search, the filter, the visible bodies or a row toggle changed."""
+        """Republishes the tables after the search, the filter, the visible bodies, a row toggle, Show Glyphs or a legend switch changed."""
         if self.model is not None:
             self.publish()
 
@@ -1079,28 +1160,34 @@ class SetupPanel(PanelComponent):
         with html.Div(classes=f"{Cls.PAIRS} px-0"):
             with react.For(items=str(SetupVar.FRAME_FACTS), name="fact"):
                 html.Span([react.Bind("fact.label")], classes=str(Cls.CAPTION))
-                html.Span([react.Bind("fact.value")], classes="tabular-nums")
+                html.Span([react.Bind("fact.value")], classes="tabular-nums whitespace-nowrap")
 
-            with react.If(str(SetupVar.CHECK)):
+            with react.If(f"{SetupVar.CHECK}.length"):
                 html.Span("Geometry Check", classes=str(Cls.CAPTION))
-                with html.Span(classes="flex items-start gap-1"):
-                    with react.If(str(SetupVar.CHECK_FAILED)):
-                        Icon("triangle-alert", size=14, classes="mt-0.5 shrink-0")
+                with html.Span(classes="flex flex-col gap-0.5"):
+                    with react.For(items=str(SetupVar.CHECK), name="line"), html.Span(classes="flex items-start gap-1"):
+                        with react.If(str(SetupVar.CHECK_FAILED)):
+                            Icon("triangle-alert", size=14, classes="mt-0.5 shrink-0")
 
-                    html.Span([react.Bind(str(SetupVar.CHECK))])
+                        html.Span([react.Bind("line")])
 
+        warped = f"{json.dumps(GHOST_WARPED)} + {json.dumps(TIMES)} + {FieldVar.WARP_SCALE}[0].toPrecision({PRECISION})"
         with react.If(f"{SetupVar.IS_2D} && {SetupVar.HAS_SCENE}"), html.Div(classes=STACK):
             setting(FieldVar.SECTION_OUTLINE, "Section Outline")
             setting(FieldVar.AUTHORED_GHOST, "Authored Body Ghost", disabled=react.Bind(f"!{SetupVar.HAS_GHOST}"))
             with react.If(f"!{SetupVar.HAS_GHOST}"):
                 html.Span(NO_GHOST, classes=str(Cls.CAPTION))
 
-    def grid(self, rows: SetupVar, label: str) -> None:
-        """One table of rows wired to the selection, the glyph toggles, the framing and the Show of a hidden body."""
+            with react.If(f"{SetupVar.HAS_GHOST} && {FieldVar.HAS_DISPLACEMENT} && {FieldVar.WARP}"):
+                html.Span([react.Bind(warped)], classes=str(Cls.CAPTION))
+
+    def grid(self, rows: SetupVar, label: str, columns: Sequence[str] | react.Bind) -> None:
+        """One table of rows under its column headers, wired to the selection, the glyph toggles, the framing and the Show of a hidden body."""
         EntityGrid(
             rows=react.Bind(str(rows)),
             selected=react.Bind(str(FieldVar.SELECTED_ENTITY)),
             label=label,
+            columns=columns,
             on_select=self.callback(self.on_select, args=f"[{EVENT}]"),
             on_toggle_glyph=self.callback(self.on_toggle_glyph, args=f"[{EVENT}]"),
             on_frame=self.callback(self.on_frame, args=f"[{EVENT}]"),
@@ -1110,11 +1197,14 @@ class SetupPanel(PanelComponent):
     def build_boundaries(self) -> None:
         """The Boundaries section: the With Conditions | All filter, the table and the More row."""
         keep = react.Callback(f"{EVENT} && trame.state.set({json.dumps(str(SetupVar.FILTER))}, {EVENT})")
-        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(SetupVar.FILTER)), on_value_change=keep, classes=FILTER_GROUP, aria_label="Boundaries listed"):
+        with (
+            react.If(str(SetupVar.HAS_CONDITIONS)),
+            ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(SetupVar.FILTER)), on_value_change=keep, classes=FILTER_GROUP, aria_label="Boundaries listed"),
+        ):
             for choice in FilterChoice:
                 ToggleGroupItem(title(choice.value), value=str(choice), classes=str(Cls.SEGMENT))
 
-        self.grid(SetupVar.BOUNDARY_ROWS, "Boundaries")
+        self.grid(SetupVar.BOUNDARY_ROWS, "Boundaries", react.Bind(str(SetupVar.BOUNDARY_COLUMNS)))
         with react.If(str(SetupVar.MORE)):
             Button([react.Bind(str(SetupVar.MORE))], size="xs", variant="link", classes="self-start px-0", on_click=self.callback(self.show_all))
 
@@ -1135,8 +1225,12 @@ class SetupPanel(PanelComponent):
                     disabled=react.Bind(f"!{SetupVar.HAS_SCENE}"),
                 )
 
-        with react.If(f"!{rows}.length"):
+        authored = f"{SetupVar.STATE} === {json.dumps(str(SetupState.AUTHORED))}"
+        with react.If(f"!{rows}.length && !({authored})"):
             html.Span(NO_GLYPHS, classes=str(Cls.CAPTION))
+
+        with react.If(authored):
+            html.Span(NO_GLYPHS_AUTHORED, classes=str(Cls.CAPTION))
 
         with react.If(f"{rows}.some(row => row.kind === {json.dumps(str(ConditionGlyph.SURFACE_FORCE))})"):
             html.Span(ARROW_NOTE, classes=str(Cls.CAPTION))
@@ -1174,10 +1268,10 @@ class SetupPanel(PanelComponent):
                 with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
                     section(FRAME_SECTION, "Frame", self.build_frame)
                     with react.If(f"{state} === {json.dumps(str(SetupState.AUTHORED))}"):
-                        section(TAGS_SECTION, "Authored Tags", partial(self.grid, SetupVar.TAG_ROWS, "Authored tags"), SetupVar.TAG_COUNT)
+                        section(TAGS_SECTION, "Authored Tags", partial(self.grid, SetupVar.TAG_ROWS, "Authored tags", [TAG_COLUMN, "", GLYPH_COLUMN]), SetupVar.TAG_COUNT)
 
                     with react.If(f"{state} === {json.dumps(str(SetupState.GROUPS))}"):
-                        section(BODIES_SECTION, "Bodies", partial(self.grid, SetupVar.BODY_ROWS, "Bodies"), SetupVar.BODY_COUNT)
+                        section(BODIES_SECTION, "Bodies", partial(self.grid, SetupVar.BODY_ROWS, "Bodies", [NAME_COLUMN, MATERIAL_COLUMN, GLYPH_COLUMN]), SetupVar.BODY_COUNT)
                         section(BOUNDARIES_SECTION, "Boundaries", self.build_boundaries, SetupVar.BOUNDARY_COUNT)
 
                     section(GLYPHS_SECTION, "Glyphs", self.build_legend)

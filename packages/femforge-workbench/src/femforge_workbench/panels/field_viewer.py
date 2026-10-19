@@ -12,6 +12,7 @@ from functools import cache, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import polars as pl
 import pyvista as pv
 from trame.app import TrameComponent
@@ -31,8 +32,8 @@ from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
 from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap
-from femforge.viz.field_lines import FieldLineOptions, SeedPlacement
-from femforge.viz.glyphs import EntityKind, EntityRef, GlyphHost, GlyphLayer, GlyphView, GroupScene, plain_spec
+from femforge.viz.field_lines import Bounds, FieldLineOptions, SeedPlacement
+from femforge.viz.glyphs import LABEL_FONT_PX, EntityKind, EntityRef, GlyphHost, GlyphLayer, GlyphView, GroupScene, plain_spec
 from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
@@ -129,6 +130,11 @@ COLORMAP_FILTERS = [FAVORITES_GROUP, *(kind.value for kind in ColormapType)]
 SAME_AS_FIELD = "same-as-field"
 SAME_AS_FIELD_LABEL = "Same as Field"
 STACK = "flex flex-col gap-1.5"
+FIT_SHARE = 0.15
+"""`[-]`: The least extent a group is framed at, as a share of the scene diagonal, so the bodies around it stay in view."""
+
+LABEL_EM = 0.6
+"""`[-]`: The width of a label character, as a share of the font size, for fitting the labels the scene draws."""
 SETTING = "flex h-6 w-full shrink-0 items-center justify-between gap-2"
 READOUTS = "flex items-center justify-between"
 SWITCH_ID = "ff-switch-"
@@ -767,6 +773,18 @@ def highlightable(layer: GlyphLayer | None, host: GlyphHost | None, run: Run) ->
         return None
 
 
+def padded(bounds: Bounds, least: float) -> Bounds:
+    """``bounds`` widened about its centre so every side spans at least ``least``."""
+    low = np.array(bounds[0::2], dtype=np.float64)
+    high = np.array(bounds[1::2], dtype=np.float64)
+    centre = (low + high) / 2.0
+    half = np.maximum((high - low) / 2.0, least / 2.0)
+    lows = cast("list[float]", (centre - half).tolist())
+    highs = cast("list[float]", (centre + half).tolist())
+
+    return (lows[0], highs[0], lows[1], highs[1], lows[2], highs[2])
+
+
 def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
     """What the empty view says while the open run is still solving: where its progress shows, the task strip when the workbench runs tasks."""
     where = "the task strip below" if tasks else "the solver's terminal"
@@ -791,9 +809,11 @@ def setting(model: StrEnum, label: str, *, disabled: react.Bind | None = None) -
         label: The caption at the left.
         disabled: A client expression that disables the switch; None keeps it enabled.
     """
+    caption = str(Cls.CAPTION)
+    dimmed = react.Bind(f"({disabled.js_expression}) ? {json.dumps(f'{caption} opacity-50')} : {json.dumps(caption)}") if disabled is not None else caption
     with Field(orientation="horizontal", classes=SETTING):
-        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=str(Cls.CAPTION))
-        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled)
+        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=dimmed)
+        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled, aria_disabled=disabled)
 
 
 def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
@@ -1316,17 +1336,45 @@ class FieldViewerController(TrameComponent):
         self.app.dock.active_panel(str(FieldPanel.SETUP))
 
     def frame_entity(self, ref: EntityRef) -> None:
-        """Fits the camera to a body or boundary group of the shown run; a group without bounds leaves the camera."""
+        """Fits the camera to a body or boundary group of the shown run, padded so its surroundings stay in view; a group without bounds leaves the camera."""
         viewer = self.viewer
         shown = self.scene if self.scene is not None else self.groups
         layer = shown.glyphs if shown is not None else None
         bounds = layer.bounds_of(ref) if layer is not None else None
-        if viewer is None or bounds is None:
+        if viewer is None or shown is None or layer is None or bounds is None:
             return
 
+        diagonal = layer.placement(shown).diagonal
         viewer.adopt_camera()
-        viewer.plotter.renderer.ResetCamera(bounds)
+        viewer.plotter.renderer.ResetCamera(padded(bounds, FIT_SHARE * diagonal))
         viewer.push()
+
+    def fit_bounds(self) -> Bounds | None:
+        """What a fit frames while the Setup tab shows the glyphs: the drawn scene with every label's text reaching right of its point; None to fit the scene alone."""
+        viewer = self.viewer
+        shown = self.scene if self.scene is not None else self.groups
+        layer = shown.glyphs if shown is not None else None
+        if viewer is None or layer is None or not bool(self.state[FieldVar.SETUP_SHOWN]) or not layer.label_texts:
+            return None
+
+        plotter = viewer.plotter
+        drawn = np.array(plotter.bounds, dtype=np.float64)
+        camera = plotter.camera
+        sight = np.array(camera.focal_point, dtype=np.float64) - np.array(camera.position, dtype=np.float64)
+        right = np.cross(sight, np.array(camera.up, dtype=np.float64))
+        length = float(np.linalg.norm(right))
+        if length == 0.0:
+            return None
+
+        per_pixel = float(np.linalg.norm(drawn[1::2] - drawn[0::2])) / max(int(plotter.window_size[1]), 1)
+        font = LABEL_FONT_PX * viewer.window_scale()
+        reach = np.array([len(text) * LABEL_EM * font * per_pixel for text in layer.label_texts])
+        ends = layer.label_spots + reach[:, None] * (right / length)
+        points = np.vstack([drawn[0::2], drawn[1::2], layer.label_spots, ends])
+        low = cast("list[float]", points.min(axis=0).tolist())
+        high = cast("list[float]", points.max(axis=0).tolist())
+
+        return (low[0], high[0], low[1], high[1], low[2], high[2])
 
     def clear(self, reason: str, *, status: str | None = None) -> None:
         """Empties both views and the run's controls, saying why over the view and in `status`, the reason itself when None, so nothing left on screen reads as the run asked for."""
@@ -2064,6 +2112,16 @@ class FieldViewerPanel(ScenePanel):
         """Empties the plotter and pushes the empty frame."""
         self.plotter.clear()
         self.renderable = None
+        self.push()
+
+    def refit(self) -> None:
+        """Fits the camera to the model and, while the Setup tab shows them, the glyphs and their labels."""
+        bounds = self.controller.fit_bounds()
+        if bounds is None:
+            super().refit()
+            return
+
+        self.plotter.renderer.ResetCamera(bounds)
         self.push()
 
     def rescale(self) -> None:

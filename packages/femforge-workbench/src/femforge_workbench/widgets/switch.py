@@ -22,6 +22,7 @@ class Switch(Element):
         on_checked_change: Event = None,
         size: Prop[SwitchSize] = None,
         disabled: Prop[bool] = None,
+        aria_disabled: Prop[bool] = None,
         name: Prop[str] = None,
         **kwargs: Unpack[Shared],
     ) -> None:
@@ -34,6 +35,7 @@ class Switch(Element):
             on_checked_change: Receives the new checked state.
             size: The switch's size.
             disabled: Disables the switch.
+            aria_disabled: Tells assistive technology the switch is disabled.
             name: The form field name.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
