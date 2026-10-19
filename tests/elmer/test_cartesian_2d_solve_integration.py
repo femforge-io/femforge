@@ -266,3 +266,34 @@ def test_a_notch_flexure_stretches_and_peaks_its_stress_in_the_neck(tmp_path: Pa
 
     assert math.isfinite(values[peak])
     assert abs(peak_center[0] - LENGTH * 1e-3 / 2) < 0.01
+
+
+def test_a_solved_section_records_its_setup(tmp_path: Path) -> None:
+    """Observed on Elmer 26.2: Force 1 = 500000 on RIGHT, a tip stretch of 2.585e-7 m, LEFT normal (-1, 0, 0) and a 6.4e-3 m² authored ghost."""
+    load = SurfaceForce(force=quantity(Vec3(100, 0, 0), "N"))
+    result, mesh = _solve(tmp_path, _planar(), Physics.LINEAR_ELASTICITY, [], [FixedDisplacement()], [load], size=2.0)
+    assert result.run_dir is not None
+    run = Run(result.run_dir)
+    conditions = run.conditions()
+    groups = run.mesh_groups()
+    ghost = run.authored_geometry()
+
+    assert conditions is not None and groups is not None and ghost is not None
+    right = conditions.boundary("RIGHT")
+    left = conditions.boundary("LEFT")
+    assert right is not None and left is not None
+    force = right.conditions[0]
+    sif = (run.path / "case.sif").read_text(encoding="utf-8")
+    block = sif.split(f"! {force.block_name}\nBoundary Condition {force.block}\n")[1].split("End")[0]
+    assert [(keyword.name, keyword.value) for keyword in force.keywords] == [("Force 1", pytest.approx(500000.0)), ("Force 2", 0.0)]
+    assert "Force 1 = 500000.0" in block
+    assert left.conditions[0].dropped == ["z"]
+
+    face = run.boundaries["LEFT"]
+    assert face.normal is not None and face.normal.isclose(Direction(-1, 0, 0), tolerance=1e-9)
+    assert face.centroid is not None and face.centroid.isclose(Vec3(0.0, 0.01, 0.0), tolerance=1e-9)
+    assert face.length == pytest.approx(0.02, rel=1e-9)
+    assert run.bodies["PRISM"].measure == pytest.approx(2e-3, rel=1e-9)
+    assert groups.boundary(face).n_cells > 0
+    assert ghost.area == pytest.approx(6.4e-3, rel=1e-6)
+    assert _tip(mesh)[0] == pytest.approx(100 * LENGTH * 1e-3 / (YOUNGS * HEIGHT * DEPTH * 1e-6), rel=0.03)

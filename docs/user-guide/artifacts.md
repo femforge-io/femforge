@@ -26,7 +26,7 @@ Each artifact belongs to a kind, a module-level [ArtifactKind][femforge.artifact
 
 | Kind | Spec | Files | Key |
 |---|---|---|---|
-| [STEP][femforge.run.STEP] | the geometry source and the frame | `geometry.step` | the parametric geometry's parameters, or the authored STEP's geometric digest, plus the frame |
+| [STEP][femforge.run.STEP] | the geometry source and the frame | `geometry.step`, plus `geometry.boundaries.json`, `geometry.check.json` and `geometry.authored.vtp` for a sectioned model | the parametric geometry's parameters, or the authored STEP's geometric digest, plus the frame |
 | [ELMER_MESH][femforge.run.ELMER_MESH] | [MeshSpec][femforge.run.MeshSpec] | `mesh.header`, `mesh.nodes`, `mesh.elements`, `mesh.boundary`, `mesh.names`, `groups.json`, and `elmergrid.log` when produced | the STEP key, the mesh dimension, the element size, the gmsh options, `deterministic`, the tag selectors with their mesh sizes in domain order, and the sorted material tags |
 | [RUN_BUNDLE][femforge.run.RUN_BUNDLE] | [RunSpec][femforge.run.RunSpec] | `manifest.json`, `result.json`, and what the bundle policy adds | the run's [cache_key][femforge.run.cache_key], so the store key and the run id agree |
 
@@ -106,7 +106,7 @@ The `FEMFORGE_ARTIFACTS` variable names a store root for the command line: the `
 
 | Field | Covers |
 |---|---|
-| `geometry` | `geometry.step` |
+| `geometry` | `geometry.step`, `geometry.boundaries.json`, `geometry.check.json`, `geometry.authored.vtp` |
 | `gmsh_mesh` | `*.msh` |
 | `elmer_mesh` | `mesh.header`, `mesh.nodes`, `mesh.elements`, `mesh.boundary` |
 | `partitioning` | `partitioning.*` and `elmergrid_partition.log` |
@@ -114,11 +114,11 @@ The `FEMFORGE_ARTIFACTS` variable names a store root for the command line: the `
 | `fields` | `*.pvtu` and `*.vtu` |
 | `scalars` | `*.dat`, `*.dat.names` and the per-rank `*.dat.<rank>` |
 | `logs` | `elmergrid.log`, `elmersolver.log`, `convergence.jsonl`, `convergence_targets.json`, `run.log` |
-| `sidecars` | `entities.json`, `boundaries.yml`, `components.yml`, `mesh.names`, `entities.sif`, `groups.json` |
+| `sidecars` | `entities.json`, `boundaries.yml`, `components.yml`, `mesh.names`, `entities.sif`, `groups.json`, `conditions.json` |
 | `run_dir` | The whole bundle; when it applies, nothing else matters. |
 | `cached_inputs` | Not a class: the escalation for files the store can re-fetch. The stricter of this rule and the class rule wins. |
 
-Every class defaults to `NEVER` and `cached_inputs` to `ALWAYS`.
+Every class defaults to `NEVER` and `cached_inputs` to `ALWAYS`. A store-backed run drops `groups.json`, the Elmer mesh and `geometry.authored.vtp` with its cached inputs; `femforge artifacts rehydrate` restores them.
 
 | [Preset][femforge.run.Preset] | Constructor | Effect |
 |---|---|---|

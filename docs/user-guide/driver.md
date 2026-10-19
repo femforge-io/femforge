@@ -151,6 +151,7 @@ runs/
 │   ├── manifest.json              provenance: config, keys, status, stage timeline
 │   ├── result.json                the typed Result
 │   ├── geometry.step              the STEP the run meshed
+│   ├── geometry.authored.vtp      the authored bodies of a sectioned run
 │   ├── geometry.msh               the gmsh mesh, absent when the mesh came from a store
 │   ├── mesh.header                ElmerGrid's mesh, with mesh.nodes, mesh.elements, mesh.boundary
 │   ├── mesh.names                 ElmerGrid's ids by group name
@@ -158,6 +159,7 @@ runs/
 │   ├── entities.json              named bodies and boundaries by mesh id
 │   ├── boundaries.yml             boundary ids by name
 │   ├── components.yml             sif Component ids by name
+│   ├── conditions.json            what each group's sif blocks received
 │   ├── case.sif                   the solver input, with ELMERSOLVER_STARTINFO
 │   ├── scalars.dat                SaveScalars output, with scalars.dat.names
 │   ├── case_t0001.vtu             the field output
