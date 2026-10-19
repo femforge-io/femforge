@@ -4,9 +4,10 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from femforge.frames import Axisymmetric, FrameUnion, Solid
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, FrameUnion, Solid
 from femforge.common.tags import TagKey
 from femforge.common.vector import Vec3
 from femforge.config import SimulationConfig
@@ -15,6 +16,8 @@ from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.materials.properties import MaterialProperties
 from femforge.physical.units import U, quantity
 from femforge.run.bundle import write_bundle, write_manifest
+from femforge.run.entities import Bodies, Body, Boundaries, Boundary, BoundaryKind
+from femforge.run.fields import FieldMesh
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.run.result import Result
@@ -273,11 +276,6 @@ def test_vtu_path_and_cached_mesh(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_strain_energy_integrates_the_mesh_density_in_joules(tmp_path: Path) -> None:
-    import numpy as np
-
-    from femforge.run.entities import Bodies, Body
-    from femforge.run.fields import FieldMesh
-
     run = Run(_bundle(tmp_path))
     run._mesh = FieldMesh(
         arrays={"strain energy density": np.array([2.0, 6.0])},
@@ -288,3 +286,37 @@ def test_strain_energy_integrates_the_mesh_density_in_joules(tmp_path: Path) -> 
 
     assert run.strain_energy().to(U.J).magnitude == pytest.approx(2.5)
     assert run.strain_energy("AIR").to(U.J).magnitude == pytest.approx(1.0)
+
+
+def _loaded_tip() -> FieldMesh:
+    return FieldMesh(
+        arrays={"displacement": np.array([[0.0, 0, 0], [0.001, 0, 0], [0.003, 0, 0]], dtype=np.float64)},
+        measure=np.array([1.0, 0.0, 0.0]),
+        geometry_ids=np.array([1, 101, 101], dtype=np.int64),
+        bodies=Bodies([Body(name="AIR", mesh_id=1)]),
+        area=np.array([0.0, 1.0, 1.0]),
+        boundaries=Boundaries([Boundary(name="TIP", mesh_id=3, bodies=("AIR",), kind=BoundaryKind.EXTERNAL, sif_index=1)]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("frame", "force", "expected"),
+    [
+        (Solid(), Vec3(100, 0, 0), 0.1),
+        (Cartesian2D(normal=Axis.X, thickness=10 * U.mm), Vec3(0, 100, 0), 10.0),
+    ],
+)
+def test_clapeyron_energy_takes_the_solve_share_of_the_authored_face_force(tmp_path: Path, frame: FrameUnion, force: Vec3, expected: float) -> None:
+    run = Run(_bundle(tmp_path, Result(frame=frame, status="ok"), frame=frame))
+    run._mesh = _loaded_tip()
+
+    assert run.clapeyron_energy("Tip", quantity(force, "N")).to(U.J).magnitude == pytest.approx(expected)
+
+
+def test_clapeyron_energy_raises_for_a_force_the_frame_cannot_carry(tmp_path: Path) -> None:
+    frame = Cartesian2D(normal=Axis.X, thickness=10 * U.mm)
+    run = Run(_bundle(tmp_path, Result(frame=frame, status="ok"), frame=frame))
+    run._mesh = _loaded_tip()
+
+    with pytest.raises(ValueError, match="plane normal"):
+        _ = run.clapeyron_energy("Tip", quantity(Vec3(100, 0, 0), "N"))

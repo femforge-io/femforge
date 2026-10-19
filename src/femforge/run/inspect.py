@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Mapping, cast
 
 from femforge.common.files import BundleFile, RunFile
 from femforge.config import RunMeta
+from femforge.meshing.naming import name_fragment
 from femforge.physical.units import Quantity, VectorQuantity, quantity
 from femforge.run.electrical import electrode_currents as currents_from_raw, phase_currents as phases_from_currents, read_boundary_names
 from femforge.run.entities import Bodies, Body, Boundaries, Entities, load_entities
@@ -22,6 +23,7 @@ from femforge.run.retention import CleanupRecord
 
 
 if TYPE_CHECKING:
+    from femforge.common.vector import Vec3
     from femforge.run.fields import FieldMesh
 
 
@@ -211,6 +213,14 @@ class Run:
         from femforge.run.mechanical import strain_energy
 
         return quantity(strain_energy(self.mesh(), *bodies), "J")
+
+    def clapeyron_energy(self, face: str, force: VectorQuantity) -> Quantity:
+        """`U` `[J]`: ½ F⃗·ū of the authored whole-face ``force`` through the named face's mean displacement, per metre of depth under a Cartesian 2D frame."""
+        from femforge.run.mechanical import clapeyron_energy
+
+        share: Vec3 = self.result.frame.authored_share(force.m_as("N"))
+
+        return quantity(clapeyron_energy(self.mesh(), name_fragment(face), share), "J")
 
 
 def find_runs(runs_dir: str | Path, *, tags: Mapping[str, str] | None = None, text: str | None = None) -> list[Run]:
