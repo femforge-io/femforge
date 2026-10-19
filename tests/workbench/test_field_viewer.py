@@ -1964,9 +1964,10 @@ def test_with_tasks_the_empty_view_points_at_the_strip_and_a_task_newer_run_repl
     app.board.publish(now=True)
 
     assert waiting == "Waiting for Solve · Queued\nIts progress shows in the task strip below."
-    assert failed == "No Runs Yet. 1 Task Failed; Open the Task Strip for the Reasons."
-    assert stalled == "No Runs Yet. 1 Task Stalled; Open the Task Strip for the Reasons."
+    assert failed == "No runs yet. 1 task failed; open the task strip for the reasons."
+    assert stalled == "No runs yet. 1 task stalled; open the task strip for the reasons."
     assert done == NO_RUNS_TASKS_NOTICE
     assert app.state[viewer.key(SceneVar.NOTICE)] == NO_RUNS_TASKS_NOTICE, "a viewer showing a run keeps its notice"
     assert opened == ["r2"], "only the run the viewer shows is followed"
+    assert app.state[StateVar.STATUS] == "Opened the newer run r2", "a followed run says why the view changed"
     assert [row["label"] for row in cast("list[dict[str, object]]", app.state[StateVar.TASKS])] == ["Solve"]

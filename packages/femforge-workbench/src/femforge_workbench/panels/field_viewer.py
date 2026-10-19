@@ -574,7 +574,7 @@ def tasks_notice(view: TaskView) -> str:
         tasks = "task" if ended == 1 else "tasks"
         how = "failed or stalled" if view.failed and view.stalled else "failed" if view.failed else "stalled"
 
-        return title(f"no runs yet. {ended} {tasks} {how}; open the task strip for the reasons.")
+        return f"No runs yet. {ended} {tasks} {how}; open the task strip for the reasons."
 
     return NO_RUNS_TASKS_NOTICE
 
@@ -1067,6 +1067,7 @@ class FieldViewerController(TrameComponent):
 
         log.bind(previous=previous, run_id=current).info("Following the newer run of a task.")
         self.open(current)
+        self.status(f"Opened the newer run {current}")
 
     @controller.set(str(Hook.FIELD_TASKS))
     def follow_tasks(self, view: TaskView) -> None:
