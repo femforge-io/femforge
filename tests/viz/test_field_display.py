@@ -115,7 +115,7 @@ def test_the_potential_reads_as_a_voltage_potential_unless_it_is_magnetic() -> N
     magnetic = {info.name: info.title for info in field_infos(arrays, {}, Physics.MAGNETOSTATICS_2D)}
 
     assert electric == {"potential": "Voltage Potential [V]", "potential e": "Voltage Potential E [V]"}
-    assert magnetic == {"potential": "Potential [T·m]", "potential e": "Potential E [T·m]"}
+    assert magnetic == {"potential": "Magnetic Potential [T·m]", "potential e": "Magnetic Potential E [T·m]"}
 
 
 def test_field_info_display_name_applies_the_renames() -> None:

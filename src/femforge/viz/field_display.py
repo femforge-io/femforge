@@ -257,14 +257,14 @@ class FieldInfo:
 
     @property
     def display_name(self) -> str:
-        """The array's name as it reads in a picker: the variable's display name where one names it, with the [`FIELD_RENAMES`][] overrides applied."""
+        """The array's name as it reads in a picker: the variable's display name, `Magnetic Potential` for a 2D magnetostatic one, with the [`FIELD_RENAMES`][] overrides applied."""
         variable: ElmerVariable | None = variable_of(self.name)
         spelled: str = self.name
 
         if variable is not None:
             # The axisymmetric magnetostatic potential is the magnetic vector potential, never a voltage.
             magnetic: bool = variable is ElmerVariable.POTENTIAL and self.physics is Physics.MAGNETOSTATICS_2D
-            name: str = str(variable) if magnetic else variable.display_name
+            name: str = "Magnetic Potential" if magnetic else variable.display_name
             spelled = elemental(name) if self.name.lower().endswith(ELEMENTAL_SUFFIX) else name
 
         label: str = title(spelled)

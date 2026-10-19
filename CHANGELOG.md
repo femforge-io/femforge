@@ -28,7 +28,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 ### Changed
 
 - `ForceComponent` is now `CalculateMagneticForce`, with the kind `calculate_magnetic_force`, after the Elmer keyword it sets. Rename it in your scripts and saved configs.
-- `FixedPotential` is now `FixedVoltage`, with the kind `fixed_voltage`, and `scale_fixed_potentials` is now `scale_fixed_voltages`. Saved configs with `fixed_potential` no longer load: rename the kind. The sif keyword stays `Potential`, but the electrode boundary blocks, and so the `Run.electrode_currents` keys, end in `_fixed_voltage`. The field viewer names the potential of a voltage-driven run `Voltage Potential`, through the new `ElmerVariable.display_name`.
+- `FixedPotential` is now `FixedVoltage`, with the kind `fixed_voltage`, and `scale_fixed_potentials` is now `scale_fixed_voltages`. Saved configs with `fixed_potential` no longer load: rename the kind. The sif keyword stays `Potential`, but the electrode boundary blocks, and so the `Run.electrode_currents` keys, end in `_fixed_voltage`. The field viewer names the potential of a voltage-driven run `Voltage Potential` and that of a 2D magnetostatic run `Magnetic Potential`, through the new `ElmerVariable.display_name` and the physics it reads from the run.
 - A customized solver stack must use the frame's coordinate system exactly, not only one that integrates the same way.
 - A boundary group bordered twice by one tag gets that tag's conditions once.
 - Field lines follow the first vector field when the run has no flux density, such as the displacement or the volume current, while a scalar is shown. A `FieldScene` whose field-line options name no vectors picks them the same way, and records the vectors it picked.
