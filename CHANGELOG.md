@@ -18,6 +18,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - A 2D frame sections each named face into a named edge, a `TaggedEdge` that now takes `name=` and is exported from `femforge`, so the conditions on a named face land on its edge of the section.
 - The field viewer shows elasticity runs: it opens on the displacement, offers Von Mises, Tresca, Strain Energy Density and the principal stresses and strains with the Max, Mid and Min Principal modes, and leaves the stress and strain tensors and their `stress_xx` columns out. `FieldKind` and `line_vectors` join `femforge.viz`.
 - The field viewer's Deformation section draws the bodies displaced by the solved displacement, at a scale that starts where the largest displacement moves a tenth of the model's size. `DisplaySpec.warp` and `DisplaySpec.warp_scale` hold the choice.
+- `default_display(run)` picks the display a run opens on: its solver stack's primary field (`PhysicsConfig.primary_variable`), the component its surface forces share, and field lines with opacity mapping only for a flux, field or current (`ElmerVariable.lines_by_default`).
 
 ### Changed
 
@@ -28,6 +29,7 @@ This file lists all notable changes to femforge and femforge-workbench. The two 
 - Cached meshes and run bundles from 0.1.0 are rebuilt on first use.
 - The conditions guide is now a section with one page per physics, listing the conditions each physics reads by sif section with their fields, units and sif keywords, generated from the condition classes; `/user-guide/conditions/` stays its index.
 - `SolvePlane` names its directions `x_dir` and `y_dir`, for the old `radial` and `axis`, and gains `normal`.
+- The field viewer opens each run on its `default_display` unless the given `DisplaySpec` names a field. A quantity, mode, field-line or opacity-mapping choice you make carries over only to a run that has the quantity shown.
 - `StressSolver` solves with CG and ILU1 preconditioning to a linear tolerance of `1e-7`, for BiCGStab, ILU0 and `1e-8`, which stalled on large quadratic meshes.
 - `FixedDisplacement` drops a zero component along a 2D normal and rejects a constrained component its frame solves as another coordinate.
 - The curves of a 2D section take their names from its named edges only, so a colored body no longer names its own boundary curves and its `__EXT` and `__AXIS` groups come back.

@@ -29,7 +29,7 @@ from femforge.run.result import Result
 from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
-from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, line_vectors, sample_colormap
+from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement
 from femforge.viz.symmetry import Expansion
 from femforge_workbench import dock
@@ -751,7 +751,7 @@ class FieldViewerController(TrameComponent):
         Args:
             app: The workbench shell the viewer runs in.
             telemetry: The telemetry root whose run index the run picker lists and run ids resolve in; None leaves the picker empty.
-            display: The display the controls start from.
+            display: The display the controls start from; one without a field opens each run on its own default display.
             open_newest: Whether the newest run opens by itself while nothing was opened or selected.
         """
         super().__init__(app.server)
@@ -779,6 +779,8 @@ class FieldViewerController(TrameComponent):
         self.feed = self.runs_feed(telemetry) if telemetry is not None else None
         self.startup = display
         """The display the viewer was opened with; its body names are checked against every run shown."""
+        self.picked: set[FieldVar] = set()
+        """The per-run choices the user made, by lead key (FIELD, STREAMLINES, OPACITY_MAPPING); each carries to the next run that has the shown field."""
         self.hidden_bodies = display.hidden_bodies
         """The bodies every run opens with hidden."""
         self.robust = display.robust
@@ -1177,11 +1179,42 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.BUSY] = busy
 
     def show(self, run: Run, scene: FieldScene) -> None:
-        """Adopts a loaded run: the knobs carry over, the field and mode snap to what it offers, every body but the hidden ones starts visible."""
+        """Adopts a loaded run: it opens on its own field, mode, field lines and opacity mapping but for those the user picked while it has the shown field.
+
+        The other knobs carry over, and every body but the hidden ones starts visible.
+        """
+
+        def offers(name: str) -> bool:
+            if not name:
+                return False
+
+            try:
+                _ = scene.field_info(name)
+            except KeyError:
+                return False
+
+            return True
+
         self.run = run
         self.scene = scene
         self.model_dim = scene.model_dim
         self.bodies = [str(key) for key in scene.blocks.keys()]
+        if not offers(str(self.state[FieldVar.FIELD])):
+            self.picked.clear()
+
+        opening = self.startup if self.startup.field else default_display(run)
+        with self.quiet():
+            if FieldVar.FIELD not in self.picked:
+                self.state[FieldVar.FIELD] = opening.field
+                self.state[FieldVar.MODE] = str(opening.mode)
+
+            if FieldVar.STREAMLINES not in self.picked:
+                self.state[FieldVar.STREAMLINES] = opening.streamlines is not None
+
+            if FieldVar.OPACITY_MAPPING not in self.picked:
+                self.state[FieldVar.OPACITY_MAPPING] = opening.opacity_map is not None
+                self.state[FieldVar.OPACITY_RANGE] = list(opening.opacity_map or OPACITY_MAP)
+
         spec = self.fit(self.spec_from_state(), scene)
         dim = scene.dim_for(spec)
         warp = spec.model_copy(update={"warp": self.warp_name}).fitted(scene.fields).warp
@@ -1616,6 +1649,28 @@ class FieldViewerController(TrameComponent):
 
         self.request_redraw()
 
+    def note_pick(self, key: FieldVar) -> None:
+        """Records a per-run choice the user made on a shown run, by its lead key; a value the scene set is no pick."""
+        if self.syncing or self.scene is None:
+            return
+
+        self.picked.add(key)
+
+    @change(FieldVar.FIELD, FieldVar.MODE)
+    def on_field_pick(self, **_: object) -> None:
+        """Notes a field or mode the user picked."""
+        self.note_pick(FieldVar.FIELD)
+
+    @change(FieldVar.STREAMLINES)
+    def on_lines_pick(self, **_: object) -> None:
+        """Notes field lines the user turned on or off."""
+        self.note_pick(FieldVar.STREAMLINES)
+
+    @change(FieldVar.OPACITY_MAPPING, FieldVar.OPACITY_RANGE)
+    def on_opacity_pick(self, **_: object) -> None:
+        """Notes an opacity mapping the user turned on or off or ranged."""
+        self.note_pick(FieldVar.OPACITY_MAPPING)
+
     @change(FieldVar.FIELD)
     def on_field(self, **_: object) -> None:
         """Offers the chosen field's modes and snaps the mode to one of them."""
@@ -2001,7 +2056,7 @@ def workbench(run: Result | Location | None = None, *, display: DisplaySpec = DE
 
     Args:
         run: The run to open once the server runs: a Result, a Run, a run id or a bundle directory; None opens the newest indexed run once one lands.
-        display: The display the controls start from.
+        display: The display the controls start from; one without a field opens each run on its own default display.
         telemetry: The telemetry root whose run index the run picker lists; None reads FEMFORGE_TELEMETRY.
     """
     root = resolve_root(telemetry)
