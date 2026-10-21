@@ -8,9 +8,13 @@ from typing import cast
 
 from trame_server import Server
 
+from femforge_workbench.widgets.dist_hash import source_hash
+
 
 ROUTE = "__ff"
 SERVE_DIR = Path(__file__).with_name("serve")
+PACKAGE_ROOT = SERVE_DIR.parents[3]
+"""The package directory holding js/ in a source checkout; an installed wheel has none."""
 VERSION_FILE = "version.json"
 LIBRARY = "Ff"
 """The window global whose install(registerTag) registers the tags."""
@@ -34,6 +38,17 @@ def version() -> dict[str, str]:
         raise FileNotFoundError(f"{path} is missing: {BUILD_HINT}")
 
     return cast("dict[str, str]", json.loads(path.read_text(encoding="utf-8")))
+
+
+def stale() -> tuple[str, str] | None:
+    """The built and the source hash when a source checkout's dist is older than its sources; None for a current dist or a wheel."""
+    if not (PACKAGE_ROOT / "js" / "src").is_dir():
+        return None
+
+    built = version()[VersionKey.HASH]
+    expected = source_hash(PACKAGE_ROOT)
+
+    return None if built == expected else (built, expected)
 
 
 def asset_url(name: str) -> str:
