@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from femforge.common.log import log
 from femforge_workbench.dock import Split
 from femforge_workbench.persist import LocalJsonStore
 from femforge_workbench.registry import DEMO, LAUNCHER, WorkbenchSpec, discover, panel, script
@@ -26,6 +27,7 @@ from femforge_workbench.panels.scene import SceneViewerPanel  # noqa: E402
 from femforge_workbench.serve import VIEWER_PANEL, NotAWorkbench, build, card, show  # noqa: E402
 from femforge_workbench.tasks import Task, TaskBoard  # noqa: E402
 from femforge_workbench.theme import Palette  # noqa: E402
+from femforge_workbench.widgets import module  # noqa: E402
 
 
 type Served = list[tuple[Workbench, int, Window]]
@@ -77,6 +79,18 @@ def test_a_split_is_served_as_built_under_its_title_with_a_plain_title_for_a_hea
     assert app.name == "bare-demo" and app.title == "Bare demo" and port == 8123 and window is Window.APP
     assert app.catalogue == [] and app.watches == [], "a Split carries no target to import again on save"
     assert find(root, "ff-dropdown-menu") == [] and len(titles) == 1
+
+
+def test_show_says_it_is_starting_and_warns_of_a_stale_dist(served: Served, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    records: list[tuple[str, str]] = []
+    sink_id: int = log.add(lambda message: records.append((message.record["level"].name, message.record["message"])), level="INFO")
+    monkeypatch.setattr(module, "stale", lambda: ("built", "expected"))
+    try:
+        show(demo(), persist=tmp_path)
+    finally:
+        log.remove(sink_id)
+
+    assert records[:2] == [("INFO", "Workbench starting."), ("WARNING", "Client dist is stale; rebuild it.")]
 
 
 def test_a_factory_is_imported_by_its_target_and_rebuilt_on_save(served: Served, tmp_path: Path) -> None:

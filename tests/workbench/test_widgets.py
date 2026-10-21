@@ -16,6 +16,7 @@ from trame_server import Server
 
 from femforge_workbench import widgets
 from femforge_workbench.widgets import module
+from femforge_workbench.widgets.dist_hash import source_hash
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.dock import Dock
 from femforge_workbench.widgets.element import MODEL, RESERVED, SHARED, Element, Shared, is_event, next_ref, react_name
@@ -252,6 +253,18 @@ def test_a_missing_dist_names_the_build_command(tmp_path: Path, monkeypatch: pyt
             _ = module.version()
     finally:
         module.version.cache_clear()
+
+
+def test_a_dist_older_than_its_sources_reports_both_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(module, "version", lambda: {"hash": "0000000000000000", "bundle": "ff.umd.js", "css": "ff.css"})
+
+    assert module.stale() == ("0000000000000000", source_hash(module.PACKAGE_ROOT))
+
+
+def test_an_installed_wheel_never_reports_a_stale_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(module, "PACKAGE_ROOT", tmp_path)
+
+    assert module.stale() is None
 
 
 def test_initialize_enables_the_module_once_and_elements_render_into_the_tree() -> None:

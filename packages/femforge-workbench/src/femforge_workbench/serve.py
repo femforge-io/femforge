@@ -15,6 +15,7 @@ from femforge_workbench.persist import LocalJsonStore, UiStateStore
 from femforge_workbench.registry import LAUNCHER, WorkbenchKind, WorkbenchSpec, discover, import_root, panel, resolve, split_target, target_of
 from femforge_workbench.reload import default_roots
 from femforge_workbench.tasks import TaskBoard, TaskFactory, plan_of
+from femforge_workbench.widgets import module
 
 
 DEFAULT_PORT = 8080
@@ -56,6 +57,12 @@ def show(
         watch: More directories whose .py saves rebuild a factory or card, beside its own roots.
         tasks: A module-level function listing the Tasks to run in child processes, one at a time, while the workbench serves; listed again on every save.
     """
+    log.info("Workbench starting.")
+    hashes = module.stale()
+    if hashes is not None:
+        built, expected = hashes
+        log.bind(built=built, expected=expected, hint=module.BUILD_HINT).warning("Client dist is stale; rebuild it.")
+
     if telemetry is not None:
         os.environ[TELEMETRY_ENV] = str(telemetry)
 
