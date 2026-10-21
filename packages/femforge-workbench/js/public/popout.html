@@ -4,14 +4,6 @@
     <meta charset="utf-8" />
     <title>femforge popout</title>
     <link rel="stylesheet" href="/__ff/ff.css" />
-    <script>
-      // Mirror the opener's scheme (.dark on <html>) before the first paint.
-      const opener = window.opener && window.opener.document.documentElement;
-      if (opener) {
-        document.documentElement.className = opener.className;
-        document.documentElement.style.colorScheme = opener.style.colorScheme;
-      }
-    </script>
     <style>
       html,
       body {

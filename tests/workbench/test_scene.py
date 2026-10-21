@@ -37,6 +37,7 @@ from femforge_workbench.panels.scene import (  # noqa: E402
     IMAGE_STYLE,
     INTERACTIVE_PIXELS,
     INTERACTIVE_QUALITY,
+    NEAR_TOLERANCE,
     SCREENSHOT_SCALE,
     STILL_QUALITY,
     STILL_SCALE,
@@ -140,6 +141,43 @@ def test_the_mode_defaults_to_the_mirror_and_a_persisted_choice_wins(tmp_path: P
     assert len(toggle) == 1 and prop(toggle[0], "value") == {"js": mirrored.key(StateVar.MODE)} and prop(toggle[0], "type") == "single"
     assert [texts(item) for item in find(tree, "ff-toggle-group-item")] == [["Client"], ["Server"]]
     assert len(find(_template(app, streamed), "remote-controlled-area")) == 1 and find(_template(app, streamed), "vtk-local") == []
+
+
+def test_a_preset_glides_the_mirror_camera_while_a_stream_jumps(tmp_path: Path) -> None:
+    app = _shell("glide", tmp_path)
+    mirrored = ScenePanel(app, "mirrored", "Mirrored", renderable=Volume())
+    streamed = ScenePanel(app, "streamed", "Streamed", renderable=Volume(), mode=ViewMode.SERVER)
+    sync = find(_template(app, mirrored), "ff-scene-sync")[0]
+
+    mirrored.look(View.TOP, glide=True)
+    mirrored.look(View.FRONT, glide=True)
+    streamed.look(View.TOP, glide=True)
+
+    camera = mirrored.plotter.renderer.GetActiveCamera()
+    assert app.state[mirrored.key(StateVar.MOVE)] == {
+        "seq": 2,
+        "position": list(camera.GetPosition()),
+        "focal_point": list(camera.GetFocalPoint()),
+        "view_up": list(camera.GetViewUp()),
+        "parallel_scale": camera.GetParallelScale(),
+    }, "each glide carries the fitted camera under a new number"
+    assert mirrored.view is not None and prop(sync, "move") == {"js": mirrored.key(StateVar.MOVE)} and prop(sync, "rendererId") == mirrored.view.get_wasm_id(mirrored.plotter.renderer)
+    assert app.state[streamed.key(StateVar.MOVE)] is None, "the stream renders the fitted camera in its next frame"
+    assert mirrored.plotter.renderer.GetNearClippingPlaneTolerance() == NEAR_TOLERANCE
+
+
+def test_an_optimistic_handler_writes_the_state_then_calls_the_server(tmp_path: Path) -> None:
+    app = _shell("optimistic", tmp_path)
+    panel = ScenePanel(app, "scene", "Scene")
+
+    def handler(value: object) -> None:
+        del value
+
+    callback = panel.optimistic(handler, "chosen", "$event || chosen", "[$event]")
+
+    trigger = app.server.trigger_name(handler)
+    assert callback.to_json(app.server) == {"callback": {"js": f'trame.state.set("chosen", $event || chosen), trame.trigger("{trigger}", [$event])'}}
+    assert handler in panel.bound, "disposing the panel unregisters the trigger"
 
 
 def test_set_mode_persists_re_hosts_the_other_view_and_keeps_the_camera_the_mirror_reported(tmp_path: Path) -> None:

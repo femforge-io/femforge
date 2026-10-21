@@ -93,6 +93,7 @@ class EntityGrid(Element):
         on_toggle_glyph: Event = None,
         on_frame: Event = None,
         on_show: Event = None,
+        on_hover: Event = None,
         **kwargs: Unpack[Shared],
     ) -> None:
         """Creates the grid; a prop left None keeps the component's default.
@@ -106,6 +107,7 @@ class EntityGrid(Element):
             on_toggle_glyph: Receives the id of a row whose glyph toggle was pressed.
             on_frame: Receives the id of a row double-clicked or framed with F.
             on_show: Receives the id of a hidden body whose Show was clicked or pressed with S.
+            on_hover: Receives the id of the row the pointer or the keyboard focus moved onto, and an empty id once both left the grid.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         super().__init__("ff-entity-grid", locals(), None, **kwargs)

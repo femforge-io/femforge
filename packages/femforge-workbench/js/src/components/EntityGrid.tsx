@@ -10,7 +10,6 @@ const VIRTUAL_ROWS = 200;
 const ROW_PX = 24;
 const LINE_PX = 18;
 const OVERSCAN = 12;
-const TOOLTIP_DELAY_MS = 300;
 const COLUMNS = "grid grid-cols-[minmax(0,1fr)_5.5rem_2.25rem] items-center gap-x-2";
 const ROW_KEYS = "Enter G F S Escape";
 
@@ -55,6 +54,7 @@ export interface EntityGridProps {
   onToggleGlyph?: (id: string) => void;
   onFrame?: (id: string) => void;
   onShow?: (id: string) => void;
+  onHover?: (id: string) => void;
   className?: string;
 }
 
@@ -63,6 +63,7 @@ interface Handlers {
   onToggleGlyph?: (id: string) => void;
   onFrame?: (id: string) => void;
   onShow?: (id: string) => void;
+  onHover?: (id: string) => void;
 }
 
 interface RowViewProps extends Handlers {
@@ -149,7 +150,7 @@ function GlyphCell({ row, onToggleGlyph }: { row: EntityRow; onToggleGlyph?: (id
           onToggleGlyph?.(row.id);
         }}
         className={cn(
-          "flex size-6 cursor-pointer items-center justify-center rounded-sm hover:bg-accent",
+          "flex size-6 cursor-pointer items-center justify-center rounded-sm hover:bg-wash-hover",
           (overruled || row.glyph_shown === false) && "text-muted-foreground opacity-50",
         )}
       >
@@ -184,6 +185,7 @@ function RowView({
   onToggleGlyph,
   onFrame,
   onShow,
+  onHover,
 }: RowViewProps) {
   const [keyboard, setKeyboard] = useState(false);
   const lines = row.lines ?? [];
@@ -204,18 +206,20 @@ function RowView({
         interactive
           ? (event) => {
               onFocusRow(index);
+              onHover?.(row.id);
               if (event.target === event.currentTarget) setKeyboard(event.currentTarget.matches(":focus-visible"));
             }
           : undefined
       }
+      onPointerEnter={interactive ? () => onHover?.(row.id) : undefined}
       onBlur={interactive ? () => setKeyboard(false) : undefined}
       onClick={interactive ? () => onSelect?.(row.id) : undefined}
       onDoubleClick={interactive ? () => onFrame?.(row.id) : undefined}
       className={cn(
         "group/row flex flex-col border-l-2 pr-0.5 pl-1.5 outline-none",
         interactive && "cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-        selected && interactive ? "border-primary bg-primary/10" : "border-transparent",
-        interactive && !selected && "hover:bg-accent/40",
+        selected && interactive ? "border-primary bg-wash-selected hover:bg-wash-selected-hover" : "border-transparent",
+        interactive && !selected && "hover:bg-wash-hover",
         row.dimmed && "opacity-60",
       )}
     >
@@ -240,7 +244,7 @@ function RowView({
                 onFrame?.(row.id);
               }}
               className={cn(
-                "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground",
+                "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-wash-hover hover:text-foreground",
                 selected ? "visible" : "invisible group-hover/row:visible group-focus/row:visible",
               )}
             >
@@ -380,6 +384,7 @@ export function EntityGrid({
   onToggleGlyph,
   onFrame,
   onShow,
+  onHover,
   className,
 }: EntityGridProps) {
   const root = useRef<HTMLDivElement | null>(null);
@@ -438,16 +443,23 @@ export function EntityGrid({
     }
   }
 
-  const handlers = { onSelect, onToggleGlyph, onFrame, onShow, onFocusRow: setFocus, offset };
+  const handlers = { onSelect, onToggleGlyph, onFrame, onShow, onHover, onFocusRow: setFocus, offset };
 
   return (
-    <TooltipProvider delayDuration={TOOLTIP_DELAY_MS}>
+    <TooltipProvider>
       <div
         ref={root}
         role="grid"
         aria-label={label}
         aria-rowcount={rows.length + offset}
         onKeyDown={onKeyDown}
+        onPointerLeave={() => {
+          const focused = document.activeElement;
+          if (!(root.current?.contains(focused) && focused?.matches(":focus-visible"))) onHover?.("");
+        }}
+        onBlur={(event) => {
+          if (!root.current?.contains(event.relatedTarget as Node | null)) onHover?.("");
+        }}
         className={cn("ff-entity-grid flex w-full flex-col text-label", className)}
       >
         {offset ? <HeaderRow columns={columns ?? []} /> : null}

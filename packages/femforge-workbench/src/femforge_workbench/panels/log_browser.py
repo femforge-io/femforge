@@ -374,7 +374,6 @@ class LogBrowserPanel(PanelComponent):
                 Code(
                     value=react.Bind(self.key(LogVar.DETAIL)),
                     language=JSON_LANGUAGE,
-                    theme=self.app.palette.monaco_theme,
                     options=react.Bind(self.key(LogVar.EDITOR)),
                     classes=str(Cls.FILL),
                 )

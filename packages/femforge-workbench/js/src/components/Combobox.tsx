@@ -3,6 +3,8 @@ import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tip } from "@/components/Tip";
+import { Truncate } from "@/components/Truncate";
 import { cn } from "@/lib/utils";
 import { sectionsOf, stepped, type ComboboxItem } from "./combobox/sections";
 
@@ -32,9 +34,7 @@ export interface ComboboxProps {
 function Entry({ item }: { item: ComboboxItem }) {
   return (
     <>
-      <span className={cn("text-left", item.swatch ? LABEL_COLUMN : "grow truncate")} title={item.label}>
-        {item.label}
-      </span>
+      <Truncate text={item.label} className={cn("text-left", item.swatch ? LABEL_COLUMN : "grow")} />
       {item.swatch ? (
         <span className="h-3.5 min-w-8 grow rounded-sm" style={{ background: item.swatch }} aria-hidden />
       ) : null}
@@ -130,24 +130,25 @@ export function Combobox({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild disabled={disabled}>
-        <button
-          type="button"
-          role="combobox"
-          aria-expanded={open}
-          aria-label={chosen && ariaLabel ? `${ariaLabel}: ${chosen.label}` : ariaLabel}
-          title={compact ? chosen?.label : undefined}
-          onKeyDown={step}
-          className={cn(
-            "flex w-full min-w-0 items-center rounded-md border border-input bg-transparent whitespace-nowrap shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50",
-            compact ? "h-6 gap-1 px-1.5" : "h-8 gap-2 px-3 text-sm",
-            className,
-          )}
-        >
-          {face()}
-          <ChevronDownIcon className={cn("shrink-0 opacity-50", compact ? "size-3.5" : "size-4")} />
-        </button>
-      </PopoverTrigger>
+      <Tip content={compact ? chosen?.label : undefined}>
+        <PopoverTrigger asChild disabled={disabled}>
+          <button
+            type="button"
+            role="combobox"
+            aria-expanded={open}
+            aria-label={chosen && ariaLabel ? `${ariaLabel}: ${chosen.label}` : ariaLabel}
+            onKeyDown={step}
+            className={cn(
+              "flex w-full min-w-0 items-center rounded-md border border-input bg-transparent whitespace-nowrap shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50",
+              compact ? "h-6 gap-1 px-1.5" : "h-8 gap-2 px-3 text-sm",
+              className,
+            )}
+          >
+            {face()}
+            <ChevronDownIcon className={cn("shrink-0 opacity-50", compact ? "size-3.5" : "size-4")} />
+          </button>
+        </PopoverTrigger>
+      </Tip>
       <PopoverContent
         align={compact ? "end" : "start"}
         collisionPadding={8}

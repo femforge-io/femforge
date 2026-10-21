@@ -23,6 +23,8 @@ class Button(Element):
         type_: Prop[ButtonType] = None,
         as_child: Prop[bool] = None,
         aria_label: Prop[str] = None,
+        aria_disabled: Prop[bool] = None,
+        aria_pressed: Prop[bool] = None,
         **kwargs: Unpack[Shared],
     ) -> None:
         """Creates the button; a prop left None keeps the component's default.
@@ -35,6 +37,8 @@ class Button(Element):
             type_: The HTML button type.
             as_child: Renders the child element itself, styled as the button.
             aria_label: The accessible name, needed when the button shows only an icon.
+            aria_disabled: Marks the button unavailable while it stays hoverable and focusable, so its tooltip can say why.
+            aria_pressed: The on state of a toggle button.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         super().__init__("ff-button", locals(), children, **kwargs)

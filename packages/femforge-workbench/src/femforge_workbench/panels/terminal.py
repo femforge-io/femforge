@@ -26,6 +26,7 @@ from femforge_workbench.process_tree import ProcessTree
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.term import Term
+from femforge_workbench.widgets.tip import Tip
 
 
 if TYPE_CHECKING:
@@ -344,22 +345,26 @@ class TerminalPanel(PanelComponent):
             with labelled("Attach"):
                 picker(self.key(TerminalVar.TARGET), self.key(TerminalVar.TARGET_ITEMS), width=PICKER_WIDTH, disabled=self.mode is not Mode.PTY)
 
-            with Button(
-                size=BUTTON_SIZE,
-                variant="ghost",
-                title="Look for Elmer containers again",
-                aria_label="Refresh the targets",
-                on_click=self.callback(self.refresh_targets),
+            with (
+                Tip(content="Look for Elmer containers again"),
+                Button(
+                    size=BUTTON_SIZE,
+                    variant="ghost",
+                    aria_label="Refresh the targets",
+                    on_click=self.callback(self.refresh_targets),
+                ),
             ):
                 Icon("refresh-cw")
 
-            with Button(
-                size=BUTTON_SIZE,
-                variant="ghost",
-                title="Restart the shell",
-                aria_label="Restart the shell",
-                disabled=self.mode is not Mode.PTY,
-                on_click=self.callback(self.restart),
+            with (
+                Tip(content="Restart the shell"),
+                Button(
+                    size=BUTTON_SIZE,
+                    variant="ghost",
+                    aria_label="Restart the shell",
+                    disabled=self.mode is not Mode.PTY,
+                    on_click=self.callback(self.restart),
+                ),
             ):
                 Icon("play")
 

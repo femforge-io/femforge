@@ -18,6 +18,7 @@ import pyvista as pv
 from trame.app import TrameComponent
 from trame.decorators import change, controller
 from trame.widgets import html, react
+from vtkmodules.vtkRenderingCore import vtkActor
 
 from femforge.artifacts.lock import LOCK_SUFFIX, DirLock
 from femforge.common.files import RunFile
@@ -43,8 +44,9 @@ from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shar
 from femforge_workbench.panels.scene import ScenePanel, View, ViewMode, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
 from femforge_workbench.tasks import TaskPhase, TaskView
-from femforge_workbench.theme import hex_color
+from femforge_workbench.theme import hex_color, mix
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
+from femforge_workbench.widgets.busy import Busy
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.checkbox import Checkbox
 from femforge_workbench.widgets.combobox import Combobox, ComboboxItem
@@ -52,9 +54,10 @@ from femforge_workbench.widgets.element import EVENT, setter
 from femforge_workbench.widgets.field import Field, FieldLabel
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.input import ColorInput, Input
-from femforge_workbench.widgets.progress import Progress
+from femforge_workbench.widgets.reveal import Reveal
 from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.switch import Switch
+from femforge_workbench.widgets.tip import Tip
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 from femforge_workbench.widgets.tour import TourStep
 
@@ -110,7 +113,6 @@ LINE_DEFAULTS = FieldLineOptions()
 FULL_WIDTH = "w-full"
 RUN_WIDTH = "w-96"
 PATH_WIDTH = "w-[28rem] shrink-0"
-BUSY_FULL = 100.0
 """The bar is pulsed, not filled: the load reports no fraction."""
 
 SYMMETRY_SECTION = "symmetry"
@@ -130,6 +132,8 @@ COLORMAP_FILTERS = [FAVORITES_GROUP, *(kind.value for kind in ColormapType)]
 SAME_AS_FIELD = "same-as-field"
 SAME_AS_FIELD_LABEL = "Same as Field"
 STACK = "flex flex-col gap-1.5"
+HOVER_SHARE = 0.6
+"""`[-]`: The share of the accent in a hover outline, the rest the background's."""
 FIT_SHARE = 0.15
 """`[-]`: The least extent a group is framed at, as a share of the scene diagonal, so the bodies around it stay in view."""
 
@@ -270,6 +274,9 @@ class FieldVar(StrEnum):
 
     SELECTED_ENTITY = "field_selected_entity"
     """The entity id highlighted in the accent; empty highlights nothing."""
+
+    HOVERED = "field_hovered"
+    """The entity id whose row the pointer or the keyboard focus is on, which the browser outlines; empty outlines nothing."""
 
     PLAIN_BODIES = "field_plain_bodies"
     """The Plain Bodies switch."""
@@ -1022,6 +1029,7 @@ class FieldViewerController(TrameComponent):
                 FieldVar.GLYPH_KINDS_OFF: [],
                 FieldVar.GLYPH_ROWS_OFF: [],
                 FieldVar.SELECTED_ENTITY: "",
+                FieldVar.HOVERED: "",
                 FieldVar.PLAIN_BODIES: False,
                 FieldVar.SECTION_OUTLINE: True,
                 FieldVar.AUTHORED_GHOST: False,
@@ -1348,7 +1356,7 @@ class FieldViewerController(TrameComponent):
         diagonal = layer.placement(shown).diagonal
         viewer.adopt_camera()
         viewer.plotter.renderer.ResetCamera(padded(bounds, FIT_SHARE * diagonal))
-        viewer.push()
+        viewer.show_camera(glide=True)
 
     def fit_bounds(self) -> Bounds | None:
         """What a fit frames while the Setup tab shows the glyphs: the drawn scene with every label's text reaching right of its point; None to fit the scene alone."""
@@ -1766,7 +1774,10 @@ class FieldViewerController(TrameComponent):
         if view is None or self.viewer is None:
             return view
 
-        return view.model_copy(update={"scale": self.viewer.window_scale(), "accent": hex_color(self.app.palette.accent), "ink": hex_color(self.app.palette.text)})
+        palette = self.app.palette
+        hover = mix(palette.accent, palette.paper, HOVER_SHARE)
+
+        return view.model_copy(update={"scale": self.viewer.window_scale(), "accent": hex_color(palette.accent), "hover": hover, "ink": hex_color(palette.text)})
 
     def glyph_view_from_state(self) -> GlyphView | None:
         """The glyph view the Setup tab state describes; None while the tab is off screen."""
@@ -2115,15 +2126,27 @@ class FieldViewerPanel(ScenePanel):
         self.renderable = None
         self.push()
 
-    def refit(self) -> None:
-        """Fits the camera to the model and, while the Setup tab shows them, the glyphs and their labels."""
+    def refit(self, *, glide: bool = False) -> None:
+        """Fits the camera to the model and, while the Setup tab shows them, the glyphs and their labels; `glide` moves the mirror's camera there instead of jumping."""
         bounds = self.controller.fit_bounds()
         if bounds is None:
-            super().refit()
+            super().refit(glide=glide)
             return
 
         self.plotter.renderer.ResetCamera(bounds)
-        self.push()
+        self.show_camera(glide=glide)
+
+    def highlights(self) -> Mapping[str, vtkActor]:
+        """The hidden hover outline of each entity the shown glyph layer drew."""
+        controller = self.controller
+        shown = controller.scene if controller.scene is not None else controller.groups
+        layer = shown.glyphs if shown is not None else None
+
+        return layer.hover_actors if layer is not None else {}
+
+    def hover_key(self) -> str:
+        """The Setup tab's hovered row, which both tabs share through the controller's state."""
+        return str(FieldVar.HOVERED)
 
     def rescale(self) -> None:
         """Sizes the text for the new window scale and has the controller redraw, so the glyph layer takes the scale too."""
@@ -2198,7 +2221,7 @@ class FieldControlsPanel(PanelComponent):
         """The body colormap picker as a swatch in the color column, reading Same as field while no body takes it."""
         Combobox(
             value=react.Bind(str(FieldVar.BODY_COLORMAP_SHOWN)),
-            on_value_change=self.callback(self.controller.on_body_colormap_pick, args=f"[{EVENT}]"),
+            on_value_change=self.optimistic(self.controller.on_body_colormap_pick, str(FieldVar.BODY_COLORMAP_SHOWN), EVENT, f"[{EVENT}]"),
             items=react.Bind(str(FieldVar.COLORMAP_ITEMS)),
             lead=react.Bind(str(FieldVar.BODY_LEAD)),
             filters=COLORMAP_FILTERS,
@@ -2250,7 +2273,7 @@ class FieldControlsPanel(PanelComponent):
     def build_opacity(self) -> None:
         """The Opacity mapping switch and, while it is on, the opacity at each end of the color range; the body table holds the overall opacity."""
         setting(FieldVar.OPACITY_MAPPING, "Opacity mapping")
-        with react.If(str(FieldVar.OPACITY_MAPPING)), html.Div(classes=STACK):
+        with Reveal(open_=react.Bind(str(FieldVar.OPACITY_MAPPING)), classes=STACK):
             readouts(react.Bind(f"{FieldVar.OPACITY_RANGE}[0].toFixed(2)"), react.Bind(f"{FieldVar.OPACITY_RANGE}[1].toFixed(2)"))
             self.slider(FieldVar.OPACITY_RANGE, "Opacity", OPACITY_RANGE, OPACITY_STEP)
 
@@ -2259,7 +2282,7 @@ class FieldControlsPanel(PanelComponent):
         readouts("Solved as", react.Bind(str(FieldVar.SOLVED_AS)))
         with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.OPEN))}"), html.Div(classes=str(Cls.SECTION_BODY_STACK)):
             segmented(FieldVar.EXPANSION, "Show as", [str(expansion) for expansion in Expansion], read=expansion_label)
-            with react.If(f"{FieldVar.EXPANSION} === {json.dumps(str(Expansion.REVOLVE))}"), html.Div(classes=STACK):
+            with Reveal(open_=react.Bind(f"{FieldVar.EXPANSION} === {json.dumps(str(Expansion.REVOLVE))}"), classes=STACK):
                 readouts("Sweep", react.Bind(f"{FieldVar.SWEEP}[0] + {json.dumps(DEGREES)}"))
                 self.slider(FieldVar.SWEEP, "Sweep angle", SWEEP_RANGE, SWEEP_STEP)
 
@@ -2270,7 +2293,7 @@ class FieldControlsPanel(PanelComponent):
         """The deformation section: for a run with a displacement, the Deformed Shape switch and, while it is on, the scale the displacement is exaggerated by."""
         with react.If(str(FieldVar.HAS_DISPLACEMENT)), html.Div(classes=str(Cls.SECTION_BODY_STACK)):
             setting(FieldVar.WARP, "Deformed shape")
-            with react.If(str(FieldVar.WARP)), html.Div(classes=STACK):
+            with Reveal(open_=react.Bind(str(FieldVar.WARP)), classes=STACK):
                 readouts("Scale", react.Bind(f"{json.dumps(TIMES)} + {FieldVar.WARP_SCALE}[0].toPrecision({PRECISION})"))
                 self.slider(
                     FieldVar.WARP_SCALE,
@@ -2334,41 +2357,47 @@ class FieldControlsPanel(PanelComponent):
             with react.For(items=str(FieldVar.BODY_ROWS), name=row), html.Div(classes=BODY_ROW):
                 Checkbox(
                     checked=react.Bind(f"{members}.every(m => {visible}.includes(m)) || ({members}.some(m => {visible}.includes(m)) && 'indeterminate')"),
-                    on_checked_change=self.callback(controller.on_row_visible, args=f"[{row}.{RowKey.ID}, {EVENT}]"),
+                    on_checked_change=self.optimistic(
+                        controller.on_row_visible,
+                        visible,
+                        f"{FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP}).map(r => r.{RowKey.ID}).filter(id => {members}.includes(id) ? {EVENT} === true : {visible}.includes(id))",
+                        f"[{row}.{RowKey.ID}, {EVENT}]",
+                    ),
                     aria_label=react.Bind(f"'Show ' + {row}.{RowKey.TITLE}"),
                 )
                 html.Span(
                     [react.Bind(f"{row}.{RowKey.TITLE}")],
                     classes=react.Bind(f"{row}.{RowKey.GROUP} ? {json.dumps(GROUP_NAME)} : {row}.{RowKey.MEMBER} ? {json.dumps(MEMBER_NAME)} : {json.dumps(BODY_NAME)}"),
-                    title=react.Bind(f"{row}.{RowKey.TITLE}"),
                 )
                 with html.Span(classes=CHIP_SLOT):
                     painted = f"{row}.{RowKey.PAINT} !== {json.dumps(str(BodyPaint.FIELD))}"
                     with react.If(painted):
-                        ColorInput(
-                            value=react.Bind(f"{row}.{RowKey.COLOR}"),
-                            on_change=self.callback(controller.on_row_color, args=f"[{row}.{RowKey.ID}, {EVENT}.target.value]"),
-                            classes=COLOR_CHIP,
-                            title=react.Bind(f"{row}.{RowKey.PAINT} === {json.dumps(str(BodyPaint.COLORMAP))} ? 'From the body colormap: pick to fix a color' : 'A fixed color'"),
-                            aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' color'"),
-                        )
-                        with Button(
-                            size="icon-xs",
-                            variant="ghost",
-                            classes=CHIP_CLEAR,
-                            title="Back to the field colormap",
-                            aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' back to the field colormap'"),
-                            on_click=self.callback(controller.on_row_field, args=f"[{row}.{RowKey.ID}]"),
+                        tip = react.Bind(f"{row}.{RowKey.PAINT} === {json.dumps(str(BodyPaint.COLORMAP))} ? 'From the body colormap: pick to fix a color' : 'A fixed color'")
+                        with Tip(content=tip):
+                            ColorInput(
+                                value=react.Bind(f"{row}.{RowKey.COLOR}"),
+                                on_change=self.callback(controller.on_row_color, args=f"[{row}.{RowKey.ID}, {EVENT}.target.value]"),
+                                classes=COLOR_CHIP,
+                                aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' color'"),
+                            )
+                        with (
+                            Tip(content="Back to the field colormap"),
+                            Button(
+                                size="icon-xs",
+                                variant="ghost",
+                                classes=CHIP_CLEAR,
+                                aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' back to the field colormap'"),
+                                on_click=self.callback(controller.on_row_field, args=f"[{row}.{RowKey.ID}]"),
+                            ),
                         ):
                             Icon("x")
 
-                    with react.If(f"!({painted})"):
+                    with react.If(f"!({painted})"), Tip(content="Field colormap: click for the body colormap"):
                         Button(
                             size="icon-xs",
                             variant="ghost",
                             classes=CHIP,
                             style={"background": react.Bind(str(FieldVar.FIELD_GRADIENT))},
-                            title="Field colormap: click for the body colormap",
                             aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' to the body colormap'"),
                             on_click=self.callback(controller.on_row_colormap, args=f"[{row}.{RowKey.ID}]"),
                         )
@@ -2408,8 +2437,7 @@ class FieldControlsPanel(PanelComponent):
                     body()
 
         with html.Div(classes=str(Cls.CONTROLS)):
-            with react.If(str(FieldVar.BUSY)):
-                Progress(value=BUSY_FULL, classes=str(Cls.BUSY))
+            Busy(active=react.Bind(str(FieldVar.BUSY)))
 
             with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
                 section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry)

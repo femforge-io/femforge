@@ -61,7 +61,7 @@ function GroupRow({ row, index, specs, titles, leafCount, onToggleGroup, style }
   return (
     <tr
       data-index={index}
-      className="h-(--ff-row-height) cursor-pointer bg-muted/60"
+      className="h-(--ff-row-height) cursor-pointer bg-card"
       style={style}
       onClick={() => onToggleGroup(row.id)}
     >
@@ -94,8 +94,8 @@ function DataRow({ row, index, specs, pinned, selectable, onRowClick, style }: R
       data-index={index}
       data-state={selected ? "selected" : undefined}
       className={cn(
-        "h-(--ff-row-height) hover:bg-accent/40",
-        selected && "bg-accent/60",
+        "h-(--ff-row-height) hover:bg-wash-hover",
+        selected && "bg-wash-selected",
         (selectable || onRowClick) && "cursor-pointer",
       )}
       style={style}

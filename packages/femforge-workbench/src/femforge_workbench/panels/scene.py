@@ -38,6 +38,7 @@ from femforge_workbench.reload import Reloader, default_roots
 from femforge_workbench.theme import hex_color
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.scene import SceneSync
+from femforge_workbench.widgets.tip import Tip
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 
 
@@ -62,6 +63,8 @@ THROTTLE_RATE = 20
 CACHE_BYTES = 512 << 20
 CLIENT_LIMIT_MB = 64
 """The geometry the mirror would fetch above which a scene streams instead."""
+NEAR_TOLERANCE = 0.001
+"""The smallest share of the far plane's distance the near plane may sit at."""
 KILOBYTE = 1024
 WASM_CONFIG = {"rendering": "webgl", "exec": "sync", "mode": "wasm32"}
 VIEW_STYLE = {"flex": "1", "minHeight": "0", "position": "relative"}
@@ -114,6 +117,9 @@ class StateVar(StrEnum):
     MODE = "mode"
     STATUS = "status"
     NOTICE = "notice"
+    MOVE = "move"
+    HIGHLIGHTS = "highlights"
+    HOVERED = "hovered"
 
 
 class StoreKey(StrEnum):
@@ -493,6 +499,8 @@ class ScenePanel(PanelComponent):
         self.plotter = pv.Plotter(off_screen=True)
         self.plotter.background_color = pv.Color(hex_color(app.palette.paper))
         self.plotter.parallel_projection = True
+        # VTK's default lets the near plane sit at 1 % of the far one, which cuts glyphs off a model zoomed in close.
+        self.plotter.renderer.SetNearClippingPlaneTolerance(NEAR_TOLERANCE)
         self.plotter.enable_anti_aliasing("msaa", multi_samples=MULTI_SAMPLES)
         self.base_font = copy.deepcopy(self.plotter.theme.font)
         # pyvista's document theme writes black text, which a dark palette's background swallows.
@@ -512,6 +520,8 @@ class ScenePanel(PanelComponent):
 
         self.scale_fonts(self.window_scale())
         self.renderable: Renderable | None = None
+        self.moves = 0
+        """How many glides the panel sent, which numbers the next."""
         self.view: vtklocal.LocalView | None = None
         self.sync: SceneSync | None = None
         self.area: rca.RemoteControlledArea | None = None
@@ -577,25 +587,32 @@ class ScenePanel(PanelComponent):
         self.state[self.key(StateVar.MODE)] = str(self.mode)
         self.state[self.key(StateVar.STATUS)] = ""
         self.state[self.key(StateVar.NOTICE)] = ""
+        self.state[self.key(StateVar.MOVE)] = None
+        self.state[self.key(StateVar.HIGHLIGHTS)] = {}
+        self.state[self.key(StateVar.HOVERED)] = ""
         with html.Div(classes=str(Cls.TOOLBAR), id=self.toolbar_id):
             for view in View:
-                Button(str(view), size="xs", variant="ghost", on_click=self.callback(partial(self.look, view)))
+                Button(str(view), size="xs", variant="ghost", on_click=self.callback(partial(self.look, view, glide=True)))
 
             html.Span(classes=str(Cls.SPACER))
             html.Span([react.Bind(self.key(StateVar.STATUS))], classes=str(Cls.CAPTION))
-            with ToggleGroup(
-                type_="single",
-                variant="outline",
-                size="sm",
-                value=react.Bind(self.key(StateVar.MODE)),
-                on_value_change=self.callback(self.set_mode, args="[$event]"),
-                title="Where the frames are rendered",
+            with (
+                Tip(content="Where the frames are rendered"),
+                ToggleGroup(
+                    type_="single",
+                    variant="outline",
+                    size="sm",
+                    value=react.Bind(self.key(StateVar.MODE)),
+                    on_value_change=self.optimistic(self.set_mode, self.key(StateVar.MODE), f"$event || {self.key(StateVar.MODE)}", "[$event]"),
+                ),
             ):
                 for mode in ViewMode:
                     ToggleGroupItem(title(str(mode)), value=str(mode), classes=str(Cls.TOGGLE))
 
-            Button("Axes", size="xs", variant="ghost", title="Toggle the orientation axes", on_click=self.callback(self.toggle_axes))
-            Button("Screenshot", size="xs", variant="ghost", title="Save a 2x PNG", on_click=self.callback(self.screenshot))
+            with Tip(content="Show or hide the orientation axes"):
+                Button("Axes", size="xs", variant="ghost", on_click=self.callback(self.toggle_axes))
+            with Tip(content="Save the view as a PNG at twice its size"):
+                Button("Screenshot", size="xs", variant="ghost", on_click=self.callback(self.screenshot))
 
         self.host = html.Div(style=VIEW_STYLE, id=self.view_id)
         with self.host:
@@ -696,6 +713,10 @@ class ScenePanel(PanelComponent):
             view_ref=view.ref_name,
             camera_id=self.camera_id,
             matrix_id=view.get_wasm_id(self.triad.matrix),
+            renderer_id=view.get_wasm_id(self.plotter.renderer),
+            move=react.Bind(self.key(StateVar.MOVE)),
+            highlights=react.Bind(self.key(StateVar.HIGHLIGHTS)),
+            highlighted=react.Bind(self.hover_key()),
             on_resize=self.callback(self.on_client_size, args="[$event]"),
         )
 
@@ -816,19 +837,56 @@ class ScenePanel(PanelComponent):
             self.handler.schedule_render()
             return
 
+        self.plotter.renderer.ResetCameraClippingRange()
         if self.mode is ViewMode.CLIENT and self.view is not None:
             # A renderable may add actors after the draw, as the field viewer adds its lines.
             self.footprint = mirror_friendly(self.plotter)
             refresh_composites(self.plotter)
             self.view.update(push_camera=True)
+            self.publish_highlights()
 
-    def refit(self) -> None:
-        """Fits the camera to the model, against the window the viewer actually sees."""
+    def highlights(self) -> Mapping[str, vtkActor]:
+        """The hidden outline actor of each entity id the scene holds; none for a plain scene."""
+        return {}
+
+    def hover_key(self) -> str:
+        """The state variable naming the entity whose outline shows."""
+        return self.key(StateVar.HOVERED)
+
+    def publish_highlights(self) -> None:
+        """Tells the mirror which hidden actor outlines each entity, once a push has made the actors known to it."""
+        view = self.view
+        ids = {entity: view.get_wasm_id(actor) for entity, actor in self.highlights().items()} if view is not None else {}
+        if ids == self.state[self.key(StateVar.HIGHLIGHTS)]:
+            return
+
+        with self.state:
+            self.state[self.key(StateVar.HIGHLIGHTS)] = ids
+
+    def refit(self, *, glide: bool = False) -> None:
+        """Fits the camera to the model, against the window the viewer actually sees; `glide` moves the mirror's camera there instead of jumping."""
         self.plotter.renderer.ResetCamera()
-        self.push()
+        self.show_camera(glide=glide)
 
-    def look(self, view: View) -> None:
-        """Puts the camera on the preset's side of the focal point with its up vector upright, then re-fits the model."""
+    def show_camera(self, *, glide: bool) -> None:
+        """Sends the camera the plotter now holds: with `glide`, the mirror's camera glides there; otherwise the scene is pushed with it."""
+        if not glide or self.mode is not ViewMode.CLIENT or self.view is None:
+            self.push()
+            return
+
+        self.moves += 1
+        camera = self.plotter.renderer.GetActiveCamera()
+        with self.state:
+            self.state[self.key(StateVar.MOVE)] = {
+                "seq": self.moves,
+                "position": list(camera.GetPosition()),
+                "focal_point": list(camera.GetFocalPoint()),
+                "view_up": list(camera.GetViewUp()),
+                "parallel_scale": camera.GetParallelScale(),
+            }
+
+    def look(self, view: View, *, glide: bool = False) -> None:
+        """Puts the camera on the preset's side of the focal point with its up vector upright, then re-fits the model; `glide` moves the mirror's camera there instead of jumping."""
         self.adopt_camera()
         side = SIDES.get(view)
         if side is not None:
@@ -838,7 +896,7 @@ class ScenePanel(PanelComponent):
             camera.position = (focal[0] + direction[0], focal[1] + direction[1], focal[2] + direction[2])
             camera.up = up
 
-        self.refit()
+        self.refit(glide=glide)
 
     def fit(self) -> None:
         """Fits the camera to the model from its current side."""

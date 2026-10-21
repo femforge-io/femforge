@@ -380,7 +380,7 @@ export function Table({
               <span className="truncate">{filterLabel(titles.get(entry.id) ?? entry.id, entry.value)}</span>
               <button
                 type="button"
-                className="rounded-full hover:bg-accent"
+                className="rounded-full hover:bg-wash-hover"
                 aria-label={`Clear ${titles.get(entry.id) ?? entry.id} filter`}
                 onClick={() => table.getColumn(entry.id)?.setFilterValue(undefined)}
               >
@@ -395,7 +395,7 @@ export function Table({
           size="icon-xs"
           aria-label="Configure columns"
           aria-pressed={configOpen}
-          className={cn(configOpen && "bg-accent text-accent-foreground")}
+          className={cn(configOpen && "bg-wash-selected text-foreground")}
           onClick={() => setConfigOpen((open) => !open)}
         >
           <SlidersHorizontal />

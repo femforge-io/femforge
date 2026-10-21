@@ -82,7 +82,6 @@ export interface DockProps {
   onVisibility?: (event: VisibilityEvent) => void;
   onActivePanel?: (event: ActivePanelEvent) => void;
   onPanelRemoved?: (event: PanelEvent) => void;
-  dark?: boolean;
   popoutUrl?: string;
   floatingGroupBounds?: FloatingGroupBounds;
   className?: string;
@@ -168,9 +167,7 @@ function HeaderActions({ containerApi, group, activePanel }: IDockviewHeaderActi
   );
 }
 
-function themeFor(dark: boolean): DockviewTheme {
-  return { name: "ff", className: "dockview-theme-ff", colorScheme: dark ? "dark" : "light" };
-}
+const THEME: DockviewTheme = { name: "ff", className: "dockview-theme-ff", colorScheme: "dark" };
 
 export function Dock({
   ref,
@@ -180,7 +177,6 @@ export function Dock({
   onVisibility,
   onActivePanel,
   onPanelRemoved,
-  dark = true,
   popoutUrl = DEFAULT_POPOUT_URL,
   floatingGroupBounds = "boundedWithinViewport",
   className,
@@ -193,7 +189,6 @@ export function Dock({
     () => ({ renderPanel: renderPanel ?? null, onVisibility: onVisibility ?? null }),
     [renderPanel, onVisibility],
   );
-  const theme = useMemo(() => themeFor(dark), [dark]);
 
   const handleReady = useCallback(
     (event: DockviewReadyEvent) => {
@@ -257,14 +252,14 @@ export function Dock({
   }));
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <DockContext.Provider value={context}>
         <DockviewReact
           className={cn("h-full w-full", className)}
           components={components}
           rightHeaderActionsComponent={HeaderActions}
           onReady={handleReady}
-          theme={theme}
+          theme={THEME}
           popoutUrl={popoutUrl}
           floatingGroupBounds={floatingGroupBounds}
           defaultRenderer="always"

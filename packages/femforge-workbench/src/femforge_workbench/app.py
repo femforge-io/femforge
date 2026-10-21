@@ -41,7 +41,8 @@ from femforge_workbench.widgets.element import EVENT
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.module import asset_url
 from femforge_workbench.widgets.progress import Progress
-from femforge_workbench.widgets.theme import Theme
+from femforge_workbench.widgets.tip import Tip
+from femforge_workbench.widgets.tooltip import TooltipProvider
 from femforge_workbench.widgets.tour import Tour, TourStep
 
 
@@ -118,12 +119,12 @@ class Cls(StrEnum):
     MAIN = "min-h-0 flex-1"
     TASKS = "relative shrink-0"
     TASK_STRIP = "flex h-6 min-w-0 items-center gap-2 border-t border-border bg-background px-2 text-label"
-    TASK_TOGGLE = "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+    TASK_TOGGLE = "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 hover:bg-wash-hover focus-visible:outline-2 focus-visible:outline-ring"
     TASK_NAME = "font-medium"
     TASK_WIDE = "font-medium max-[800px]:hidden"
     TASK_SUMMARY = "max-[800px]:sr-only"
     TASK_NARROW = "hidden tabular-nums max-[800px]:inline"
-    TASK_SUMMARY_LINE = "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 hover:bg-accent"
+    TASK_SUMMARY_LINE = "flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 hover:bg-wash-hover"
     TASK_FOCUS_STATE = "truncate text-muted-foreground max-[800px]:hidden"
     TASK_FOCUS_FAILED = "truncate text-destructive max-[800px]:hidden"
     TASK_FOCUS_BAR = "h-1.5 w-16 shrink-0 max-[800px]:hidden"
@@ -164,7 +165,7 @@ class Cls(StrEnum):
     TASK_ELAPSED = "px-2 py-1 text-right tabular-nums align-top"
     TASK_RUN = "truncate px-2 py-1 font-mono align-top"
     TASK_ACTIONS = "flex flex-wrap justify-end gap-1 px-2 py-0.5"
-    TASK_DETAIL = "mx-2 mb-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-2 font-mono text-label"
+    TASK_DETAIL = "mx-2 mb-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-card p-2 font-mono text-label"
 
 
 class Window(StrEnum):
@@ -191,7 +192,6 @@ class StateVar(StrEnum):
 
     STATUS = "wb_status"
     TITLE = "wb_title"
-    DARK = "wb_dark"
     WORKBENCHES = "wb_workbenches"
     OPENED = "wb_opened"
     TOUR_OPEN = "wb_tour_open"
@@ -328,7 +328,7 @@ class Workbench(TrameApp):
 
         Args:
             name: The workbench name, which names the trame server and scopes the persisted state.
-            palette: The colours the shell and its panels paint in; None loads the dist's dark palette.
+            palette: The colours the shell and its panels paint in; None loads the dist's palette.
             title: The title the header and the browser tab show.
             server: The trame server to run on; None makes one named after `name`.
             persist: Where layouts and opened cards persist; None keeps them in JSON files under the per-user config directory.
@@ -377,7 +377,6 @@ class Workbench(TrameApp):
             {
                 StateVar.STATUS: "ready",
                 StateVar.TITLE: title,
-                StateVar.DARK: self.palette.is_dark,
                 StateVar.WORKBENCHES: cards,
                 StateVar.OPENED: [],
                 StateVar.TOUR_OPEN: False,
@@ -416,12 +415,11 @@ class Workbench(TrameApp):
             return []
 
     def build_ui(self) -> DivLayout:
-        """The theme switch, the header and the dock, whose panel bodies are the server templates the placements name."""
+        """The header and the dock, whose panel bodies are the server templates the placements name."""
         close = f"trame.state.set({json.dumps(str(StateVar.TASK_SHEET))}, false), document.getElementById({json.dumps(TASK_TOGGLE_ID)}).focus()"
         escape = f"{EVENT}.key === 'Escape' && {StateVar.TASKS}.length && {StateVar.TASK_SHEET} && ({close})"
-        with DivLayout(self.server, classes=str(Cls.ROOT)) as layout:
+        with DivLayout(self.server, classes=str(Cls.ROOT)) as layout, TooltipProvider():
             layout.root.on_key_down = react.Callback(escape)
-            _ = self.theme()
             if os.environ.get(DEV_ENV):
                 client.Script(reload_script())
 
@@ -438,19 +436,21 @@ class Workbench(TrameApp):
 
                 client.ServerTemplate(name=str(Template.HEADER))
                 with react.If(f"{StateVar.OPENED}.length"):
-                    Button("Close All", variant="destructive", size="sm", title="Close every opened card", on_click=react.Callback(self.close_all))
+                    Button("Close All", variant="destructive", size="sm", on_click=react.Callback(self.close_all))
 
-                with Button(
-                    size="icon-sm",
-                    variant="ghost",
-                    title="Reset the layout",
-                    aria_label="Reset the layout",
-                    on_click=react.Callback(self.reset_layout),
+                with (
+                    Tip(content="Reset the layout"),
+                    Button(
+                        size="icon-sm",
+                        variant="ghost",
+                        aria_label="Reset the layout",
+                        on_click=react.Callback(self.reset_layout),
+                    ),
                 ):
                     Icon("layout-grid")
 
                 html.Span([react.Bind(StateVar.STATUS)], classes=str(Cls.STATUS))
-                with Button(size="icon-sm", variant="ghost", id=HELP_ID, title=TOUR_LABEL, aria_label=TOUR_LABEL, on_click=react.Callback(self.start_tour)):
+                with Tip(content=TOUR_LABEL), Button(size="icon-sm", variant="ghost", id=HELP_ID, aria_label=TOUR_LABEL, on_click=react.Callback(self.start_tour)):
                     Icon("circle-help")
 
             Tour(model=StateVar.TOUR_OPEN, steps=react.Bind(StateVar.TOUR_STEPS), on_finish=react.Callback(self.on_tour_finish, args="[$event]"))
@@ -461,7 +461,6 @@ class Workbench(TrameApp):
 
                 self.dock = Dock(
                     render_panel=render_panel,
-                    dark=react.Bind(StateVar.DARK),
                     popout_url=asset_url(POPOUT_PAGE),
                     floating_group_bounds="boundedWithinViewport",
                     on_ready=react.Callback(self.on_dock_ready),
@@ -484,9 +483,8 @@ class Workbench(TrameApp):
         def focus(name: TaskField) -> str:
             return f"{StateVar.TASK_FOCUS}.{name}"
 
-        every = react.Bind(f"{StateVar.TASK_SHEET} ? 'Hide Task List' : 'Show Task List'")
         with html.Div(classes=str(Cls.TASK_STRIP)):
-            toggle = html.Button(id=TASK_TOGGLE_ID, type="button", classes=str(Cls.TASK_TOGGLE), title=every, on_click=react.Callback(self.toggle_tasks))
+            toggle = html.Button(id=TASK_TOGGLE_ID, type="button", classes=str(Cls.TASK_TOGGLE), on_click=react.Callback(self.toggle_tasks))
             _ = aria(toggle, aria_expanded=react.Bind(StateVar.TASK_SHEET), aria_controls=TASK_SHEET_ID, aria_label=react.Bind(f"'Tasks, ' + {StateVar.TASK_SUMMARY}"))
             with toggle:
                 _ = aria(html.Span([react.Bind(f"{StateVar.TASK_SHEET} ? '▾' : '▴'")]), aria_hidden="true")
@@ -496,19 +494,19 @@ class Workbench(TrameApp):
 
             with react.If(f"{StateVar.TASK_BUSY} && {StateVar.TASK_REUSED}"), html.Div(classes=str(Cls.TASK_REUSED)):
                 _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
-                html.Span(["↺ ", react.Bind(StateVar.TASK_REUSED), " Reused"], title="Tasks That Reused a Finished Run")
+                with Tip(content="Tasks that reused a finished run"):
+                    html.Span(["↺ ", react.Bind(StateVar.TASK_REUSED), " Reused"])
 
             with react.If(StateVar.TASK_FOCUS):
                 _ = aria(html.Div(classes=str(Cls.TASK_SEP)), aria_hidden="true")
                 with html.Div(classes=str(Cls.TASK_FOCUS)):
-                    with html.Div(classes=str(Cls.TASK_SUMMARY_LINE), title=every, on_click=react.Callback(self.toggle_tasks)):
+                    with html.Div(classes=str(Cls.TASK_SUMMARY_LINE), on_click=react.Callback(self.toggle_tasks)):
                         tone = f"({focus(TaskField.FAILED)} ? 'text-destructive ' : '') + ({focus(TaskField.PERCENT)} ? '' : 'max-[800px]:hidden')"
                         _ = aria(html.Span([react.Bind(focus(TaskField.GLYPH))], classes=react.Bind(tone)), aria_hidden="true")
                         html.Span([react.Bind(focus(TaskField.TITLE))], classes=str(Cls.TASK_LABEL))
                         html.Span(
                             [react.Bind(focus(TaskField.STATE))],
                             classes=react.Bind(f"{focus(TaskField.FAILED)} ? {Cls.TASK_FOCUS_FAILED.value!r} : {Cls.TASK_FOCUS_STATE.value!r}"),
-                            title=react.Bind(focus(TaskField.STATE)),
                         )
                         with react.If(focus(TaskField.PERCENT)):
                             html.Span([react.Bind(focus(TaskField.PERCENT))], classes=str(Cls.TASK_NUMBER))
@@ -528,21 +526,23 @@ class Workbench(TrameApp):
                             size="xs",
                             variant="ghost",
                             classes=str(Cls.TASK_WIDE),
-                            title="Open This Run in the Viewer",
                             aria_label=react.Bind(f"'Open run for ' + {focus(TaskField.TITLE)}"),
                             on_click=react.Callback(self.open_task_run, args=f"[{focus(TaskField.RUN_ID)}]"),
                         )
 
             with html.Div(classes=str(Cls.TASK_END)):
                 with react.If(StateVar.TASK_ERROR):
-                    alert = html.Span(["Script Error · ", react.Bind(StateVar.TASK_ERROR)], classes=str(Cls.TASK_ALERT), title=react.Bind(StateVar.TASK_ERROR))
-                    _ = aria(alert, role="status", aria_live="polite")
+                    with Tip(content=react.Bind(StateVar.TASK_ERROR)):
+                        alert = html.Span(["Script Error · ", react.Bind(StateVar.TASK_ERROR)], classes=str(Cls.TASK_ALERT))
+                        _ = aria(alert, role="status", aria_live="polite")
 
                 with react.If(StateVar.TASK_FAILED):
-                    html.Span(["⊘ ", react.Bind(StateVar.TASK_FAILED)], classes=str(Cls.TASK_COUNT), title="Tasks That Failed Their Last Run")
+                    with Tip(content="Tasks that failed their last run"):
+                        html.Span(["⊘ ", react.Bind(StateVar.TASK_FAILED)], classes=str(Cls.TASK_COUNT))
 
                 with react.If(StateVar.TASK_STALLED):
-                    html.Span(["⧖ ", react.Bind(StateVar.TASK_STALLED)], classes=str(Cls.TASK_COUNT), title="Tasks Whose Solve Stalled")
+                    with Tip(content="Tasks whose solve stalled"):
+                        html.Span(["⧖ ", react.Bind(StateVar.TASK_STALLED)], classes=str(Cls.TASK_COUNT))
 
     def build_task_sheet(self) -> None:
         """The sheet over the dock's bottom edge: a row per task with its state, elapsed time and run, and its actions."""
@@ -585,7 +585,6 @@ class Workbench(TrameApp):
                             html.Span(
                                 [react.Bind(row(TaskField.STATE))],
                                 classes=react.Bind(f"{row(TaskField.FAILED)} ? {Cls.TASK_FAILED.value!r} : 'truncate'"),
-                                title=react.Bind(row(TaskField.STATE)),
                             )
                             with react.If(row(TaskField.PERCENT)):
                                 html.Span([react.Bind(row(TaskField.PERCENT))], classes=str(Cls.TASK_NUMBER))
@@ -600,7 +599,7 @@ class Workbench(TrameApp):
                                 html.Span([react.Bind(row(TaskField.ITERATIONS))], classes=str(Cls.TASK_ITERATIONS))
 
                         html.Td([react.Bind(row(TaskField.CLOCK))], classes=str(Cls.TASK_ELAPSED))
-                        html.Td([react.Bind(f"{row(TaskField.RUN_ID)} || '—'")], classes=str(Cls.TASK_RUN), title=react.Bind(row(TaskField.RUN_ID)))
+                        html.Td([react.Bind(f"{row(TaskField.RUN_ID)} || '—'")], classes=str(Cls.TASK_RUN))
                         with html.Td(), html.Div(classes=str(Cls.TASK_ACTIONS)):
                             with react.If(row(TaskField.RUN_ID)):
                                 Button(
@@ -753,10 +752,6 @@ class Workbench(TrameApp):
         """Queues one ended task again."""
         if self.board is not None:
             self.board.retry(label)
-
-    def theme(self) -> Theme:
-        """The scheme switch bound to the dark state; mounted in the root and in every panel, so a standalone ?ui= page and a popout paint it too."""
-        return Theme(dark=react.Bind(StateVar.DARK))
 
     def build_switcher(self) -> None:
         """The title as a menu over the catalogue."""
