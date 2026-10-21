@@ -285,7 +285,6 @@ class SweepMonitorPanel(PanelComponent):
                     Code(
                         value=react.Bind(self.key(SweepVar.TRACEBACK)),
                         language=PLAIN_TEXT,
-                        theme=self.app.palette.monaco_theme,
                         options=react.Bind(self.key(SweepVar.EDITOR)),
                         classes=str(Cls.FILL),
                     )

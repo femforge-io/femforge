@@ -14,8 +14,7 @@ const NOTICE_FILE = /^(notice|thirdpartynotices)/i;
 const SECTION_RULE = `\n\n${"-".repeat(80)}\n\n`;
 
 export interface Theme {
-  light: Record<string, string>;
-  dark: Record<string, string>;
+  colors: Record<string, string>;
   metrics: Record<string, number>;
   fonts: { sans: string; mono: string };
 }
@@ -61,29 +60,20 @@ function tokenValue(value: string): string {
   return formatHex(clampChroma(color, "oklch"));
 }
 
-/** The `:root` and `.dark` custom properties of styles.css: colours as sRGB hex, `--ff-*` px as numbers, the rest verbatim. */
+/** The `:root` custom properties of styles.css: colours as sRGB hex, `--ff-*` px as numbers, the rest verbatim. */
 export function themeFrom(css: string): Theme {
   const root = declarations(block(css, ":root"));
-  const dark = declarations(block(css, ".dark"));
-  const light: Record<string, string> = {};
+  const colors: Record<string, string> = {};
   const metrics: Record<string, number> = {};
 
   for (const [name, raw] of root) {
-    const value = resolveVar(raw, root, root);
+    const value = resolveVar(resolveVar(raw, root, root), root, root);
     const px = name.startsWith(METRIC_PREFIX) ? PX.exec(value) : null;
     if (px) metrics[name.slice(METRIC_PREFIX.length)] = Number(px[1]);
-    else light[name.slice(2)] = tokenValue(value);
+    else colors[name.slice(2)] = tokenValue(value);
   }
 
-  const darkTokens = { ...light };
-  for (const [name, raw] of dark) {
-    const value = resolveVar(raw, dark, root);
-    if (name.startsWith(METRIC_PREFIX) && PX.test(value)) continue;
-
-    darkTokens[name.slice(2)] = tokenValue(value);
-  }
-
-  return { light, dark: darkTokens, metrics, fonts: { sans: light["font-sans"], mono: light["font-mono"] } };
+  return { colors, metrics, fonts: { sans: colors["font-sans"], mono: colors["font-mono"] } };
 }
 
 /** The keys of the ICONS map in src/icons.ts. */

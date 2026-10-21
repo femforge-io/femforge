@@ -270,7 +270,7 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
     assert [texts(node)[0] for node in find(template, "ff-accordion-trigger")] == ["Symmetry", "Deformation", "Field", "Field Lines", "Bodies"]
     assert [prop(node, "id") for node in find(template, "ff-accordion-item")] == ["tour-symmetry", "tour-deformation", "tour-field", "tour-lines", "tour-bodies"]
     assert [prop(node, "htmlFor") for node in find(template, "ff-field-label") if prop(node, "htmlFor")] == [prop(node, "id") for node in find(template, "ff-switch")]
-    assert _bound(find(template, "ff-progress")[0], "value") == 100.0
+    assert [_bound(node, "active") for node in find(template, "ff-busy")] == [str(FieldVar.BUSY)]
 
 
 def test_the_run_picker_and_the_bundle_path_field_sit_in_the_app_bar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1330,7 +1330,9 @@ def test_the_controls_offer_a_color_input_per_row_and_a_swatch_per_colormap(tmp_
     assert [_bound(node, "items") for node in pickers] == [str(FieldVar.COLORMAP_ITEMS)] * 2
     assert _bound(pickers[1], "lead") == str(FieldVar.BODY_LEAD)
     assert [prop(node, "compact") for node in pickers] == [None, True], "the body colormap sits in the color column as a swatch"
-    assert str(FieldVar.OPACITY_MAPPING) in str(conditions)
+    reveals = [_bound(node, "open") for node in find(template, "ff-reveal")]
+    assert str(FieldVar.OPACITY_MAPPING) in reveals and str(FieldVar.WARP) in reveals, "the controls a switch governs expand and collapse with it"
+    assert str(FieldVar.OPACITY_MAPPING) not in str(conditions)
     assert app.state[FieldVar.FIELD_GRADIENT] == colormap_gradient("turbo")
 
 

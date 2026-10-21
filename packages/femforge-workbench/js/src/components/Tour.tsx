@@ -9,7 +9,7 @@ export type { TourSide, TourStep } from "./tour/steps";
 
 const PADDING = 4;
 const RADIUS = 6;
-const OVERLAY = "0 0 0 9999px rgb(0 0 0 / 0.55)";
+const OVERLAY = "0 0 0 9999px var(--scrim)";
 const POLL_MS = 100;
 const WAIT_MS = 2000;
 const NO_STEPS: TourStep[] = [];

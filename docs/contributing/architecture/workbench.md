@@ -116,18 +116,18 @@ Three places compare the stamp with the sources:
 
 ## Theme and tokens
 
-`packages/femforge-workbench/js/src/styles.css` is the single source of colour: the `:root` and `.dark` token blocks, the `--ff-*` metrics in pixels and the font stacks (`packages/femforge-workbench/js/src/styles.css:41-153`). At build time `themeFrom` converts each colour through culori to sRGB hex, reads each `--ff-*` pixel value as a number, and writes both schemes to `theme.json` (`packages/femforge-workbench/js/scripts/vite-plugin-dist.mts:64-87`).
+`packages/femforge-workbench/DESIGN.md` sets the design rules for the workbench UI: colors, states, motion and components. Read it before you change a panel.
 
-On the Python side, `load_tokens` reads `theme.json` and [Palette][femforge_workbench.theme.Palette] picks one scheme (`packages/femforge-workbench/src/femforge_workbench/theme.py:170-177`, `packages/femforge-workbench/src/femforge_workbench/theme.py:206-243`). The palette paints what the browser stylesheet cannot reach:
+The workbench has one dark scheme. `packages/femforge-workbench/js/src/styles.css` is the single source of colour: the `:root` token block holds the colours, the motion and delay tokens, the `--ff-*` metrics in pixels and the font stacks (`packages/femforge-workbench/js/src/styles.css:43-111`). `:root` also sets `color-scheme: dark`, and the `dark:` variant always applies (`packages/femforge-workbench/js/src/styles.css:9`), so the shadcn components paint their dark styles without a class on `<html>`. At build time `themeFrom` converts each colour through culori to sRGB hex, reads each `--ff-*` pixel value as a number, and writes `theme.json` (`packages/femforge-workbench/js/scripts/vite-plugin-dist.mts:64-77`).
+
+On the Python side, `load_tokens` reads `theme.json` and [Palette][femforge_workbench.theme.Palette] maps the tokens (`packages/femforge-workbench/src/femforge_workbench/theme.py:165-172`, `packages/femforge-workbench/src/femforge_workbench/theme.py:200-244`). The palette paints what the browser stylesheet cannot reach:
 
 | Consumer | Method |
 | --- | --- |
-| plotly | `plotly_template`, registered as the default template by `install` (`packages/femforge-workbench/src/femforge_workbench/theme.py:273-294`) |
-| pyvista | the scene panel's background and font colours (`packages/femforge-workbench/src/femforge_workbench/panels/scene.py:479-485`) |
-| xterm | `xterm_theme` (`packages/femforge-workbench/src/femforge_workbench/theme.py:296-298`) |
-| Monaco | `monaco_theme` (`packages/femforge-workbench/src/femforge_workbench/theme.py:255-258`) |
-
-The `ff-theme` element toggles `.dark` and `color-scheme` on `<html>`, where Radix portals outside the layout root see them (`packages/femforge-workbench/js/src/components/Theme.tsx:7-16`). The shell mounts it in the root and in every panel, so a standalone `?ui=` page and a popout window paint too (`packages/femforge-workbench/src/femforge_workbench/app.py:418`, `packages/femforge-workbench/src/femforge_workbench/app.py:753-755`, `packages/femforge-workbench/src/femforge_workbench/panels/__init__.py:212-213`). `popout.html` copies the opener's scheme before its first paint (`packages/femforge-workbench/js/public/popout.html:7-13`).
+| plotly | `plotly_template`, registered as the default template by `install` (`packages/femforge-workbench/src/femforge_workbench/theme.py:255-276`) |
+| pyvista | the scene panel's background and font colours (`packages/femforge-workbench/src/femforge_workbench/panels/scene.py:498-505`) |
+| xterm | `xterm_theme` (`packages/femforge-workbench/src/femforge_workbench/theme.py:278-280`) |
+| Monaco | the `vs-dark` theme, the `Code` component's default (`packages/femforge-workbench/js/src/components/Code.tsx:38`) |
 
 ## The dev reload loop
 

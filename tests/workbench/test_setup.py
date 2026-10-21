@@ -674,6 +674,9 @@ def test_the_handlers_select_announce_clear_and_show(tmp_path: Path, monkeypatch
         assert app.state[FieldVar.SELECTED_ENTITY] == "boundary:RIGHTFACE" and app.state[SetupVar.ANNOUNCE] == "Highlighted RightFace"
 
         panel.on_select("boundary:RIGHTFACE")
+        assert app.state[FieldVar.SELECTED_ENTITY] == "boundary:RIGHTFACE", "a second click keeps the row selected, so a double-click never clears it"
+
+        panel.on_select("")
         assert app.state[FieldVar.SELECTED_ENTITY] == "" and app.state[SetupVar.ANNOUNCE] == "Selection cleared"
 
         app.state[SetupVar.QUERY] = "left"

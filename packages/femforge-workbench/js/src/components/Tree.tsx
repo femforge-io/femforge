@@ -41,7 +41,7 @@ function leafIds(item: TreeItem): string[] {
 
 function TreeNode({ item, depth, selected, selectable, openAll, onToggle, onToggleAll }: TreeNodeProps) {
   const rowClass =
-    "flex h-[var(--ff-row-height)] w-full items-center gap-1.5 rounded-sm px-1 text-label hover:bg-accent";
+    "flex h-[var(--ff-row-height)] w-full items-center gap-1.5 rounded-sm px-1 text-label hover:bg-wash-hover";
 
   if (item.children && item.children.length > 0) {
     const leaves = leafIds(item);

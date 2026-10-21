@@ -1,5 +1,6 @@
 """Panel components: one trame template per dock panel, built inside its DivLayout with state namespaced by panel id."""
 
+import json
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ from femforge_workbench.dock import template_name
 from femforge_workbench.widgets.element import Shared as SharedProps
 from femforge_workbench.widgets.field import Field, FieldLabel
 from femforge_workbench.widgets.select import Select, SelectContent, SelectItem, SelectTrigger, SelectValue
+from femforge_workbench.widgets.tooltip import TooltipProvider
 
 
 if TYPE_CHECKING:
@@ -68,20 +70,19 @@ class Cls(StrEnum):
     TIMELINE = "ml-3.5 flex flex-col gap-1 border-l border-border py-1 pl-3 text-label"
     TIMELINE_ITEM = "flex items-center gap-2"
     LIST = "flex min-h-0 flex-1 flex-col overflow-auto text-label"
-    LIST_ITEM = "cursor-pointer px-2 py-1 hover:bg-accent/40"
+    LIST_ITEM = "cursor-pointer px-2 py-1 hover:bg-wash-hover"
     FRAME = "h-full w-full border-0 bg-background"
     IMAGE = "m-auto max-h-full max-w-full object-contain"
     RULES = "grid grid-cols-[1fr_auto_auto] items-center gap-2"
     CONTROLS = "flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden text-label"
     CONTROL = "w-full shrink-0 gap-1"
-    BUSY = "h-0.5 shrink-0 animate-pulse"
     SECTIONS = "flex w-full shrink-0 flex-col gap-2"
     SECTION_ITEM = "border-y border-border first:border-t-0"
-    SECTION_TRIGGER = "items-center rounded-none bg-muted/50 px-2 py-2 text-label font-semibold hover:bg-muted hover:no-underline focus-visible:ring-inset data-[state=open]:border-b"
+    SECTION_TRIGGER = "items-center rounded-none bg-card px-2 py-2 text-label font-semibold hover:bg-wash-hover hover:no-underline focus-visible:ring-inset data-[state=open]:border-b"
     SECTION_BODY = "flex flex-col gap-3 px-2 pt-3 pb-4"
     SECTION_BODY_STACK = "flex flex-col gap-3"
     SEGMENTED = "grid w-full grid-cols-3"
-    SEGMENT = "h-6 px-1 text-label data-[state=off]:text-muted-foreground data-[state=on]:bg-primary/20 data-[state=on]:font-semibold data-[state=on]:text-foreground"
+    SEGMENT = "h-6 px-1 text-label"
 
 
 class Shared(StrEnum):
@@ -209,8 +210,7 @@ class PanelComponent(TrameComponent):
         self.template_name = template_name(id)
         self.layout = DivLayout(app.server, template_name=self.template_name, style=FILL)
 
-        with self.layout:
-            _ = app.theme()
+        with self.layout, TooltipProvider():
             self.build()
 
     def build(self) -> None:
@@ -234,6 +234,20 @@ class PanelComponent(TrameComponent):
         self.bound.append(fn)
 
         return react.Callback(fn, args=args)
+
+    def optimistic(self, fn: Handler, model: str, value: str, args: str) -> react.Callback:
+        """A client event handler that writes the JS `value` into the state variable `model` at once, then calls `fn` with the JS `args` on the server.
+
+        Args:
+            fn: The server handler, which writes the same value and so changes nothing the control shows.
+            model: The state variable the control binds.
+            value: The JS expression the control's new state evaluates to.
+            args: The JS expression of `fn`'s argument list.
+        """
+        self.bound.append(fn)
+        name = json.dumps(self.server.trigger_name(fn))
+
+        return react.Callback(f"trame.state.set({json.dumps(model)}, {value}), trame.trigger({name}, {args})")
 
     def listen[L: Listener](self, *names: str) -> Callable[[L], L]:
         """Registers a state listener like `state.change`, one the panel drops again when disposed."""

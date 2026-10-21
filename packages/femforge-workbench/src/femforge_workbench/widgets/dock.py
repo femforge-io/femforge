@@ -21,7 +21,6 @@ class Dock(Element):
         self,
         *,
         render_panel: react.Slot | None = None,
-        dark: Prop[bool] = None,
         popout_url: Prop[str] = None,
         floating_group_bounds: Prop[FloatingGroupBounds] = None,
         on_ready: Event = None,
@@ -35,7 +34,6 @@ class Dock(Element):
 
         Args:
             render_panel: The slot rendering a panel's body from its params.
-            dark: Whether the dock paints its dark theme.
             popout_url: The page a popped-out group opens in.
             floating_group_bounds: Where a floating group may move: wholly within the viewport, or keeping the given minimum width and height in view.
             on_ready: Fires once the dock is mounted and can take panels.

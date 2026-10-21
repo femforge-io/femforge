@@ -38,6 +38,7 @@ from femforge_workbench.widgets.badge import Badge
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.dialog import Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle
 from femforge_workbench.widgets.input import Input
+from femforge_workbench.widgets.tip import Tip
 
 
 if TYPE_CHECKING:
@@ -686,14 +687,14 @@ class RunDetailPanel(PanelComponent):
     def build(self) -> None:
         """Builds the toolbar, the bundle's sections and the purge dialog, then follows the shared run selection."""
         with html.Div(classes=str(Cls.TOOLBAR)):
-            Button(
-                "Fields",
-                size=BUTTON_SIZE,
-                variant="secondary",
-                disabled=react.Bind(f"!{self.key(DetailVar.HAS_FIELDS)}"),
-                title=react.Bind(self.key(DetailVar.FIELDS_NOTE)),
-                on_click=self.callback(self.open_fields),
-            )
+            with Tip(content=react.Bind(self.key(DetailVar.FIELDS_NOTE))):
+                Button(
+                    "Fields",
+                    size=BUTTON_SIZE,
+                    variant="secondary",
+                    aria_disabled=react.Bind(f"!{self.key(DetailVar.HAS_FIELDS)}"),
+                    on_click=self.callback(self.open_fields),
+                )
             Button("Folder", size=BUTTON_SIZE, variant="secondary", on_click=self.callback(self.reveal))
             Button("Rehydrate", size=BUTTON_SIZE, variant="ghost", on_click=self.callback(self.rehydrate))
             Button("Purge", size=BUTTON_SIZE, variant="ghost", on_click=self.callback(self.open_purge))
@@ -776,12 +777,11 @@ class RunDetailPanel(PanelComponent):
 
         with react.If(f"{self.key(DetailVar.REFS)}.length"):
             html.Div("Store-Sourced Inputs", classes=str(Cls.SECTION))
-            with html.Div(classes=str(Cls.CHIPS)), react.For(items=self.key(DetailVar.REFS), name=REF):
+            with html.Div(classes=str(Cls.CHIPS)), react.For(items=self.key(DetailVar.REFS), name=REF), Tip(content=react.Bind(f"{REF}.{RefColumn.PATH}")):
                 Badge(
                     [react.Bind(f"{REF}.{RefColumn.KIND}"), "/", react.Bind(f"{REF}.{RefColumn.NAME}")],
                     variant="outline",
                     classes="cursor-pointer",
-                    title=react.Bind(f"{REF}.{RefColumn.PATH}"),
                     on_click=self.callback(self.open_ref, args=f"[{REF}.{RefColumn.PATH}]"),
                 )
 
@@ -987,7 +987,7 @@ class RunDetailPanel(PanelComponent):
     def open_fields(self) -> None:
         """Hands the bundle to the field viewer, or says so when no viewer is registered."""
         run: Run | None = self.selected()
-        if run is None:
+        if run is None or not self.state[self.key(DetailVar.HAS_FIELDS)]:
             return
 
         hook = self.ctrl[Hook.FIELD_OPEN]

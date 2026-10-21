@@ -18,7 +18,7 @@ RESERVED = frozenset({"self", "children", "kwargs", "__class__"})
 MODEL = "model"
 """The Python-only parameter of the control wrappers: the state variable the control binds and writes client-side."""
 
-RENAMES: Mapping[str, str] = {"aria_label": "aria-label", "aria_disabled": "aria-disabled"}
+RENAMES: Mapping[str, str] = {"aria_label": "aria-label", "aria_disabled": "aria-disabled", "aria_pressed": "aria-pressed"}
 """Parameters whose React prop is not their camelCase."""
 
 EVENT_PREFIX = "on_"

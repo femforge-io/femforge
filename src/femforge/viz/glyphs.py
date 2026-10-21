@@ -32,7 +32,7 @@ from femforge.physical.conditions import (
     Magnetization,
     SurfaceForce,
 )
-from femforge.physical.readout import along, readout
+from femforge.physical.readout import readout
 from femforge.physical.units import Quantity, U, Unit, quantity
 from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, SceneActor, feature_outline, run_manifest, warped
 from femforge.viz.field_lines import Bounds
@@ -71,7 +71,8 @@ __all__ = [
     "shown_diagonal",
     "mirrored",
     "clamp_ticks",
-    "pin_sample",
+    "spread",
+    "densified",
     "dashed",
     "circles",
     "plain_spec",
@@ -93,7 +94,7 @@ TICK_LENGTH: float = 0.012
 """`[-]`: The length of a clamp tick, as a share of the scene diagonal."""
 
 PIN_COUNT: int = 16
-"""The most support pins a held 3D face draws."""
+"""About how many support pins a held 3D face draws, or roller balls a held 2D face."""
 
 PIN_LENGTH: float = 0.03
 """`[-]`: The length of a support pin, as a share of the scene diagonal."""
@@ -137,10 +138,13 @@ HULL_SEGMENTS: int = 24
 MAGNET_SHARE: float = 0.5
 """`[-]`: The length of a magnet arrow, as a share of the smallest extent of its body."""
 
-HALO_SCALE: float = 1.12
-"""`[-]`: How much larger the dark halo behind an arrow is than the arrow."""
+TURN_STEP: float = 0.25
+"""`[deg]`: The step a mark lattice turns through to find a flat face's edges."""
 
-TRIAD_SHARE: float = 0.12
+HALO_WIDTH: float = 0.012
+"""`[-]`: How far the dark halo behind an arrow stands off its surface, as a share of the arrow length."""
+
+TRIAD_SHARE: float = 0.06
 """`[-]`: The length of a solve triad arrow, as a share of the scene diagonal."""
 
 DASH_SHARE: float = 0.01
@@ -160,6 +164,12 @@ SELECTION_LINE_PX: float = 4.0
 
 SILHOUETTE_LINE_PX: float = 3.0
 """`[px]`: The width of a selected body's silhouette in CSS pixels."""
+
+HOVER_LINE_PX: float = 2.0
+"""`[px]`: The width of a hovered entity's outline in CSS pixels."""
+
+HOVER_OPACITY: float = 0.4
+"""`[-]`: The opacity of a hovered boundary of a revolved section, which shows as a swept surface."""
 
 OUTLINE_LINE_PX: float = 2.0
 """`[px]`: The width of the section outline and the solve triad in CSS pixels."""
@@ -184,6 +194,9 @@ GLYPH_ACCENT = "#3b82f6"
 
 PLAIN_BODY = "#8c8c8c"
 """The grey every body takes under Plain Bodies."""
+
+PLAIN_SPECULAR: float = 0.3
+"""`[-]`: The specular strength of a plain body, so its faces read apart under the light."""
 
 GLYPH_PREFIX = "glyph-"
 """The prefix every glyph layer actor name starts with."""
@@ -249,6 +262,9 @@ class GlyphActor(StrEnum):
 
     HULL = "glyph-hull"
     """The ghost's silhouette and the dashed prism or revolved outline it is checked against."""
+
+    HOVER = "glyph-hover:"
+    """The prefix of each entity's hidden hover outline, which the browser shows while the entity's row is hovered."""
 
 
 GLYPH_ACTORS: tuple[GlyphActor, ...] = (
@@ -448,44 +464,85 @@ def mirrored(glyph: Glyph) -> Glyph:
     return glyph.model_copy(update={"anchor": flipped(glyph.anchor), "normal": flipped(glyph.normal), "vector": flipped(glyph.vector)})
 
 
+def spread(points: FloatArray, spacing: float) -> FloatArray:
+    """Rows on an even lattice ``spacing`` apart over ``points`` along their principal axes, so marks cover a face uniformly.
+
+    A flat set keeps the lattice points that land on it; a curved one snaps each to its nearest point.
+    """
+    unique: FloatArray = np.unique(points, axis=0)
+
+    if len(unique) < 2 or spacing <= 0.0:
+        return unique
+
+    center: FloatArray = unique.mean(axis=0)
+    offsets: FloatArray = unique - center
+    axes: FloatArray = np.linalg.svd(offsets, full_matrices=False)[2]
+    local: FloatArray = offsets @ axes.T
+    extent: FloatArray = np.ptp(local, axis=0)
+    spans: list[bool] = cast("list[bool]", (extent > FLAT_RATIO * extent.max()).tolist())
+
+    if spans == [True, True, False]:
+        # Uneven nodes tilt the principal axes off a rectangle's edges; the tightest bounding box in the plane lies along them.
+        turns = cast("list[float]", np.radians(np.arange(0.0, 90.0, TURN_STEP)).tolist())
+        boxes: list[float] = [float(np.ptp(local[:, :2] @ [math.cos(turn), math.sin(turn)]) * np.ptp(local[:, :2] @ [-math.sin(turn), math.cos(turn)])) for turn in turns]
+        turn = turns[int(np.argmin(boxes))]
+        axes = np.array([[math.cos(turn), math.sin(turn), 0.0], [-math.sin(turn), math.cos(turn), 0.0], [0.0, 0.0, 1.0]]) @ axes
+        local = offsets @ axes.T
+        extent = np.ptp(local, axis=0)
+
+    low: FloatArray = local.min(axis=0)
+    lows: list[float] = cast("list[float]", low.tolist())
+    extents: list[float] = cast("list[float]", extent.tolist())
+    rows: list[FloatArray] = []
+
+    for start, span, spanned in zip(lows, extents, spans, strict=True):
+        cells: int = max(1, round(span / spacing)) if spanned else 1
+        rows.append(start + (np.arange(cells, dtype=np.float64) + 0.5) * span / cells)
+
+    lattice: FloatArray = np.stack(np.meshgrid(*rows, indexing="ij"), axis=-1).reshape(-1, 3)
+    gaps: FloatArray = np.linalg.norm(lattice[:, np.newaxis, :] - local[np.newaxis, :, :], axis=2)
+    nearest: IntArray = gaps.argmin(axis=1)
+    near: np.typing.NDArray[np.bool_] = gaps[np.arange(len(lattice)), nearest] < 0.75 * spacing
+
+    if all(spans):
+        return np.unique(unique[nearest[near]], axis=0)
+
+    return center + lattice[near] @ axes
+
+
+def densified(segments: FloatArray, step: float) -> FloatArray:
+    """The ``(m, 2, 3)`` segments as points no more than ``step`` apart along each."""
+    pieces: list[FloatArray] = [segments.reshape(-1, 3)]
+
+    if step <= 0.0:
+        return pieces[0]
+
+    spans: FloatArray = segments[:, 1] - segments[:, 0]
+    counts: list[int] = cast("list[int]", np.ceil(np.linalg.norm(spans, axis=1) / step).astype(np.int64).tolist())
+
+    for index, count in enumerate(counts):
+        if count > 1:
+            steps: FloatArray = np.linspace(0.0, 1.0, count + 1)[1:-1, np.newaxis]
+            pieces.append(segments[index : index + 1, 0] + steps * spans[index : index + 1])
+
+    return np.concatenate(pieces)
+
+
 def clamp_ticks(segments: FloatArray, outward: Vec3, diagonal: float) -> FloatArray:
-    """The ``(k, 2, 3)`` 45° clamp ticks every `TICK_SPACING` of the diagonal along a held face, on its outward side.
+    """The ``(k, 2, 3)`` parallel 45° clamp ticks every `TICK_SPACING` of the diagonal along a held 2D face, on its outward side.
 
     Args:
-        segments: The ``(m, 2, 3)`` segments of the face.
-        outward: The face's outward normal.
+        segments: The ``(m, 2, 3)`` segments of the face, in any order.
+        outward: The face's outward normal in the section plane.
         diagonal: The scene diagonal the spacing and length scale with.
     """
     spacing: float = TICK_SPACING * diagonal
-    reach: float = TICK_LENGTH * diagonal
     out: FloatArray = np.asarray(outward.normalized().to_list(), dtype=np.float64)
-    starts: FloatArray = segments[:, 0]
-    spans: FloatArray = segments[:, 1] - starts
-    lengths: list[float] = cast("list[float]", np.linalg.norm(spans, axis=1).tolist())
-    ticks: list[FloatArray] = [np.zeros((0, 2, 3), dtype=np.float64)]
-    walked: float = 0.0
+    along_face: FloatArray = np.array([-out[1], out[0], 0.0])
+    slant: FloatArray = TICK_LENGTH * diagonal * (out + along_face) / math.sqrt(2.0)
+    bases: FloatArray = spread(densified(segments, spacing / 8.0), spacing)
 
-    for index, length in enumerate(lengths):
-        if length == 0.0:
-            continue
-
-        tangent: FloatArray = spans[index : index + 1] / length
-        first: int = math.ceil(walked / spacing)
-        last: int = math.floor((walked + length) / spacing)
-        offsets: FloatArray = np.arange(first, last + 1, dtype=np.float64) * spacing - walked
-        bases: FloatArray = starts[index : index + 1] + offsets[:, np.newaxis] * tangent
-        slant: FloatArray = (out + tangent) / math.sqrt(2.0)
-        ticks.append(np.stack([bases, bases + reach * slant], axis=1))
-        walked += length
-
-    return np.concatenate(ticks)
-
-
-def pin_sample(points: FloatArray) -> FloatArray:
-    """At most `PIN_COUNT` evenly strided rows of ``points``."""
-    picked: IntArray = np.unique(np.round(np.linspace(0, len(points) - 1, min(len(points), PIN_COUNT))).astype(np.int64))
-
-    return points[picked]
+    return np.stack([bases, bases + slant], axis=1)
 
 
 def dashed(segments: FloatArray, dash: float) -> FloatArray:
@@ -658,6 +715,9 @@ class GlyphView(BaseModel):
     accent: str = GLYPH_ACCENT
     """The selection color, any color pyvista resolves."""
 
+    hover: str = GLYPH_ACCENT
+    """The hover outline color, any color pyvista resolves."""
+
     ink: str = GLYPH_HALO
     """The color of lines drawn against the background: marks, leaders, the outline, the triad and the hull."""
 
@@ -746,8 +806,8 @@ class GlyphHost(Protocol):
 class GlyphDraw:
     """One merged glyph actor: its name, its geometry and how it is styled."""
 
-    actor: GlyphActor
-    """The actor name."""
+    actor: str
+    """The actor name: a `GlyphActor`, or the hover prefix and an entity id."""
 
     mesh: pv.PolyData
     """The geometry, in the displayed scene's frame."""
@@ -828,7 +888,7 @@ def _merged(meshes: Sequence[pv.PolyData]) -> pv.PolyData:  # pragma: no cover -
 
 
 def _arrow(tail: FloatArray, head: FloatArray, *, halo: bool = False) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-    """An arrow from ``tail`` to ``head``, or its halo grown `HALO_SCALE` about its middle."""
+    """An arrow from ``tail`` to ``head``, or its halo: the arrow pushed out along its normals by `HALO_WIDTH` of its length."""
     import pyvista as pv
 
     span: FloatArray = head - tail
@@ -839,10 +899,11 @@ def _arrow(tail: FloatArray, head: FloatArray, *, halo: bool = False) -> pv.Poly
     if not halo:
         return arrow
 
-    middle: FloatArray = (tail + head) / 2.0
-    arrow.points = middle + HALO_SCALE * (np.asarray(arrow.points, dtype=np.float64) - middle)
+    shell: pv.PolyData = cast("pv.PolyData", arrow.compute_normals(point_normals=True, cell_normals=False, split_vertices=False, auto_orient_normals=True))
+    normals: FloatArray = np.asarray(shell.point_data["Normals"], dtype=np.float64)
+    shell.points = np.asarray(shell.points, dtype=np.float64) + HALO_WIDTH * float(np.linalg.norm(span)) * normals
 
-    return arrow
+    return shell
 
 
 def glyph_actors(
@@ -869,6 +930,7 @@ def glyph_actors(
     leaders: list[FloatArray] = []
     spots: list[FloatArray] = []
     texts: list[str] = []
+    areas: list[float] = []
     shown: list[Glyph] = [glyph for glyph in glyphs if glyph.kind in view.kinds and glyph.ref.id not in view.hidden]
 
     def point(vector: Vec3) -> FloatArray:
@@ -912,6 +974,7 @@ def glyph_actors(
                 surface.points = np.asarray(surface.points, dtype=np.float64) + lift * point(glyph.normal)
 
             faces.append(surface)
+            areas.append(float(surface.area))
 
             return np.asarray(surface.points, dtype=np.float64)
 
@@ -942,6 +1005,7 @@ def glyph_actors(
                 chip(glyph, point(end + gap if pulled else start - gap))
             case ConditionGlyph.FIXED_DISPLACEMENT:
                 held: FloatArray | None = tint(glyph)
+                area: float = areas[-1] if areas else 0.0
                 outward: Vec3 | None = glyph.normal
 
                 if held is not None and outward is not None and placement.flat:
@@ -949,13 +1013,14 @@ def glyph_actors(
                     segments: FloatArray = held.reshape(-1, 2, 3) + toward_viewer
 
                     if rolled:
-                        middles: FloatArray = pin_sample(segments.mean(axis=1))
                         radius: float = ROLLER_RADIUS * diagonal
+                        face_length: float = float(np.linalg.norm(segments[:, 1] - segments[:, 0], axis=1).sum())
+                        middles: FloatArray = spread(densified(segments, radius), max(face_length / PIN_COUNT, 3.0 * radius))
                         marks.append(circles(middles + radius * point(outward), radius))
                     else:
                         marks.append(clamp_ticks(segments, outward, diagonal))
                 elif held is not None and outward is not None:
-                    roots: FloatArray = pin_sample(held)
+                    roots: FloatArray = spread(held, math.sqrt(area / PIN_COUNT))
                     tips: FloatArray = roots + PIN_LENGTH * diagonal * point(outward)
                     marks.append(np.stack([roots, tips], axis=1))
 
@@ -1097,6 +1162,9 @@ class GlyphLayer:
     label_texts: tuple[str, ...] = ()
     """The text at each of ``label_spots``."""
 
+    hover_actors: dict[str, pv.Actor] = field(default_factory=dict)
+    """The hidden hover outline of each entity id the last draw outlined."""
+
     @classmethod
     def from_run(cls, run: Run, scene: FieldScene | None = None) -> GlyphLayer:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
         """The glyphs of ``run`` from its conditions sidecar and entities, in the frame of ``scene`` when given, else of its manifest."""
@@ -1212,6 +1280,7 @@ class GlyphLayer:
         self.names = frozenset()
         self.label_spots = np.zeros((0, 3))
         self.label_texts = ()
+        self.hover_actors = {}
 
         if view is None:
             return
@@ -1263,8 +1332,94 @@ class GlyphLayer:
                 name=str(draw.actor),
             )
 
-        self.names = frozenset(f"{draw.actor}{LABELS_SUFFIX}" if draw.labels else str(draw.actor) for draw in merged)
+        for ref in self.refs(host):
+            hover: GlyphDraw | None = self.hover_draw(ref, host, view)
+            if hover is None or not hover.mesh.n_points:
+                continue
+
+            actor = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
+                hover.mesh,
+                color=hover.color,
+                opacity=hover.opacity,
+                line_width=hover.line_width,
+                show_scalar_bar=False,
+                reset_camera=False,
+                render=False,
+                name=hover.actor,
+            )
+            actor.SetVisibility(False)
+            self.hover_actors[ref.id] = actor
+
+        hovers: list[str] = [f"{GlyphActor.HOVER}{ref_id}" for ref_id in self.hover_actors]
+        self.names = frozenset([*(f"{draw.actor}{LABELS_SUFFIX}" if draw.labels else str(draw.actor) for draw in merged), *hovers])
         log.bind(run_id=self.run_id, actors=sorted(self.names), glyphs=len(self.glyphs)).debug("Glyphs drawn.")
+
+    def refs(self, host: GlyphHost) -> list[EntityRef]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """Every body ``host`` draws and every boundary of the run."""
+        bodies: list[EntityRef] = [EntityRef(kind=EntityKind.BODY, name=name) for name in host.blocks.keys()]
+
+        return [*bodies, *(EntityRef(kind=EntityKind.BOUNDARY, name=boundary.name) for boundary in self.boundaries)]
+
+    def hover_draw(self, ref: EntityRef, host: GlyphHost, view: GlyphView) -> GlyphDraw | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The outline ``ref`` shows while its row is hovered: a body's feature edges, a boundary's lines or rim; None when it has no cells.
+
+        Args:
+            ref: The body or boundary to outline.
+            host: The scene the outline sits on, whose warp it follows.
+            view: The view whose hover color and pixel scale it takes.
+        """
+        import pyvista as pv
+
+        placement: GlyphPlacement = self.placement(host)
+        lift: float = 2.0 * TINT_LIFT * placement.diagonal
+        name: str = f"{GlyphActor.HOVER}{ref.id}"
+        width: float = HOVER_LINE_PX * view.scale
+
+        if ref.kind is EntityKind.BODY:
+            if ref.name not in host.blocks.keys():
+                return None
+
+            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([cast("pv.DataSet", host.blocks[ref.name])]))
+            if edges is None:
+                return None
+
+            if placement.flat and not placement.revolved:
+                edges.points = np.asarray(edges.points, dtype=np.float64) + np.array([0.0, 0.0, lift])
+
+            return GlyphDraw(name, edges, color=view.hover, line_width=width)
+
+        cells: pv.DataSet | None = self.group_cells(ref, host)
+        if cells is None:
+            return None
+
+        if host.warped is not None:
+            field, scale = host.warped
+            # A boundary without a condition comes from the plain mesh, so it takes the solved displacement from the bodies around it.
+            carrying: pv.DataSet = cells if field in cells.point_data else cast("pv.DataSet", cells.sample(host.section_blocks.combine()))
+            cells = warped(carrying, field, scale) if field in carrying.point_data else cells
+
+        boundary: Boundary | None = next((candidate for candidate in self.boundaries if candidate.name == ref.name), None)
+        normal: FloatArray = np.zeros(3) if boundary is None or boundary.normal is None else np.asarray(boundary.normal.to_list(), dtype=np.float64)
+
+        if placement.flat and placement.revolved and placement.basis is not None:
+            raised: FloatArray = _segments(cells).reshape(-1, 3) + lift * normal
+            pairs: IntArray = np.arange(len(raised), dtype=np.int64).reshape(-1, 2)
+
+            return GlyphDraw(name, _surface(swept_lines(raised, pairs, placement.basis, sweep=placement.sweep)), color=view.hover, opacity=HOVER_OPACITY)
+
+        if placement.flat:
+            segments: FloatArray = _segments(cells) + np.array([0.0, 0.0, lift])
+            copies: list[FloatArray] = [copy.reshape(-1, 2, 3) for copy in placement.copies(segments.reshape(-1, 3))]
+
+            return GlyphDraw(name, _polylines(np.concatenate(copies)), color=view.hover, line_width=width)
+
+        # A group's boundary elements come with mixed windings, which the feature filter reads as folds between neighbours; a 3D rim stays on the surface, where VTK draws lines over coincident faces.
+        surface: pv.PolyData = cast("pv.PolyData", cells.extract_surface(algorithm=None))
+        faced: bool = surface.GetNumberOfPolys() > 0
+        wound: pv.PolyData = cast("pv.PolyData", surface.compute_normals(cell_normals=True, point_normals=False, consistent_normals=True, split_vertices=False)) if faced else surface
+        rim: pv.PolyData | None = feature_outline(pv.MultiBlock([wound]))
+
+        return GlyphDraw(name, rim, color=view.hover, line_width=width) if rim is not None else None
 
     def glyph_draws(self, host: GlyphHost, view: GlyphView) -> list[GlyphDraw]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
         """The condition glyphs over ``host``, their anchors and cells moved with its warp."""
@@ -1354,18 +1509,14 @@ class GlyphLayer:
             reach: float = TRIAD_SHARE * diagonal
             gap: float = reach / 2.0
             # Labels run right from their point, so the triad sits wholly below the section to keep its Y label off the body.
-            corner: FloatArray = np.array([bounds[0] - gap, bounds[2] - gap - reach, 0.0])
+            corner: FloatArray = np.array([bounds[0], bounds[2] - gap - reach, 0.0])
             axes: FloatArray = np.array([[corner, corner + [reach, 0.0, 0.0]], [corner, corner + [0.0, reach, 0.0]]])
             draws.append(stroked(GlyphActor.TRIAD, _polylines(np.concatenate(placement.copies(axes.reshape(-1, 3))[:1]).reshape(-1, 2, 3))))
 
             if view.labels is GlyphLabels.SCENE:
                 across, up = self.frame.axis_names
                 tips: FloatArray = placement.placed(axes[:, 1])
-                draws.append(
-                    GlyphDraw(
-                        GlyphActor.LABELS, pv.PolyData(tips), labels=(f"{across} = Authored {along(plane.x_dir)}", f"{up} = Authored {along(plane.y_dir)}"), font_size=round(LABEL_FONT_PX * view.scale)
-                    )
-                )
+                draws.append(GlyphDraw(GlyphActor.LABELS, pv.PolyData(tips), labels=(across, up), font_size=round(LABEL_FONT_PX * view.scale)))
 
             if placement.revolved:
                 square: FloatArray = np.array([[bounds[0], bounds[2], 0.0], [bounds[1], bounds[2], 0.0], [bounds[1], bounds[3], 0.0], [bounds[0], bounds[3], 0.0]])
@@ -1513,11 +1664,25 @@ class GroupScene:
         return cells
 
     def render(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated glyph tests
-        """Draw every body plain grey, then the glyph layer."""
+        """Draw every body plain grey and shaded, a solid run's feature edges in black over them, then the glyph layer."""
         for name in (str(key) for key in self.blocks.keys()):
             surface: pv.PolyData = cast("pv.PolyData", cast("pv.DataSet", self.blocks[name]).extract_surface(algorithm=None))
             surface.clear_data()
-            _ = plotter.add_mesh(surface, color=PLAIN_BODY, show_scalar_bar=False, reset_camera=False, name=SceneActor.STYLED.of(name))  # pyright: ignore[reportUnknownMemberType]
+            _ = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
+                surface,
+                color=PLAIN_BODY,
+                smooth_shading=True,
+                split_sharp_edges=True,
+                specular=PLAIN_SPECULAR,
+                show_scalar_bar=False,
+                reset_camera=False,
+                name=SceneActor.STYLED.of(name),
+            )
+
+        edges: pv.PolyData | None = feature_outline(self.blocks) if self.frame.model_dim == 3 else None
+
+        if edges is not None:
+            _ = plotter.add_mesh(edges, color="black", line_width=OUTLINE_LINE_PX, reset_camera=False, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
 
         if self.glyphs is not None:
             self.glyphs.update(plotter, self, self.glyph_view)

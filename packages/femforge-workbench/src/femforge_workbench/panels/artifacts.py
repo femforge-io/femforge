@@ -38,6 +38,7 @@ from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.input import Input
 from femforge_workbench.widgets.switch import Switch
 from femforge_workbench.widgets.table import ColumnSpec, Table
+from femforge_workbench.widgets.tip import Tip
 
 
 if TYPE_CHECKING:
@@ -503,12 +504,14 @@ class ArtifactDetailPanel(PanelComponent):
         """Builds the title with its copy button, the full key and the store path."""
         with html.Div(classes=str(Cls.SECTION)):
             html.Span([react.Bind(self.key(DetailVar.TITLE))])
-            with Button(
-                size=ICON_SIZE,
-                variant="ghost",
-                title="Copy the full key",
-                aria_label="Copy the full key",
-                on_click=copy_handler(self.key(DetailVar.KEY)),
+            with (
+                Tip(content="Copy the full key"),
+                Button(
+                    size=ICON_SIZE,
+                    variant="ghost",
+                    aria_label="Copy the full key",
+                    on_click=copy_handler(self.key(DetailVar.KEY)),
+                ),
             ):
                 Icon("copy")
 
@@ -532,7 +535,6 @@ class ArtifactDetailPanel(PanelComponent):
             Code(
                 value=react.Bind(self.key(DetailVar.SPEC)),
                 language=JSON_LANGUAGE,
-                theme=self.app.palette.monaco_theme,
                 options=react.Bind(self.key(DetailVar.EDITOR)),
             )
 

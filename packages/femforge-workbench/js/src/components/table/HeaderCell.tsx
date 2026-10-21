@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+﻿import type { CSSProperties } from "react";
 import { flexRender, type Header } from "@tanstack/react-table";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { FacetFilter, type TableColumn } from "./FacetFilter";
 import type { Features, TableRow } from "./features";
 import type { ColumnSpec } from "./layout";
+import { Tip } from "@/components/Tip";
 
 interface HeaderCellProps {
   header: Header<Features, TableRow, unknown>;
@@ -105,14 +106,12 @@ export function HeaderCell({ header, spec, pinned, filterable, groupable, facetL
           {...attributes}
           {...listeners}
         >
-          <span
-            className="min-w-0 cursor-pointer truncate"
-            onClick={column.getToggleSortingHandler()}
-            title={column.id}
-          >
-            {flexRender(column.columnDef.header, header.getContext())}
-          </span>
-          <span className="w-3 shrink-0 text-primary">
+          <Tip content={column.id}>
+            <span className="min-w-0 cursor-pointer truncate" onClick={column.getToggleSortingHandler()}>
+              {flexRender(column.columnDef.header, header.getContext())}
+            </span>
+          </Tip>
+          <span className="w-3 shrink-0 text-foreground">
             {sorted === "asc" ? (
               <ArrowUp className="size-3" />
             ) : sorted === "desc" ? (

@@ -11,6 +11,7 @@ from femforge_workbench.panels import Cls, PanelComponent
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.term import Term
+from femforge_workbench.widgets.tip import Tip
 
 
 if TYPE_CHECKING:
@@ -66,16 +67,18 @@ class LogPanel(PanelComponent):
         with html.Div(classes=str(Cls.TOOLBAR)):
             html.Span([react.Bind(self.key(StateVar.COUNT)), " lines"], classes=str(Cls.CAPTION))
             html.Span(classes=str(Cls.SPACER))
-            with Button(
-                size=BUTTON_SIZE,
-                variant="ghost",
-                title="Scroll to the end",
-                aria_label="Scroll to the end",
-                on_click=self.callback(self.scroll_bottom),
+            with (
+                Tip(content="Scroll to the end"),
+                Button(
+                    size=BUTTON_SIZE,
+                    variant="ghost",
+                    aria_label="Scroll to the end",
+                    on_click=self.callback(self.scroll_bottom),
+                ),
             ):
                 Icon("chevron-down")
 
-            with Button(size=BUTTON_SIZE, variant="ghost", title="Clear", aria_label="Clear", on_click=self.callback(self.clear)):
+            with Tip(content="Clear"), Button(size=BUTTON_SIZE, variant="ghost", aria_label="Clear", on_click=self.callback(self.clear)):
                 Icon("trash-2")
 
         with html.Div(classes=str(Cls.FILL)):

@@ -28,6 +28,7 @@ from femforge_workbench.panels.figure import FigurePanel
 from femforge_workbench.panels.log import LogPanel
 from femforge_workbench.panels.runs import StageField, StatusVariant, stage_rows
 from femforge_workbench.widgets.badge import Badge
+from femforge_workbench.widgets.tip import Tip
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 
 
@@ -222,11 +223,10 @@ class RunMonitorPanel(PanelComponent):
 
         with html.Div(classes=str(Cls.COLUMN)):
             with html.Div(classes=str(Cls.STRIP)):
-                with react.For(items=self.key(RunVar.STAGES), name=ROW):
+                with react.For(items=self.key(RunVar.STAGES), name=ROW), Tip(content=react.Bind(f"{ROW}.{StageField.STATE}")):
                     Badge(
                         [react.Bind(f"{ROW}.{StageField.STAGE}"), " · ", react.Bind(f"{ROW}.{StageField.SECONDS}"), " s"],
                         variant=react.Bind(f"{ROW}.{StageField.VARIANT}"),
-                        title=react.Bind(f"{ROW}.{StageField.STATE}"),
                     )
 
                 with react.If(f"!{self.key(RunVar.STAGES)}.length"):

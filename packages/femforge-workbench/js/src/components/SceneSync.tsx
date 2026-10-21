@@ -1,4 +1,9 @@
+import { animate } from "motion";
+import { useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
+
+import { between, type Pose } from "@/components/scene/camera";
+import { easeInstrument, token } from "@/lib/motion";
 
 export interface SceneSyncProps {
   /** The trame ref of the LocalView whose camera drives the triad and whose canvas is measured. */
@@ -7,8 +12,24 @@ export interface SceneSyncProps {
   cameraId: number;
   /** The wasm id of the vtkMatrix4x4 the triad actor carries as its user matrix. */
   matrixId: number;
+  /** The wasm id of the main renderer, whose clipping range follows a glide. */
+  rendererId?: number;
+  /** A camera the mirror glides to; each new `seq` starts a glide from wherever the camera is. */
+  move?: CameraMove | null;
+  /** The wasm id of the hidden outline actor of each entity id. */
+  highlights?: Record<string, number> | null;
+  /** The entity id whose outline shows; empty shows none. */
+  highlighted?: string | null;
   /** Called with `{width, height, ratio}` of the mirror's canvas in device pixels, whenever it changes. */
   onResize?: (size: CanvasSize) => void;
+}
+
+export interface CameraMove {
+  seq: number;
+  position: Vector;
+  focal_point: Vector;
+  view_up: Vector;
+  parallel_scale: number;
 }
 
 export interface CanvasSize {
@@ -23,6 +44,7 @@ interface CameraState {
   Position: Vector;
   FocalPoint: Vector;
   ViewUp: Vector;
+  ParallelScale?: number;
 }
 
 interface NativeSession {
@@ -40,10 +62,12 @@ interface RemoteSession {
 
 interface LocalViewHandle {
   getRemoteSession(): RemoteSession | undefined;
+  render(): void;
 }
 
 const RETRY_MS = 100;
 const SETTLE_MS = 150;
+const OUTLINE_CHECK_MS = 200;
 const MODIFIED = "ModifiedEvent";
 
 function normalized([x, y, z]: Vector): Vector {
@@ -87,9 +111,106 @@ function stateOf(session: RemoteSession, id: number): unknown {
   }
 }
 
-/** Turns the mirror's triad with its camera and tells the server how large the mirror's canvas is; renders nothing but an anchor to find that canvas by. */
-export function SceneSync({ viewRef, cameraId, matrixId, onResize }: SceneSyncProps) {
+/** Turns the mirror's triad with its camera, glides the camera to each move the server sends, and tells the server how large the mirror's canvas is; renders nothing but an anchor to find that canvas by. */
+export function SceneSync({
+  viewRef,
+  cameraId,
+  matrixId,
+  rendererId,
+  move,
+  highlights,
+  highlighted,
+  onResize,
+}: SceneSyncProps) {
   const anchor = useRef<HTMLSpanElement>(null);
+  const reduced = useReducedMotion();
+  const outlined = useRef<number | undefined>(undefined);
+
+  // Showing an outline is a visibility flip in the browser, so it follows the pointer without a server round trip.
+  useEffect(() => {
+    const next = highlighted ? highlights?.[highlighted] : undefined;
+
+    const show = (): void => {
+      const handle = window.trame?.refs[viewRef] as LocalViewHandle | undefined;
+      const session = handle?.getRemoteSession?.();
+      if (!handle || !session) return;
+
+      const known = (id: number | undefined): id is number => Boolean(id) && Boolean(stateOf(session, id as number));
+      const previous = outlined.current;
+      let changed = false;
+      // The wasm bindings take VTK's int flag; a JS boolean leaves the actor as it was.
+      if (previous !== next && known(previous)) {
+        session.native.invoke(previous, "SetVisibility", [0]);
+        changed = true;
+      }
+
+      outlined.current = next;
+      if (known(next) && session.native.invoke(next, "GetVisibility", []) === 0) {
+        session.native.invoke(next, "SetVisibility", [1]);
+        changed = true;
+      }
+
+      if (changed) handle.render();
+    };
+
+    show();
+    if (next === undefined) return undefined;
+
+    // A redrawn scene's actors reach the mirror after their ids, and every sync writes the server's hidden state back.
+    const timer = window.setInterval(show, OUTLINE_CHECK_MS);
+
+    return () => window.clearInterval(timer);
+  }, [viewRef, highlights, highlighted]);
+
+  useEffect(() => {
+    if (!move) return undefined;
+
+    const handle = window.trame?.refs[viewRef] as LocalViewHandle | undefined;
+    const session = handle?.getRemoteSession?.();
+    const start = session ? stateOf(session, cameraId) : undefined;
+    if (!handle || !session || !isCameraState(start)) return undefined;
+
+    const from: Pose = {
+      position: start.Position,
+      focalPoint: start.FocalPoint,
+      viewUp: start.ViewUp,
+      parallelScale: start.ParallelScale ?? move.parallel_scale,
+    };
+    const to: Pose = {
+      position: move.position,
+      focalPoint: move.focal_point,
+      viewUp: move.view_up,
+      parallelScale: move.parallel_scale,
+    };
+    const show = (pose: Pose): void => {
+      session.native.invoke(cameraId, "SetPosition", pose.position);
+      session.native.invoke(cameraId, "SetFocalPoint", pose.focalPoint);
+      session.native.invoke(cameraId, "SetViewUp", pose.viewUp);
+      session.native.invoke(cameraId, "SetParallelScale", [pose.parallelScale]);
+      if (rendererId !== undefined) session.native.invoke(rendererId, "ResetCameraClippingRange", []);
+      handle.render();
+    };
+    const duration = reduced ? 0 : token("--duration-camera") / 1000;
+    if (duration === 0) {
+      show(to);
+
+      return undefined;
+    }
+
+    const glide = animate(0, 1, { duration, ease: easeInstrument(), onUpdate: (t) => show(between(from, to, t)) });
+    // Any input in the view takes the camera over from the glide.
+    const canvas = anchor.current?.parentElement?.querySelector("canvas");
+    const stop = (): void => glide.stop();
+    canvas?.addEventListener("pointerdown", stop);
+    canvas?.addEventListener("wheel", stop, { passive: true });
+
+    return () => {
+      glide.stop();
+      canvas?.removeEventListener("pointerdown", stop);
+      canvas?.removeEventListener("wheel", stop);
+    };
+    // A move is identified by its seq; a re-render with the same move must not restart it.
+  }, [move?.seq, viewRef, cameraId, rendererId, reduced]);
 
   useEffect(() => {
     let timer = 0;

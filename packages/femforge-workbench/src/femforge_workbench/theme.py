@@ -23,13 +23,6 @@ TITLELESS_TOP_MARGIN = 30
 type Json = dict[str, object]
 
 
-class Scheme(StrEnum):
-    """The two colour schemes theme.json carries."""
-
-    LIGHT = "light"
-    DARK = "dark"
-
-
 class Token(StrEnum):
     """The stylesheet tokens the palette reads."""
 
@@ -50,8 +43,9 @@ CHART_TOKENS = (Token.CHART_1, Token.CHART_2, Token.CHART_3, Token.CHART_4, Toke
 
 
 class Section(StrEnum):
-    """The non-scheme sections of theme.json."""
+    """The sections of theme.json."""
 
+    COLORS = "colors"
     METRICS = "metrics"
     FONTS = "fonts"
 
@@ -151,16 +145,16 @@ def text(source: Mapping[str, object], key: str, fallback: str) -> str:
 
 @dataclass(frozen=True)
 class Tokens:
-    """What theme.json carries: the colours of each scheme, the metrics in CSS pixels and the font stacks."""
+    """What theme.json carries: the colours, the metrics in CSS pixels and the font stacks."""
 
-    colors: Mapping[str, Mapping[str, str]]
+    colors: Mapping[str, str]
     metrics: Mapping[str, float]
     fonts: Mapping[str, str]
 
     @classmethod
     def from_json(cls, document: Mapping[str, object]) -> "Tokens":
         """Reads the tokens from theme.json's document."""
-        colors = {str(scheme): {name: str(value) for name, value in section(document, scheme).items()} for scheme in Scheme}
+        colors = {name: str(value) for name, value in section(document, Section.COLORS).items()}
         metrics = {name: float(cast("float", value)) for name, value in section(document, Section.METRICS).items()}
         fonts = {name: str(value) for name, value in section(document, Section.FONTS).items()}
 
@@ -204,7 +198,7 @@ class Tones:
 
 @dataclass(frozen=True)
 class Palette:
-    """The colours the panels share, read from one scheme of the tokens."""
+    """The colours the panels share, read from the tokens."""
 
     paper: str
     plot: str
@@ -213,15 +207,14 @@ class Palette:
     accent: str
     muted: str
     chart: tuple[str, ...]
-    dark: bool
     metrics: Metrics
     font: str
     mono: str
 
     @classmethod
-    def from_tokens(cls, tokens: Tokens, *, dark: bool) -> "Palette":
-        """The palette of one scheme of the tokens."""
-        colors = tokens.colors[Scheme.DARK if dark else Scheme.LIGHT]
+    def from_tokens(cls, tokens: Tokens) -> "Palette":
+        """The palette of the tokens."""
+        colors = tokens.colors
 
         return cls(
             paper=colors[Token.BACKGROUND],
@@ -231,31 +224,20 @@ class Palette:
             accent=colors[Token.PRIMARY],
             muted=colors[Token.MUTED_FOREGROUND],
             chart=tuple(colors[token] for token in CHART_TOKENS),
-            dark=dark,
             metrics=Metrics.from_tokens(tokens),
             font=tokens.fonts[Font.SANS],
             mono=tokens.fonts[Font.MONO],
         )
 
     @classmethod
-    def load(cls, *, dark: bool = True) -> "Palette":
-        """The dist's palette in one scheme."""
-        return cls.from_tokens(load_tokens(), dark=dark)
+    def load(cls) -> "Palette":
+        """The dist's palette."""
+        return cls.from_tokens(load_tokens())
 
     @classmethod
-    def with_accent(cls, accent: str, *, dark: bool = True) -> "Palette":
+    def with_accent(cls, accent: str) -> "Palette":
         """The dist's palette with an accent of the caller's own."""
-        return replace(cls.load(dark=dark), accent=accent)
-
-    @property
-    def is_dark(self) -> bool:
-        """Whether the palette paints the dark scheme."""
-        return self.dark
-
-    @property
-    def monaco_theme(self) -> str:
-        """The built-in Monaco theme matching the scheme."""
-        return "vs-dark" if self.dark else "vs"
+        return replace(cls.load(), accent=accent)
 
     def colorway(self, count: int = 6) -> list[str]:
         """The chart colours, then hues rotated evenly from the accent for the rest."""
@@ -271,8 +253,8 @@ class Palette:
         return Tones(raised=mix(self.text, self.paper, 0.12), on_accent=hex_color(on_accent))
 
     def plotly_template(self, base: str | None = None) -> Json:
-        """The base template (plotly_dark or plotly_white by scheme) repainted in this palette, at the label size, with the top margin a titleless figure needs."""
-        template = template_json(base or ("plotly_dark" if self.dark else "plotly_white"))
+        """The base template, plotly_dark by default, repainted in this palette, at the label size, with the top margin a titleless figure needs."""
+        template = template_json(base or "plotly_dark")
         layout = section(template, "layout")
         axis_paint = {"gridcolor": self.grid, "zerolinecolor": self.grid, "linecolor": self.grid}
         repainted: Json = {

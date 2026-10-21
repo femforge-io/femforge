@@ -14,6 +14,7 @@ from femforge_workbench.panels import Cls, PanelComponent
 from femforge_workbench.panels.table import TablePanel
 from femforge_workbench.registry import OutputKind, OutputSpec, WorkbenchSpec
 from femforge_workbench.widgets.code import Code
+from femforge_workbench.widgets.tip import Tip
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 
 
@@ -184,7 +185,8 @@ class WorkbenchOutputsPanel(PanelComponent):
                 with ToggleGroupItem(value=react.Bind(f"{TAB}.{TabField.INDEX}")):
                     html.Span([react.Bind(f"{TAB}.{TabField.TITLE}")])
                     with react.If(f"!{TAB}.{TabField.EXISTS}"):
-                        html.Span(UNWRITTEN_MARK, classes=str(Cls.CAPTION), title=MISSING_MESSAGE)
+                        with Tip(content=MISSING_MESSAGE):
+                            html.Span(UNWRITTEN_MARK, classes=str(Cls.CAPTION))
 
             html.Span(classes=str(Cls.SPACER))
             html.Span([react.Bind(self.key(StateVar.CAPTION))], classes=str(Cls.STATUS))
@@ -206,7 +208,6 @@ class WorkbenchOutputsPanel(PanelComponent):
                 Code(
                     value=react.Bind(self.key(StateVar.TEXT)),
                     language=react.Bind(self.key(StateVar.LANGUAGE)),
-                    theme=self.app.palette.monaco_theme,
                     options=react.Bind(self.key(StateVar.OPTIONS)),
                     classes=str(Cls.FILL),
                 )

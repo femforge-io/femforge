@@ -58,7 +58,8 @@ from femforge.viz.glyphs import (
     glyph_label,
     glyphs_of,
     mirrored,
-    pin_sample,
+    densified,
+    spread,
     plain_spec,
     revolve_angles,
     shown_diagonal,
@@ -212,22 +213,68 @@ def test_a_mirrored_glyph_negates_its_radial_components() -> None:
     assert flipped.ref == EntityRef(EntityKind.BOUNDARY, "A")
 
 
-def test_clamp_ticks_run_every_two_percent_of_the_diagonal_on_the_outside_at_45_degrees() -> None:
-    face = np.array([[[0.0, 0.0, 0.0], [0.0, 0.01, 0.0]], [[0.0, 0.01, 0.0], [0.0, 0.01, 0.0]], [[0.0, 0.01, 0.0], [0.0, 0.02, 0.0]]])
+def test_clamp_ticks_run_evenly_two_percent_of_the_diagonal_apart_and_all_lean_one_way_out_of_the_body() -> None:
+    # The face's segments arrive out of order and alternate direction, as a mesh's edges do.
+    face = np.array([[[0.0, 0.02, 0.0], [0.0, 0.01, 0.0]], [[0.0, 0.01, 0.0], [0.0, 0.01, 0.0]], [[0.0, 0.0, 0.0], [0.0, 0.01, 0.0]]])
 
     ticks = clamp_ticks(face, Vec3(-1.0, 0.0, 0.0), FLEXURE_DIAGONAL)
     spacing = 0.02 * FLEXURE_DIAGONAL
-
-    assert len(ticks) == math.floor(0.02 / spacing) + 1, "a zero-length segment adds none"
-    assert np.allclose(ticks[:, 0, 1], spacing * np.arange(len(ticks)))
+    bases = cast("list[float]", np.sort(ticks[:, 0, 1]).tolist())
+    gaps = np.diff(bases)
     slant = ticks[:, 1] - ticks[:, 0]
-    assert np.all(slant[:, 0] < 0.0) and np.allclose(-slant[:, 0], slant[:, 1]), "every tick leans out of the body at 45°"
+    across, up = cast("list[float]", slant[0, :2].tolist())
+
+    assert len(ticks) == round(0.02 / spacing)
+    assert np.ptp(gaps) == pytest.approx(0.0) and bases[0] == pytest.approx(0.02 - bases[-1]), "evenly spaced and centred on the face"
+    assert np.allclose(ticks[:, 0, 0], 0.0) and np.ptp(slant, axis=0) == pytest.approx(np.zeros(3)), "every tick starts on the face and leans the same way"
+    assert across < 0.0 and abs(across) == pytest.approx(abs(up)), "out of the body at 45°"
 
 
-def test_pins_sample_at_most_pin_count_points_and_dashes_break_a_segment() -> None:
-    assert len(pin_sample(np.zeros((100, 3)))) == PIN_COUNT
-    assert len(pin_sample(np.zeros((5, 3)))) == 5
+def test_spread_lays_marks_on_an_even_lattice_over_the_whole_face() -> None:
+    rng = np.random.default_rng(0)
+    face = np.column_stack([np.zeros(4000), rng.uniform(0.0, 0.04, 4000), rng.uniform(0.0, 0.02, 4000)])
 
+    marks = spread(face, 0.005)
+
+    assert len(marks) == 8 * 4
+    assert np.allclose(marks[:, 0], 0.0), "a flat face keeps the lattice points on its plane"
+    rows = cast("list[float]", marks[:, 1].tolist())
+    columns = cast("list[float]", marks[:, 2].tolist())
+    assert sorted({round(value, 4) for value in rows}) == pytest.approx([0.0025 + 0.005 * index for index in range(8)], abs=2e-4)
+    assert sorted({round(value, 4) for value in columns}) == pytest.approx([0.0025 + 0.005 * index for index in range(4)], abs=2e-4)
+    assert len(spread(np.zeros((5, 3)), 0.01)) == 1
+
+
+def test_spread_keeps_only_the_lattice_points_on_a_non_rectangular_face() -> None:
+    angles = np.linspace(0.0, 2.0 * np.pi, 400, endpoint=False)
+    rings = np.sqrt(np.linspace(0.0, 1.0, 50))
+    disc = np.column_stack([np.outer(rings, np.cos(angles)).ravel(), np.outer(rings, np.sin(angles)).ravel(), np.zeros(len(rings) * len(angles))])
+
+    marks = spread(disc, 0.25)
+
+    assert np.all(np.hypot(marks[:, 0], marks[:, 1]) < 1.0 + 0.25), "no mark lands off the disc"
+    assert 8 < len(marks) < 64
+
+
+def test_spread_snaps_a_curved_face_to_its_own_points() -> None:
+    angles = np.linspace(0.0, np.pi, 200)
+    heights = np.linspace(0.0, 1.0, 50)
+    shell = np.column_stack([np.repeat(np.cos(angles), len(heights)), np.repeat(np.sin(angles), len(heights)), np.tile(heights, len(angles))])
+
+    marks = spread(shell, 0.3)
+
+    assert len(marks) > 4
+    assert np.allclose(np.hypot(marks[:, 0], marks[:, 1]), 1.0), "every mark sits on the curved face"
+
+
+def test_densified_leaves_the_segments_alone_without_a_step() -> None:
+    segment = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+
+    assert len(densified(segment, 0.0)) == 2
+    assert len(densified(segment, 0.25)) == 2 + 3
+
+
+def test_dashes_break_a_segment() -> None:
     pieces = dashed(np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]), 0.1)
 
     assert len(pieces) == 5 and np.allclose(pieces[:, 1, 0] - pieces[:, 0, 0], 0.1)
@@ -434,7 +481,11 @@ def _drawn(scene: FieldScene, view: GlyphView | None, spec: DisplaySpec | None =
 
 
 def _glyph_names(plotter: pv.Plotter) -> list[str]:  # pragma: no cover - helper for the pyvista-gated tests below
-    return sorted(str(name) for name in plotter.renderer.actors if str(name).startswith("glyph-"))
+    return sorted(str(name) for name in plotter.renderer.actors if str(name).startswith("glyph-") and not str(name).startswith(GlyphActor.HOVER))
+
+
+def _hover_names(plotter: pv.Plotter) -> list[str]:  # pragma: no cover - helper for the pyvista-gated tests below
+    return sorted(str(name) for name in plotter.renderer.actors if str(name).startswith(GlyphActor.HOVER))
 
 
 def _actor(plotter: pv.Plotter, name: str) -> vtkActor:  # pragma: no cover - helper for the pyvista-gated tests below
@@ -477,6 +528,9 @@ def test_a_flexure_draws_named_glyph_actors_the_mirror_can_serialize() -> None:
 
     assert names == sorted(["glyph-arrows", "glyph-halos", "glyph-lines", "glyph-marks", "glyph-outline", "glyph-triad", "glyph-labels-labels"])
     assert len(condition_actors) <= len(GLYPH_ACTORS) == 7
+    hovers = _hover_names(plotter)
+    assert any(name.startswith(f"{GlyphActor.HOVER}body:") for name in hovers) and any(name.startswith(f"{GlyphActor.HOVER}boundary:") for name in hovers), "every body and boundary carries an outline"
+    assert not any(cast("vtkActor", plotter.renderer.actors[name]).GetVisibility() for name in hovers), "the outlines start hidden; the browser shows the hovered one"
     for prop in drawn:
         overlaid = isinstance(prop, vtkActor2D) and isinstance(prop.GetMapper(), vtkLabelPlacementMapper | vtkPolyDataMapper2D)
         assert isinstance(prop, vtkActor) or overlaid, f"{type(prop).__name__} would blank the mirror"
@@ -496,7 +550,7 @@ def test_kinds_off_leave_no_condition_glyph_and_none_removes_every_glyph_actor()
 
     scene.glyph_view = None
     scene.update(plotter, scene.spec)
-    assert _glyph_names(plotter) == []
+    assert _glyph_names(plotter) == [] and _hover_names(plotter) == []
 
 
 def test_a_hidden_row_drops_its_glyph_and_an_unchanged_view_draws_nothing_again() -> None:
@@ -557,7 +611,7 @@ def test_a_selected_body_gets_an_accent_silhouette_and_fill_and_a_boundary_an_ac
     assert line[0] == pytest.approx(0.1) and line[1] == pytest.approx(0.1)
 
 
-def test_the_outline_and_triad_label_the_solve_axes_by_their_authored_directions() -> None:
+def test_the_outline_and_triad_label_the_solve_axes_by_name() -> None:
     pytest.importorskip("pyvista")
     from vtkmodules.vtkCommonCore import vtkStringArray
     from vtkmodules.vtkCommonDataModel import vtkDataSet
@@ -568,7 +622,7 @@ def test_the_outline_and_triad_label_the_solve_axes_by_their_authored_directions
     labels = cast("object", points.GetPointData().GetAbstractArray("labels"))  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
     assert isinstance(labels, vtkStringArray)
 
-    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["X = Authored (1, 0, 0)", "Y = Authored (0, 1, 0)"]
+    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["X", "Y"]
     assert _bounds(plotter, GlyphActor.OUTLINE)[1] == pytest.approx(0.1)
     assert _bounds(plotter, GlyphActor.TRIAD)[3] < 0.0, "the triad sits below the section, so its labels never cover the body"
 
@@ -587,7 +641,7 @@ def test_a_revolved_outline_and_triad_draw_over_the_scene_and_name_the_radial_an
     labels = cast("object", points.GetPointData().GetAbstractArray("labels"))  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
     assert isinstance(labels, vtkStringArray)
 
-    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["Radial = Authored (1, 0, 0)", "Axial = Authored (0, 0, 1)"]
+    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["Radial", "Axial"]
     for name in ("glyph-outline", "glyph-triad"):
         actor = plotter.renderer.actors[name]
         assert isinstance(actor, vtkActor2D) and isinstance(actor.GetMapper(), vtkPolyDataMapper2D), f"{name} draws over the translucent revolved bodies"

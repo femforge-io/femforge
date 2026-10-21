@@ -98,7 +98,7 @@ function FieldItem({ id, title, locked, selected, disabled, onSelect }: FieldIte
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "flex h-6 items-center gap-1.5 rounded-sm px-1 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/50",
+        "flex h-6 items-center gap-1.5 rounded-sm px-1 outline-none hover:bg-wash-hover focus-visible:ring-2 focus-visible:ring-ring/50",
         !locked && !disabled && "cursor-grab",
         isDragging && "opacity-40",
       )}
@@ -141,7 +141,7 @@ function FieldList({
   return (
     <section
       ref={setNodeRef}
-      className={cn("flex flex-col gap-0.5 p-1", isOver && "bg-accent/30")}
+      className={cn("flex flex-col gap-0.5 p-1", isOver && "bg-wash-hover")}
       aria-label={LIST_TITLES[id]}
     >
       <header className="flex h-6 items-center gap-1 px-1 text-muted-foreground">

@@ -103,7 +103,7 @@ function ValuesFacet({ column, title }: { column: TableColumn; title: string }) 
         {shown.map(([value, count]) => (
           <label
             key={label(value)}
-            className="flex h-6 shrink-0 cursor-pointer items-center gap-2 rounded-sm px-1 hover:bg-accent/50"
+            className="flex h-6 shrink-0 cursor-pointer items-center gap-2 rounded-sm px-1 hover:bg-wash-hover"
           >
             <Checkbox
               className="size-3.5"
@@ -224,7 +224,7 @@ export function FacetFilter({ column, spec, facetLimit }: FacetFilterProps) {
           variant="ghost"
           size="icon-xs"
           aria-label={`Filter ${title}`}
-          className={cn("text-muted-foreground", active && "text-primary")}
+          className={cn("text-muted-foreground", active && "text-foreground")}
           onPointerDown={(event) => event.stopPropagation()}
         >
           <Funnel />

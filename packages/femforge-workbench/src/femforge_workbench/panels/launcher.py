@@ -19,6 +19,7 @@ from femforge_workbench.widgets.badge import Badge
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.card import Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle
 from femforge_workbench.widgets.icon import Icon
+from femforge_workbench.widgets.tip import Tip
 
 
 if TYPE_CHECKING:
@@ -122,12 +123,14 @@ class LauncherPanel(PanelComponent):
         with html.Div(classes=str(Cls.TOOLBAR)):
             html.Span([react.Bind(self.key(StateVar.CAPTION))], classes=str(Cls.CAPTION))
             html.Span(classes=str(Cls.SPACER))
-            with Button(
-                size="icon-xs",
-                variant="ghost",
-                title="Refresh the cards",
-                aria_label="Refresh the cards",
-                on_click=self.callback(self.push),
+            with (
+                Tip(content="Refresh the cards"),
+                Button(
+                    size="icon-xs",
+                    variant="ghost",
+                    aria_label="Refresh the cards",
+                    on_click=self.callback(self.push),
+                ),
             ):
                 Icon("refresh-cw")
 

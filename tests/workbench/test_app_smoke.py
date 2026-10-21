@@ -61,24 +61,25 @@ def test_the_shell_serves_the_dist_and_enables_every_widget_library_before_a_cli
     assert app.server.client_type == "react"
 
 
-def test_the_tree_mounts_the_theme_first_then_the_header_and_the_dock_hosting_server_templates(tmp_path: Path) -> None:
+def test_the_tree_mounts_the_header_and_the_dock_hosting_server_templates(tmp_path: Path) -> None:
     app = _shell("smoke-tree", tmp_path)
     root = cast("dict[str, object]", app.ui.html)
 
-    children = cast("list[dict[str, object]]", root["children"])
+    provider = cast("list[dict[str, object]]", root["children"])
+    assert [child["tag"] for child in provider] == ["ff-tooltip-provider"], "one provider shares the tooltip delays across the shell"
+    children = cast("list[dict[str, object]]", provider[0]["children"])
     dock = find(root, "ff-dock")
     switcher = find(root, "ff-dropdown-menu-item")
     close_all = find(root, "ReactIf")
 
     assert prop(root, "className") == "flex h-full flex-col"
-    assert children[0]["tag"] == "ff-theme" and prop(children[0], "dark") == {"js": str(StateVar.DARK)}
-    assert [child["tag"] for child in children[1:]] == ["header", "ff-tour", "main", "ReactIf"]
+    assert [child["tag"] for child in children] == ["header", "ff-tour", "main", "ReactIf"]
     assert prop(children[-1], "value") == {"js": f"{StateVar.TASKS}.length"}, "the task strip shows only when a script passed tasks"
-    header = cast("list[dict[str, object]]", children[1]["children"])
+    header = cast("list[dict[str, object]]", children[0]["children"])
     assert [child["tag"] for child in header[:2]] == ["div", "div"], "the brand and a divider lead the title"
     assert [prop(node, "src") for node in find(header[0], "img")] == ["/__ff/ff-logo.svg"] and texts(find(header[0], "span")[0]) == ["femforge"]
     assert app.state["trame__favicon"] == "/__ff/favicon.png"
-    assert len(dock) == 1 and prop(dock[0], "dark") == {"js": str(StateVar.DARK)} and prop(dock[0], "popoutUrl") == "/__ff/popout.html"
+    assert len(dock) == 1 and prop(dock[0], "popoutUrl") == "/__ff/popout.html"
     render = cast("dict[str, object]", prop(dock[0], "renderPanel"))
     slot = cast("dict[str, object]", render["slot"])
     assert slot["params"] == ["panel"]
@@ -140,8 +141,6 @@ def test_add_registers_a_template_per_panel_and_types_the_components(tmp_path: P
 
     sphere = cast("dict[str, object]", app.state[f"trame__template_{template_name(str(DemoPanel.SPHERE))}"])
     assert prop(sphere, "style") == {"height": "100%", "width": "100%", "display": "flex", "flexDirection": "column", "minHeight": "0"}
-    first = cast("list[dict[str, object]]", sphere["children"])[0]
-    assert first["tag"] == "ff-theme" and prop(first, "dark") == {"js": str(StateVar.DARK)}, "a standalone ?ui= page paints the scheme too"
     assert len(find(sphere, "vtk-local")) == 1, "the demo sphere mirrors in the browser by default"
     assert [texts(node) for node in find(sphere, "ff-button")][:3] == [["Fit"], ["Top"], ["Bottom"]]
 
@@ -371,18 +370,16 @@ def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path
     assert cast("dict[str, object]", app.state[StateVar.TASK_FOCUS])["label"] == "Solve 3D"
 
     escape = [node for node in find(root, "div") if prop(node, "onKeyDown") is not None]
-    every = {"js": f"{StateVar.TASK_SHEET} ? 'Hide Task List' : 'Show Task List'"}
-    lines = [node for node in find(root, "div") if prop(node, "title") == every]
+    lines = [node for node in find(root, "div") if prop(node, "className") == str(Cls.TASK_SUMMARY_LINE)]
     narrow = [node for node in find(root, "span") if prop(node, "className") == "hidden tabular-nums max-[800px]:inline"]
     assert len(escape) == 1 and "Escape" in str(prop(escape[0], "onKeyDown")) and "task-toggle" in str(prop(escape[0], "onKeyDown")), "Escape closes the sheet and hands focus back to the toggle"
     assert prop(escape[0], "className") == str(Cls.ROOT), "the root catches Escape wherever the focus is in the page"
     assert prop(toggles[0], "id") == "task-toggle" and len(lines) == 1 and prop(lines[0], "onClick") is not None, "the summary line opens the sheet too"
-    assert prop(toggles[0], "title") == every, "the toggle names what a press does: show, or hide once open"
 
     buttons = find(root, "ff-button")
     details = [node for node in buttons if "Details for " in str(prop(node, "aria-label"))]
     copies = [node for node in buttons if "Copy Traceback" in str(node.get("children"))]
-    reused = [node for node in find(root, "span") if prop(node, "title") == "Tasks That Reused a Finished Run"]
+    reused = [span for tip in find(root, "ff-tip") if prop(tip, "content") == "Tasks that reused a finished run" for span in find(tip, "span")]
     assert len(details) == 1 and prop(details[0], "aria-expanded") == {"js": f"{StateVar.TASK_DETAILS} === task.label"}
     assert prop(details[0], "aria-label") == {"js": "(task.stalled ? 'Log for ' : 'Details for ') + task.title"}, "the toggle names its task"
     assert len(copies) == 1 and "'Copied'" in str(copies[0].get("children")) and prop(copies[0], "aria-live") == "polite"

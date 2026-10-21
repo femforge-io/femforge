@@ -31,15 +31,16 @@ from femforge.run.manifest import RunManifest
 from femforge.viz.glyphs import EntityKind, EntityRef
 from femforge.viz.symmetry import Expansion
 from femforge_workbench.panels import Cls, PanelComponent
-from femforge_workbench.panels.field_viewer import BUSY_FULL, STACK, TIMES, FieldVar, expansion_label, names_of, only, setting
+from femforge_workbench.panels.field_viewer import STACK, TIMES, FieldVar, expansion_label, names_of, only, setting
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
+from femforge_workbench.widgets.busy import Busy
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.element import EVENT, setter
 from femforge_workbench.widgets.entity_grid import ConditionLine, EntityGrid, EntityRow, LinePart
 from femforge_workbench.widgets.field import FieldLabel
 from femforge_workbench.widgets.icon import Icon, IconName
 from femforge_workbench.widgets.input import COMMIT_VALUE, Input
-from femforge_workbench.widgets.progress import Progress
+from femforge_workbench.widgets.reveal import Reveal
 from femforge_workbench.widgets.switch import Switch
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 
@@ -1083,14 +1084,13 @@ class SetupPanel(PanelComponent):
             self.state[SetupVar.ANNOUNCE] = f"Highlighted {self.name_of(chosen)}" if chosen else "Selection cleared"
 
     def on_select(self, entity: object) -> None:
-        """A row clicked or chosen: selects it, or clears the selection when it was selected; Escape clears the search first, then the selection."""
+        """A row clicked or chosen: selects it, and keeps it selected when it already was, so the clicks of a double-click never clear it; Escape clears the search first, then the selection."""
         chosen = str(entity or "")
         if not chosen and str(self.state[SetupVar.QUERY] or ""):
             self.clear_query()
             return
 
-        current = str(self.state[FieldVar.SELECTED_ENTITY] or "")
-        self.select("" if chosen == current else chosen)
+        self.select(chosen)
 
     def on_toggle_glyph(self, entity: object) -> None:
         """A row's glyph toggle: hides or shows that group's glyphs."""
@@ -1227,7 +1227,7 @@ class SetupPanel(PanelComponent):
             with react.If(f"!{SetupVar.HAS_GHOST}"):
                 html.Span(NO_GHOST, classes=str(Cls.CAPTION))
 
-            with react.If(f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && {FieldVar.HAS_DISPLACEMENT} && {FieldVar.WARP}"):
+            with Reveal(open_=react.Bind(f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && {FieldVar.HAS_DISPLACEMENT} && {FieldVar.WARP}")):
                 html.Span([react.Bind(str(SetupVar.WARP_CAPTION))], classes=str(Cls.CAPTION))
 
     def grid(self, rows: SetupVar, label: str, columns: Sequence[str] | react.Bind) -> None:
@@ -1244,6 +1244,7 @@ class SetupPanel(PanelComponent):
             label=label,
             columns=columns,
             on_select=self.callback(self.on_select, args=f"[{EVENT}]"),
+            on_hover=react.Callback(f"trame.state.set({json.dumps(str(FieldVar.HOVERED))}, {EVENT})"),
             on_toggle_glyph=self.callback(self.on_toggle_glyph, args=f"[{EVENT}]"),
             on_frame=self.callback(self.on_frame, args=f"[{EVENT}]"),
             on_show=self.callback(self.on_show, args=f"[{EVENT}]"),
@@ -1275,7 +1276,7 @@ class SetupPanel(PanelComponent):
                 html.Span([react.Bind(f"{rows}.find(row => row.kind === {kind}).count")], classes="text-right text-muted-foreground tabular-nums")
                 Switch(
                     checked=react.Bind(f"!{off}.includes({kind})"),
-                    on_checked_change=self.callback(self.on_kind, args=f"[{kind}, {EVENT}]"),
+                    on_checked_change=self.optimistic(self.on_kind, off, f"{EVENT} === true ? {off}.filter(k => k !== {kind}) : [...{off}, {kind}]", f"[{kind}, {EVENT}]"),
                     id=f"ff-setup-kind-{glyph}",
                     disabled=react.Bind(f"!{SetupVar.HAS_SCENE}"),
                 )
@@ -1307,8 +1308,7 @@ class SetupPanel(PanelComponent):
         slash = f"{EVENT}.key === '/' && !['INPUT', 'TEXTAREA'].includes({EVENT}.target.tagName) && document.getElementById({json.dumps(SEARCH_ID)})"
         focus = react.Callback(f"{slash} && ({EVENT}.preventDefault(), document.getElementById({json.dumps(SEARCH_ID)}).focus())")
         with html.Div(classes=str(Cls.CONTROLS), on_key_down=focus):
-            with react.If(str(FieldVar.BUSY)):
-                Progress(value=BUSY_FULL, classes=str(Cls.BUSY))
+            Busy(active=react.Bind(str(FieldVar.BUSY)))
 
             with react.If(f"{state} === {json.dumps(str(SetupState.NONE))}"), html.Div(classes=str(Cls.EMPTY)), html.Div(classes=EMPTY_STACK):
                 html.Span([react.Bind(str(SetupVar.EMPTY))])
