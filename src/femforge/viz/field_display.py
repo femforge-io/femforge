@@ -35,7 +35,7 @@ from femforge.viz.field_lines import (
     seed_points,
     select_flux_density_array,
 )
-from femforge.viz.symmetry import Basis, Expansion, mirror, revolve
+from femforge.viz.symmetry import Basis, Expansion, Prism, extrude, mirror, offered, prism_depth, revolve, shown_as
 
 
 if TYPE_CHECKING:
@@ -443,7 +443,7 @@ class DisplaySpec(BaseModel):
     """Whether and where the color bar is drawn; field lines mapped like the field share it."""
 
     expansion: Expansion = Expansion.REVOLVE
-    """How a run solved on a section is shown; a run solved in 3D is shown as is."""
+    """How a run solved on a section is shown, one its frame lacks taken as the frame's 3D form (Revolve becomes Extrude for a Cartesian section); a run solved in 3D is shown as is."""
 
     sweep: float = Field(default=FULL_SWEEP, gt=0.0, le=FULL_SWEEP)
     """`[deg]`: The turn a revolved section sweeps; less than a full one leaves a cutaway."""
@@ -897,13 +897,15 @@ class FieldScene:
         self.section_blocks: pv.MultiBlock = blocks
         """The bodies as solved, whose values set every range."""
         self.grid: pv.UnstructuredGrid = grid
-        """The grid as shown, which the field lines run through: the section, its mirror, or the section again under a revolved display, displaced under a warp."""
+        """The grid as shown, which the field lines run through: the section, its mirror, or the section again under a revolved or extruded display, displaced under a warp."""
         self.blocks: pv.MultiBlock = blocks
         """The bodies as shown."""
         self.fields: list[FieldInfo] = list(fields)
         plane: SolvePlane | None = self.frame.plane
         self.basis: Basis | None = scaled_basis(plane) if plane is not None and self.frame.revolves else None
         """Where the section sits in the authored model, None for a run solved whole."""
+        self.depth: float = prism_depth(self.frame)
+        """`t` `[m]`: The depth a Cartesian section extrudes through; 0 for any other frame."""
         self.expanded: tuple[Expansion, float] = (Expansion.SECTION, FULL_SWEEP)
         """The expansion and sweep the shown blocks were built for."""
         self.warped: tuple[str, float] | None = None
@@ -958,13 +960,13 @@ class FieldScene:
 
     @property
     def expandable(self) -> bool:
-        """Whether the run was solved on a section that can be mirrored or revolved."""
-        return self.basis is not None
+        """Whether the run was solved on a section that can be shown in another form."""
+        return bool(offered(self.frame))
 
     @property
     def display_dim(self) -> int:
-        """2 while the run is shown flat, 3 when it is solid or revolved."""
-        return self.expanded[0].dim if self.basis is not None else self.model_dim
+        """2 while the run is shown flat, 3 when it is solid, revolved or extruded."""
+        return self.expanded[0].dim if self.expandable else self.model_dim
 
     @property
     def bounds(self) -> Bounds:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
@@ -972,15 +974,14 @@ class FieldScene:
         return cast("Bounds", tuple(self.blocks.bounds))
 
     def expansion_of(self, spec: DisplaySpec) -> tuple[Expansion, float]:
-        """The expansion and sweep a spec asks of this run: a run solved in 3D is always shown as is, and only a revolution has a sweep."""
-        if self.basis is None or spec.expansion is not Expansion.REVOLVE:
-            return (Expansion.SECTION if self.basis is None else spec.expansion, FULL_SWEEP)
+        """The expansion and sweep a spec asks of this run, an expansion its frame lacks taken as the frame's 3D form: a run solved in 3D is shown as is, and only a revolution has a sweep."""
+        expansion: Expansion = shown_as(self.frame, spec.expansion)
 
-        return (spec.expansion, spec.sweep)
+        return (expansion, spec.sweep if expansion is Expansion.REVOLVE else FULL_SWEEP)
 
     def dim_for(self, spec: DisplaySpec) -> int:
         """The dimension the run shows in under a spec."""
-        return self.expansion_of(spec)[0].dim if self.basis is not None else self.model_dim
+        return self.expansion_of(spec)[0].dim if self.expandable else self.model_dim
 
     def auto_warp_scale(self, name: str) -> float:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
         """The scale that moves the largest ``name`` displacement `WARP_SHARE` of the section's bounds diagonal, 0.0 when nothing moves."""
@@ -1046,6 +1047,8 @@ class FieldScene:
             case Expansion.REVOLVE:
                 assert basis is not None, "a run without a basis is shown as is"
                 self.blocks, self.grid = rebuilt(lambda block: revolve(block, basis, sweep=sweep, still=still)), deform(self.section_grid)
+            case Expansion.EXTRUDE:
+                self.blocks, self.grid = rebuilt(lambda block: extrude(block, self.depth, still=still)), deform(self.section_grid)
 
         # Recorded only once the blocks stand, so a build that raised is tried again by the next draw; the body actor holds the old blocks, so it is added anew.
         self.expanded = wanted
@@ -1381,12 +1384,13 @@ class FieldScene:
         return self._lines[0]
 
     def integrate_streamlines(self, options: FieldLineOptions) -> StreamlineActors:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
-        """Seed and integrate the field lines through the shown grid, swept into a revolved display from its section — the compute half, safe off the UI thread."""
-        basis: Basis | None = self.basis
-        if self.expanded[0] is Expansion.REVOLVE and basis is not None:
+        """Seed and integrate the field lines through the shown grid, carried into a revolved or extruded display from its section — the compute half, safe off the UI thread."""
+        expansion: Expansion = self.expanded[0]
+        folding: Basis | Prism | None = self.basis if expansion is Expansion.REVOLVE else Prism(self.depth) if expansion is Expansion.EXTRUDE else None
+        if folding is not None:
             source, b_name = prepare_streamline_source(self.grid, options)
             bounds: Bounds = self.region_bounds(options)
-            actors: StreamlineActors = build_swept_streamlines(source, b_name, options, basis, bounds, seeds=self.swept_seeds(options, bounds))
+            actors: StreamlineActors = build_swept_streamlines(source, b_name, options, folding, bounds, seeds=self.swept_seeds(options, bounds))
         else:
             source, b_name = prepare_streamline_source(self.grid, options)
             actors = build_streamlines(source, b_name, options)

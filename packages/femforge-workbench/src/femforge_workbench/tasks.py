@@ -26,6 +26,7 @@ from femforge.run.stages import Stage
 from femforge_workbench.process_tree import CREATION_FLAGS, NEW_GROUP, NEW_SESSION, ProcessTree
 from femforge_workbench.reload import Reloader
 from femforge_workbench.runner import LINE_LIMIT, STREAM_ENV
+from femforge_workbench.widgets.icon import IconName
 
 
 STOP_GRACE_S = 10.0
@@ -170,23 +171,23 @@ class TaskPhase(StrEnum):
                 return title(self.value)
 
     @property
-    def glyph(self) -> str:
-        """The mark ahead of the phase, so a state never reads by colour alone."""
+    def icon(self) -> IconName:
+        """The icon ahead of the phase, so a state never reads by colour alone."""
         match self:
             case TaskPhase.QUEUED:
-                return "○"
+                return "circle-dashed"
             case TaskPhase.DONE:
-                return "●"
+                return "check"
             case TaskPhase.REUSED:
-                return "↺"
+                return "copy-check"
             case TaskPhase.FAILED:
-                return "⊘"
+                return "x"
             case TaskPhase.STALLED:
-                return "⧖"
+                return "triangle-alert"
             case TaskPhase.STOPPED:
-                return "–"
+                return "minus"
             case _:
-                return "◐"
+                return "loader-circle"
 
     @property
     def active(self) -> bool:
@@ -268,7 +269,7 @@ class TaskField(StrEnum):
     STOPPING = "stopping"
     STATE = "state"
     NOTE = "note"
-    GLYPH = "glyph"
+    ICON = "icon"
     PERCENT = "percent"
     ITERATIONS = "iterations"
     CLOCK = "clock"
@@ -421,9 +422,9 @@ class TaskRow(BaseModel):
 
     @computed_field
     @property
-    def glyph(self) -> str:
-        """The phase's mark."""
-        return self.phase.glyph
+    def icon(self) -> IconName:
+        """The phase's icon."""
+        return self.phase.icon
 
     @computed_field
     @property
@@ -818,6 +819,9 @@ class TaskView(BaseModel):
     busy: bool
     """Whether a task runs or waits in the queue."""
 
+    done: int
+    """How many tasks ended their last run done, past the ones that reused finished bundles alone."""
+
     reused: int
     """How many tasks ended their last run on finished bundles alone."""
 
@@ -1036,6 +1040,7 @@ class TaskBoard:
             count=f"{done}/{len(shown)}",
             focus=focus,
             busy=busy,
+            done=counts[TaskPhase.DONE],
             reused=counts[TaskPhase.REUSED],
             failed=counts[TaskPhase.FAILED],
             stalled=counts[TaskPhase.STALLED],

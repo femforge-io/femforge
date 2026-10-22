@@ -56,6 +56,11 @@ class Axisymmetric(Frame):
         return f"axisymmetric about {self.axis.label}"
 
     @property
+    def description(self) -> str:
+        """One sentence on what the frame solves, for a reader who has not met it."""
+        return "A half section through the axis, solved as the solid it sweeps when revolved."
+
+    @property
     def model_dim(self) -> Literal[2, 3]:
         """The mesh dimension this frame solves on."""
         return 2

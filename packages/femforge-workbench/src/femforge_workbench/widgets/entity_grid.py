@@ -1,9 +1,10 @@
-"""The entity grid: rows of bodies or boundaries with their condition lines and glyph toggles, one tab stop with roving focus."""
+"""The entity grid: rows of bodies or boundaries with their conditions as read-only editors, one tab stop with roving focus."""
 
 from collections.abc import Sequence
 from typing import TypedDict, Unpack
 
 from femforge_workbench.widgets.element import Element, Event, Prop, Shared
+from femforge_workbench.widgets.fields import ConditionCard
 from femforge_workbench.widgets.icon import IconName
 
 
@@ -27,8 +28,18 @@ class ConditionLine(TypedDict):
     """The parts, in reading order."""
 
 
+class BodyChip(TypedDict, total=False):
+    """A body a boundary touches, by its name and its body color."""
+
+    name: str
+    """The body's name, or ``External`` for the outside."""
+
+    color: str
+    """The body's color as sRGB hex; absent for the outside."""
+
+
 class EntityRow(TypedDict, total=False):
-    """One body or boundary group: its name, its material or measure, its condition lines and its glyph toggle."""
+    """One body or boundary group: its kind icon, its name or the bodies it touches, its material and measure, and its conditions as cards."""
 
     id: str
     """The entity id, such as ``boundary:RIGHTFACE``."""
@@ -37,28 +48,28 @@ class EntityRow(TypedDict, total=False):
     """The name as authored, such as ``RightFace``."""
 
     detail: str
-    """The material of a body or the measure of a boundary."""
+    """The measure of a body or a boundary."""
 
     detail_tip: str
     """The detail's tooltip, such as the face area a 2D length stands for."""
 
+    material: str
+    """A body's material, shown as a read-only field."""
+
+    material_tip: str
+    """The material's full name."""
+
     tip: list[str]
     """The name's tooltip lines, the Elmer name first."""
 
-    lines: list[ConditionLine]
-    """One line per condition, under the name."""
+    kind_icon: IconName
+    """The icon of the group's kind: a body, a face or an edge."""
 
-    icon: IconName
-    """The icon of the row's glyph kind; absent for a row without a drawable condition."""
+    chips: list[BodyChip]
+    """The bodies an unnamed boundary touches, which name it."""
 
-    glyph_shown: bool
-    """Whether the row's glyph is shown; absent while no scene draws it, which leaves the icon without a toggle."""
-
-    glyph_note: str
-    """Why the scene hides the row's glyph whatever its toggle says, such as a legend switch; absent while the toggle decides."""
-
-    fit: bool
-    """Whether the row offers to fit the view to its group, true while a scene draws the run and has the group's cells."""
+    cards: list[ConditionCard]
+    """One read-only editor per condition the group received."""
 
     group: bool
     """Whether the row heads the bodies of one material."""
@@ -76,11 +87,11 @@ class EntityRow(TypedDict, total=False):
     """Whether the body is hidden in the Field Viewer, which the row offers to show."""
 
     label: str
-    """The row's accessible name: its name, its condition lines with their tooltips, its glyph state and why it is dimmed or hidden."""
+    """The row's accessible name: its name, its conditions with their tooltips and why it is dimmed or hidden."""
 
 
 class EntityGrid(Element):
-    """Rows of bodies or boundaries as one grid: the arrows move the focus, Enter selects, G toggles a glyph, F frames, S shows a hidden body and Escape clears."""
+    """Rows of bodies or boundaries as one grid: the arrows move the focus, Enter selects, F frames, S shows a hidden body and Escape clears."""
 
     def __init__(
         self,
@@ -90,7 +101,6 @@ class EntityGrid(Element):
         label: Prop[str] = None,
         columns: Prop[Sequence[str]] = None,
         on_select: Event = None,
-        on_toggle_glyph: Event = None,
         on_frame: Event = None,
         on_show: Event = None,
         on_hover: Event = None,
@@ -102,9 +112,8 @@ class EntityGrid(Element):
             rows: The rows, in order.
             selected: The id of the selected row.
             label: The grid's accessible name.
-            columns: The header of each column: the name, the detail and the glyph.
+            columns: The header of each column: the name and the detail.
             on_select: Receives the id of a row clicked or chosen with Enter, or an empty id for Escape.
-            on_toggle_glyph: Receives the id of a row whose glyph toggle was pressed.
             on_frame: Receives the id of a row double-clicked or framed with F.
             on_show: Receives the id of a hidden body whose Show was clicked or pressed with S.
             on_hover: Receives the id of the row the pointer or the keyboard focus moved onto, and an empty id once both left the grid.

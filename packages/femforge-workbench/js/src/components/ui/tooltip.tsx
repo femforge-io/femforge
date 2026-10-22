@@ -36,16 +36,18 @@ function TooltipTrigger({
 function TooltipContent({
   className,
   sideOffset = 6,
+  definition = false,
   children,
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Content>) {
+}: React.ComponentProps<typeof TooltipPrimitive.Content> & { definition?: boolean }) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          "z-50 w-fit max-w-80 origin-(--radix-tooltip-content-transform-origin) rounded-md border-l-2 border-primary bg-popover px-2.5 py-1.5 text-label text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-(--duration-micro) ease-instrument",
+          "z-50 w-fit max-w-80 origin-(--radix-tooltip-content-transform-origin) rounded-md bg-popover px-2.5 py-1.5 text-label text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-(--duration-micro) ease-instrument",
+          definition && "border-l-2 border-primary",
           "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           className
         )}

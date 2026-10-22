@@ -28,7 +28,7 @@ from femforge.run.entities import Bodies, Body, BodyRecord, Boundaries, Boundary
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.run.result import RunStatus
-from femforge.viz.glyphs import EntityKind, EntityRef, GlyphHost
+from femforge.viz.glyphs import EntityKind, EntityRef, GlyphHost, body_color
 from femforge.viz.symmetry import Expansion
 from tests.workbench.tree import Node, find, prop, texts
 
@@ -50,6 +50,7 @@ from femforge_workbench.panels.setup import (  # noqa: E402
     SetupPanel,
     SetupState,
     SetupVar,
+    body_columns,
     body_rows,
     boundary_columns,
     boundary_rows,
@@ -63,9 +64,7 @@ from femforge_workbench.panels.setup import (  # noqa: E402
     icon_of,
     legend_label,
     legend_rows,
-    matches,
     measure_cell,
-    miss_text,
     notice_of,
     order,
     read_setup,
@@ -173,55 +172,57 @@ def test_a_flexure_run_lists_one_body_and_its_boundaries_named_faces_first(tmp_p
     model = _model(tmp_path)
     bodies = body_rows(model, RowView())
     boundaries = boundary_rows(model, RowView())
+    body = bodies.rows[0]
 
     assert model.state is SetupState.GROUPS and model.frame == FLEXURE_FRAME and not model.has_fields and not model.legacy_names
-    assert [row.get("name") for row in bodies.rows] == ["Flexure"] and bodies.rows[0].get("detail") == STEEL.tag
-    assert bodies.rows[0].get("detail_tip") == STEEL.name and _texts(bodies.rows[0].get("lines", [])) == ["No Conditions"]
-    assert bodies.rows[0].get("tip") == ["FLEXURE", "Body", "Section Area 1450 mm²"]
+    assert [row.get("name") for row in bodies.rows] == ["Flexure"] and body.get("detail") == "1450 mm²", "a 2D body reads its section area"
+    assert (body.get("material"), body.get("material_tip"), body.get("cards"), body.get("kind_icon")) == (STEEL.tag, STEEL.name, [], "pentagon")
+    assert body.get("tip") == ["FLEXURE", "Body"]
     assert [row.get("id") for row in boundaries.rows] == ["boundary:LEFTFACE", "boundary:RIGHTFACE", "boundary:FLEXURE__EXT"]
     assert [row.get("name") for row in boundaries.rows] == ["LeftFace", "RightFace", "Flexure · External"], "names stay verbatim"
 
 
-def test_the_rows_read_what_the_solver_received_with_the_dropped_axis_muted(tmp_path: Path) -> None:
+def test_the_rows_show_each_condition_as_its_read_only_editor_with_the_dropped_axis_muted(tmp_path: Path) -> None:
     left, right, external = boundary_rows(_model(tmp_path), RowView()).rows
-    parts = left.get("lines", [])[0]["parts"]
+    reason = "Authored Z runs along no solve axis: solve X and Y run along +X and +Y."
 
-    assert _texts(right.get("lines", [])) == ["Surface Force 100 N Along (1, 0, 0)", "Traction (500, 0) kPa"]
-    assert parts == [
-        {"text": "Fixed Displacement X 0 · Y 0 · "},
-        {"text": "Z –", "muted": True, "tip": "Authored Z runs along no solve axis: solve X and Y run along +X and +Y."},
-    ]
+    assert left.get("cards") == [{"title": "Fixed Displacement", "icon": "anchor", "fields": [{"label": "Displacement", "kind": "vector", "values": ["0", "0", "0"], "axes": ["X", "Y", "Z"], "unit": "mm", "dropped": [2], "tip": reason}]}]
+    assert right.get("cards") == [
+        {
+            "title": "Surface Force",
+            "icon": "arrow-big-right-dash",
+            "fields": [{"label": "Magnitude", "kind": "quantity", "value": "100", "unit": "N"}, {"label": "Direction", "kind": "vector", "values": ["1", "0", "0"], "axes": ["X", "Y", "Z"], "dropped": [2], "tip": reason}],
+        }
+    ], "an axis the frame has no solve coordinate for reads inactive in every vector"
+    assert external.get("cards") == [] and external.get("chips") == [{"name": "Flexure", "color": body_color(0)}, {"name": "External"}], "an unnamed group reads as the bodies it touches"
+    assert "chips" not in left and [row.get("kind_icon") for row in (left, right, external)] == ["minus"] * 3, "a 2D face is a line"
     assert (left.get("detail"), left.get("detail_tip")) == ("20 mm", "Face Area 200 mm² at 10 mm Thickness")
     assert left.get("tip") == ["LEFTFACE", "Named Face", "Borders Flexure", "Boundary Condition 1"]
-    assert (left.get("icon"), right.get("icon"), "icon" in external) == ("anchor", "arrow-big-right-dash", False), "a row without a drawable condition shows no toggle"
     assert right.get("label") == (
-        "RightFace, 20 mm (Face Area 200 mm² at 10 mm Thickness), Surface Force 100 N Along (1, 0, 0), Traction (500, 0) kPa, Glyph Shown, RIGHTFACE, Named Face, Borders Flexure, Boundary Condition 2"
-    ), "the label reads the detail and every tooltip fact"
-    assert right.get("fit") is True and (right.get("glyph_shown"), "glyph_note" in right) == (True, False)
-    assert "Z – (Authored Z runs along no solve axis: solve X and Y run along +X and +Y.)" in str(left.get("label")), "the label reads the reason the tooltip shows"
+        "RightFace, 20 mm (Face Area 200 mm² at 10 mm Thickness), Surface Force 100 N Along (1, 0, 0), Traction (500, 0) kPa, RIGHTFACE, Named Face, Borders Flexure, Boundary Condition 2"
+    ), "the label reads the detail, what the solver received and every tooltip fact"
+    assert not {"lines", "icon", "fit", "glyph_shown", "glyph_note"} & {*left, *right, *external}, "a row carries no glyph toggle and no fit flag"
+    assert f"Z – ({reason})" in str(left.get("label")), "the label reads the reason the tooltip shows"
 
 
-def test_a_row_toggled_off_hidden_or_without_cells_says_so(tmp_path: Path) -> None:
+def test_a_row_hidden_or_without_cells_says_so(tmp_path: Path) -> None:
     model = _model(tmp_path)
-    view = RowView(visible=frozenset(), rows_off=frozenset({"boundary:RIGHTFACE"}), highlightable=frozenset({"boundary:RIGHTFACE"}))
+    view = RowView(visible=frozenset(), highlightable=frozenset({"boundary:RIGHTFACE"}))
     body = body_rows(model, view).rows[0]
     left, right, _ = boundary_rows(model, view).rows
 
-    assert right.get("glyph_shown") is False and "Glyph Hidden, RIGHTFACE" in str(right.get("label"))
     assert body.get("hidden") is True, "a body the Field Viewer hides offers to show it"
     assert str(body.get("label")).endswith("Hidden in the Field Viewer; press S to show it.")
     assert left.get("dimmed") is True and left.get("dim_tip") == "Not in the mesh files: re-solve to restore the mesh."
     assert str(left.get("label")).endswith(", Not in the mesh files: re-solve to restore the mesh.")
     assert "dimmed" not in right
-    assert "fit" not in left and right.get("fit") is True, "a group without cells offers no fit"
 
 
-def test_without_a_scene_a_row_shows_its_icon_without_a_toggle_and_unreadable_cells_say_so(tmp_path: Path) -> None:
-    left, right, _ = boundary_rows(_model(tmp_path), RowView(highlightable=frozenset(), unreadable=True, drawn=False)).rows
+def test_unreadable_cells_dim_every_row_and_keep_its_cards(tmp_path: Path) -> None:
+    left, right, _ = boundary_rows(_model(tmp_path), RowView(highlightable=frozenset(), unreadable=True)).rows
 
-    assert right.get("icon") == "arrow-big-right-dash" and "glyph_shown" not in right and "Glyph" not in str(right.get("label"))
+    assert [card.get("icon") for card in right.get("cards", [])] == ["arrow-big-right-dash"], "a row without a scene still shows what its condition draws"
     assert left.get("dimmed") is True and right.get("dim_tip") == "Highlight unavailable: the scene's groups failed to load."
-    assert "fit" not in right, "a row offers to fit the view only while a scene draws the run"
 
 
 def test_many_boundary_groups_start_on_those_with_conditions_and_count_the_rest(tmp_path: Path) -> None:
@@ -236,32 +237,35 @@ def test_many_boundary_groups_start_on_those_with_conditions_and_count_the_rest(
     assert listed.rows[0].get("detail") == "20000 mm²", "a solid reads the measured area"
 
 
-def test_a_search_matches_names_materials_and_kinds_and_says_when_nothing_does(tmp_path: Path) -> None:
-    flexure = _model(tmp_path)
+def test_a_shared_material_heads_its_bodies_and_a_partial_count_reads_shown_of_total() -> None:
     bodies = Bodies([Body(name=f"MAGNET{index}", mesh_id=index, material="N42") for index in range(17)] + [Body(name="AIR", mesh_id=17, material="Air")])
     motor = SetupModel(run_id="motor", frame=Solid(), entities=Entities(bodies=bodies, boundaries=Boundaries(())), conditions=None)
-    found = body_rows(motor, RowView(query="air"))
+    listed = body_rows(motor, RowView())
 
-    assert [row.get("name") for row in found.rows] == ["AIR"] and found.total == 18 and count_text(len(found.rows), found.total) == "1 of 18"
-    assert [row.get("name") for row in body_rows(motor, RowView()).rows][:2] == ["N42", "MAGNET0"], "a material several bodies share heads them"
-    assert [row.get("name") for row in boundary_rows(flexure, RowView(query="surface")).rows] == ["RightFace"]
-    assert matches(["RightFace"], "  ") and not matches(["RightFace"], "tip")
-    assert miss_text("tip", 0) == "No bodies or boundaries match 'tip'." and miss_text("tip", 1) == "" and miss_text("", 0) == ""
+    assert [row.get("name") for row in listed.rows][:2] == ["N42", "MAGNET0"] and listed.total == 18
+    assert count_text(1, 18) == "1 of 18" and count_text(18, 18) == "18"
+    sized = replace(motor, entities=Entities(bodies=Bodies([Body(name="AIR", mesh_id=1, material="Air", measure=2e-6)]), boundaries=Boundaries(())))
+    assert body_rows(sized, RowView()).rows[0].get("detail") == "2000 mm³", "a solid reads the volume in mm³"
 
 
-def test_the_frame_section_reads_the_frame_the_check_and_how_a_revolve_is_shown(tmp_path: Path) -> None:
+def test_the_frame_section_reads_the_frame_type_and_its_facts_and_a_failed_check_lists_its_lines(tmp_path: Path) -> None:
     model = _model(tmp_path)
     toroid = GeometryCheck(frame="cartesian", tolerance=0.01, measured=(BodyMismatch(body="Name=Flexure, Material=Steel1080", check=FrameCheck.PRISM, fraction=0.032), BodyMismatch(body="Name=Air", check=FrameCheck.DEPTH, fraction=0.02)))
-    revolved = SetupModel(run_id="coil", frame=Axisymmetric(), entities=model.entities, conditions=None)
+    solid = SetupModel(run_id="motor", frame=Solid(), entities=model.entities, conditions=None)
 
-    assert [row["label"] for row in frame_facts(model, Expansion.SECTION, 360.0)] == ["Normal", "Plane Origin", "Solve X, Y", "Thickness", "Plane State"]
-    assert frame_facts(revolved, Expansion.REVOLVE, 90.0)[-1] == {"label": "Shown As", "value": "Revolved 90°"}
-    assert frame_facts(revolved, Expansion.MIRROR, 90.0)[-1] == {"label": "Shown As", "value": "Mirrored"}
+    facts = frame_facts(model)
+    passed = toroid.model_copy(update={"measured": ()})
+
+    assert [row["label"] for row in facts] == ["Type", "Normal", "Plane Origin", "Solve X, Y", "Thickness", "Plane State"], "a computed result such as the geometry check is no setup input"
+    assert facts[0] == {"label": "Type", "kind": "choice", "value": "Cartesian 2D", "tip": FLEXURE_FRAME.description}, "the frame type reads as the select that would author it"
+    assert facts[2] == {"label": "Plane Origin", "kind": "vector", "values": ["0", "0", "5"], "axes": ["X", "Y", "Z"], "unit": "mm"}
+    assert facts[4] == {"label": "Thickness", "kind": "quantity", "value": "10", "unit": "mm"}
+    assert frame_facts(solid) == [{"label": "Type", "kind": "choice", "value": "Solid", "tip": Solid().description}], "a whole-model frame still names its type"
     expected = ["Flexure Fails Prism Test (Mismatch\u00a03.2\u00a0%)", "Air Fails Depth Test (Mismatch\u00a02\u00a0%)"]
     assert check_line(toroid, FLEXURE_FRAME) == (expected, True), "every failing body and test, worst first, the share never split across lines"
-    assert check_line(toroid.model_copy(update={"measured": ()}), FLEXURE_FRAME) == (["Passed"], False)
+    assert check_line(passed, FLEXURE_FRAME) == (["Passed"], False)
     assert check_line(None, FLEXURE_FRAME) == (["Not Recorded"], False) and check_line(None, Solid()) == ([], False)
-    assert frame_facts(SetupModel(run_id="x", frame=None, entities=model.entities, conditions=None), Expansion.SECTION, 360.0) == []
+    assert frame_facts(SetupModel(run_id="x", frame=None, entities=model.entities, conditions=None)) == []
 
 
 def test_the_measure_reads_the_area_the_length_or_a_dash() -> None:
@@ -329,9 +333,9 @@ def test_the_empty_tab_says_why_no_run_is_open() -> None:
 def test_a_dropped_axis_names_the_solve_axes_in_authored_terms() -> None:
     sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
 
-    assert dropped_tip("x", sideways) == "Authored X runs along no solve axis: solve X and Y run along +Y and +Z."
-    assert dropped_tip("y", Axisymmetric()) == "Authored Y runs along no solve axis: radial and axial run along +X and +Z."
-    assert dropped_tip("z", None) == "Authored Z runs along no solve axis." and dropped_tip("z", Solid()) == "Authored Z runs along no solve axis."
+    assert dropped_tip("x", frame=sideways) == "Authored X runs along no solve axis: solve X and Y run along +Y and +Z."
+    assert dropped_tip("y", frame=Axisymmetric()) == "Authored Y runs along no solve axis: radial and axial run along +X and +Z."
+    assert dropped_tip("z", frame=None) == "Authored Z runs along no solve axis." and dropped_tip("z", frame=Solid()) == "Authored Z runs along no solve axis."
 
 
 def test_a_block_femforge_set_ranks_by_its_kind_but_passes_the_filter() -> None:
@@ -351,6 +355,7 @@ def test_the_caption_claims_glyphs_only_for_a_run_that_draws_them(tmp_path: Path
     assert caption_of(replace(model, has_mesh=True)) == "No fields · glyphs drawn on the mesh."
     assert caption_of(bare) == "No fields · showing the mesh." and caption_of(replace(bare, solving=True)) == "Solving · showing the mesh."
     assert caption_of(model) == "Glyphs need the mesh; re-solve to restore it." and caption_of(replace(bare, has_mesh=False)) == ""
+    assert caption_of(replace(bare, has_mesh=False, legacy_names=True)) == "Names recovered from mesh.names."
 
 
 def test_a_femforge_block_or_an_overridden_one_reads_muted() -> None:
@@ -370,10 +375,11 @@ def test_the_notices_name_a_run_without_conditions_one_that_sets_none_and_one_th
     assert notice_of(replace(model, conditions=None))[0].startswith("This run recorded no conditions.json")
     assert notice_of(empty) == ("This run sets no conditions; every boundary takes the solver's natural condition.", NoticeLevel.INFO)
     assert notice_of(authored)[1] is NoticeLevel.WARNING and authored.state is SetupState.AUTHORED
-    assert [row.get("name") for row in tag_rows(authored, "").rows] == ["Name=LeftFace", "Name=RightFace", "Name=Flexure"]
-    assert _texts(tag_rows(authored, "").rows[0].get("lines", [])) == ["Fixed Displacement X 0 · Y 0 · Z 0"]
-    assert [row.get("name") for row in tag_rows(authored, "right").rows] == ["Name=RightFace"]
-    assert [row.get("icon") for row in tag_rows(authored, "").rows] == ["anchor", "arrow-big-right-dash", None], "a tag shows the kind of glyph its condition draws"
+    rows = tag_rows(authored).rows
+    assert [row.get("name") for row in rows] == ["Name=LeftFace", "Name=RightFace", "Name=Flexure"] and {row.get("kind_icon") for row in rows} == {"file"}
+    assert rows[0].get("cards", [])[0]["fields"] == [{"label": "Displacement", "kind": "vector", "values": ["0", "0", "0"], "axes": ["X", "Y", "Z"], "unit": "mm"}]
+    assert rows[0].get("label") == "Name=LeftFace, Fixed Displacement X 0 · Y 0 · Z 0"
+    assert [[card.get("icon") for card in row.get("cards", [])] for row in rows] == [["anchor"], ["arrow-big-right-dash"], []], "a tag shows the kind of glyph its condition draws"
 
 
 def test_the_legend_counts_each_glyph_kind_the_run_draws(tmp_path: Path) -> None:
@@ -401,8 +407,11 @@ def test_a_drive_into_the_plane_and_an_output_draw_their_own_icons() -> None:
     )
     coil, plunger = body_rows(model, RowView()).rows
 
-    assert coil.get("icon") == "circle-x" and "icon" not in plunger
-    assert _texts(plunger.get("lines", [])) == ["Calculate Magnetic Force (Output, No Glyph)"]
+    assert coil.get("cards") == [{"title": "Current Density", "icon": "circle-x", "fields": [{"label": "Value", "kind": "quantity", "value": "-3", "unit": "A/mm²"}]}]
+    assert plunger.get("cards") == [
+        {"title": "Calculate Magnetic Force", "fields": [{"label": "Calculate Magnetic Force", "kind": "choice", "value": "On"}, {"label": "Calculate Magnetic Torque", "kind": "choice", "value": "Off"}]}
+    ], "an output draws no glyph, so its card has no icon"
+    assert "Calculate Magnetic Force (Output, No Glyph)" in str(plunger.get("label"))
 
 
 def test_a_convection_reads_each_value_after_its_glyph() -> None:
@@ -432,23 +441,14 @@ def test_a_legacy_bundle_recovers_its_names_and_a_bad_manifest_costs_only_the_fr
     assert [body.name for body in legacy.entities.bodies] == ["FLEXURE"]
 
 
-def test_a_material_group_heads_its_bodies_without_a_glyph_a_fit_or_a_repeated_material() -> None:
+def test_a_material_group_heads_its_bodies_without_repeating_the_material() -> None:
     bodies = Bodies([Body(name="FRAME", mesh_id=1, material=STEEL.tag), Body(name="PLUNGER", mesh_id=2, material=STEEL.tag)])
     model = SetupModel(run_id="coil", frame=Axisymmetric(), entities=Entities(bodies=bodies, boundaries=Boundaries(())), conditions=None, materials=(STEEL,))
     group, *members = body_rows(model, RowView()).rows
 
-    assert group.get("group") is True and "icon" not in group and "fit" not in group and group.get("tip") == [STEEL.tag, STEEL.name]
-    assert [(member.get("member"), member.get("detail"), member.get("fit")) for member in members] == [(True, "", True), (True, "", True)]
-
-
-def test_a_glyph_the_legend_or_show_glyphs_hides_says_so_on_its_row(tmp_path: Path) -> None:
-    model = _model(tmp_path)
-    left, right, _ = boundary_rows(model, RowView(kinds_off=frozenset({"surface_force"}))).rows
-    _, dark, _ = boundary_rows(model, RowView(glyphs=False)).rows
-
-    assert right.get("glyph_note") == "Glyph hidden by the legend" and "Glyph hidden by the legend" in str(right.get("label"))
-    assert "glyph_note" not in left, "a kind left on keeps its own toggle"
-    assert dark.get("glyph_note") == "Glyph hidden by Show Glyphs"
+    assert group.get("group") is True and group.get("detail") == "2 Bodies" and group.get("tip") == [STEEL.tag, STEEL.name]
+    assert "kind_icon" not in group and "cards" not in group, "a material heading is no group of the mesh"
+    assert [(member.get("member"), member.get("kind_icon"), "material" in member) for member in members] == [(True, "pentagon", False), (True, "pentagon", False)]
 
 
 def test_a_pull_mapped_onto_a_sideways_plane_reads_the_traction_with_its_sign() -> None:
@@ -460,9 +460,10 @@ def test_a_pull_mapped_onto_a_sideways_plane_reads_the_traction_with_its_sign() 
     assert _texts(condition_lines(record, sideways)) == ["Surface Force 100 N Along (0, -1, 0)", "Traction (-500, 0) kPa"]
 
 
-def test_the_boundaries_header_names_the_measure_the_frame_reads() -> None:
-    assert boundary_columns(FLEXURE_FRAME) == ["Name", "Length", "Glyph"]
-    assert boundary_columns(Solid()) == ["Name", "Area", "Glyph"] and boundary_columns(None) == ["Name", "Area", "Glyph"]
+def test_the_table_headers_name_the_measure_the_frame_reads() -> None:
+    assert boundary_columns(FLEXURE_FRAME) == ["Name", "Length"]
+    assert boundary_columns(Solid()) == ["Name", "Area"] and boundary_columns(None) == ["Name", "Area"]
+    assert body_columns(FLEXURE_FRAME) == ["Name", "Section Area"] and body_columns(Solid()) == ["Name", "Volume"] and body_columns(None) == ["Name", "Volume"]
 
 
 def test_a_framed_group_keeps_the_scene_around_it() -> None:
@@ -472,23 +473,27 @@ def test_a_framed_group_keeps_the_scene_around_it() -> None:
 # --- the template ----------------------------------------------------------------
 
 
-def test_the_tab_builds_its_switches_sections_and_grids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_tab_builds_its_switches_legend_sections_and_grids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _shell("template", tmp_path, monkeypatch)
     template = cast("Node", app.state[f"trame__template_{template_name(FieldPanel.SETUP)}"])
     switches = find(template, "ff-switch")
+    checkboxes = find(template, "ff-checkbox")
+    grids = find(template, "ff-entity-grid")
     headers = [cast("Node", trigger["children"][0]) for trigger in find(template, "ff-accordion-trigger")]  # pyright: ignore[reportIndexIssue]  # a trigger node holds its header span
 
-    assert [_bound(node, "checked") for node in switches[:4]] == [str(var) for var in (FieldVar.GLYPHS, FieldVar.PLAIN_BODIES, FieldVar.SECTION_OUTLINE, FieldVar.AUTHORED_GHOST)]
+    assert [_bound(node, "checked") for node in switches] == [str(FieldVar.SECTION_OUTLINE), str(FieldVar.AUTHORED_GHOST)], "the 2D switches are the only switches; the legend shows the glyphs"
     assert [texts(find(header, "span")[1])[0] for header in headers] == ["Frame", "Authored Tags", "Bodies", "Boundaries", "Glyphs"]
-    assert [_bound(node, "rows") for node in find(template, "ff-entity-grid")] == [str(SetupVar.TAG_ROWS), str(SetupVar.BODY_ROWS), str(SetupVar.BOUNDARY_ROWS)]
-    assert all(_bound(node, "selected") == str(FieldVar.SELECTED_ENTITY) for node in find(template, "ff-entity-grid"))
-    assert [prop(node, "htmlFor") for node in find(template, "ff-field-label") if prop(node, "htmlFor") and prop(node, "htmlFor") != "ff-setup-search"] == [prop(node, "id") for node in switches]
-    assert _bound(find(template, "ff-input")[0], "key") == str(SetupVar.SEARCH_KEY)
-    assert len(switches) == 4 + len(ConditionGlyph), "one legend switch per glyph kind"
-    assert all(_bound(node, "disabled") == f"!{SetupVar.HAS_SCENE}" for node in switches[4:]), "a legend switch needs a scene to act on"
-    assert _bound(switches[3], "aria-disabled") == f"!{SetupVar.HAS_GHOST}", "a ghost switch without a ghost says it is disabled"
-    assert [prop(node, "columns") for node in find(template, "ff-entity-grid")][:2] == [["Tag", "", "Glyph"], ["Name", "Material", "Glyph"]]
-    assert _bound(find(template, "ff-entity-grid")[2], "columns") == str(SetupVar.BOUNDARY_COLUMNS)
+    assert [_bound(node, "rows") for node in grids] == [str(SetupVar.TAG_ROWS), str(SetupVar.BODY_ROWS), str(SetupVar.BOUNDARY_ROWS)]
+    assert all(_bound(node, "selected") == str(FieldVar.SELECTED_ENTITY) for node in grids)
+    assert all(prop(node, "onHover") == {"callback": {"js": f'trame.state.set("{FieldVar.HOVERED}", $event)'}} for node in grids), "a hovered row outlines its group in the view"
+    assert [prop(node, "htmlFor") for node in find(template, "ff-field-label")] == [prop(node, "id") for node in [*switches, *checkboxes]]
+    assert find(template, "ff-input") == [], "the tab has no search"
+    assert len(checkboxes) == 1 + len(ConditionGlyph) and prop(checkboxes[0], "id") == "ff-setup-kind-all", "an All Glyphs row leads one checkbox per glyph kind"
+    assert "'indeterminate'" in str(_bound(checkboxes[0], "checked")), "All Glyphs reads mixed while only some kinds are off"
+    assert all(_bound(node, "disabled") == f"!{SetupVar.HAS_SCENE}" for node in checkboxes), "a legend checkbox needs a scene to act on"
+    assert _bound(switches[1], "aria-disabled") == f"!{SetupVar.HAS_GHOST}", "a ghost switch without a ghost says it is disabled"
+    assert prop(grids[0], "columns") == ["Tag", ""] and [_bound(node, "columns") for node in grids[1:]] == [str(SetupVar.BODY_COLUMNS), str(SetupVar.BOUNDARY_COLUMNS)]
+    assert [_bound(node, "fields") for node in find(template, "ff-fields")] == [str(SetupVar.FRAME_FACTS)], "the frame reads as read-only fields"
     assert f'"js": "{SetupVar.WARP_CAPTION}"' in json.dumps(template), "the ghost names the warp the solved body shows"
     assert f"{FieldVar.AUTHORED_GHOST} && {SetupVar.HAS_GHOST} && " in json.dumps(template), "the warp caption shows only while the ghost is drawn"
 
@@ -515,7 +520,7 @@ def test_a_run_without_conditions_lists_every_boundary_and_never_counts_more(tmp
 # --- the controller's paths ------------------------------------------------------
 
 
-def test_opening_a_run_publishes_it_and_a_new_run_resets_the_toggles_but_keeps_the_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opening_a_run_publishes_it_and_a_new_run_resets_the_legend_and_the_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
         app = _shell("paths", tmp_path, monkeypatch)
         controller = _controller(app)
@@ -551,28 +556,23 @@ def test_opening_a_run_publishes_it_and_a_new_run_resets_the_toggles_but_keeps_t
         assert app.state[SetupVar.HAS_SCENE] is False, "the scene switches hide while the view draws nothing"
         assert all(row.get("dimmed") for row in cast("list[dict[str, object]]", app.state[SetupVar.BOUNDARY_ROWS])), "nothing has cells without fields or mesh"
 
-        panel.on_toggle_glyph("boundary:RIGHTFACE")
         panel.on_kind("thermal", False)
         app.state[FieldVar.SELECTED_ENTITY] = "boundary:LEFTFACE"
-        app.state[SetupVar.QUERY] = "face"
-        panel.on_rows()
 
-        assert app.state[FieldVar.GLYPH_ROWS_OFF] == ["boundary:RIGHTFACE"] and app.state[FieldVar.GLYPH_KINDS_OFF] == ["thermal"]
-        assert app.state[SetupVar.BOUNDARY_COUNT] == "2 of 3"
+        assert app.state[FieldVar.GLYPH_KINDS_OFF] == ["thermal"]
 
         second = _flexure(tmp_path / "second")
         await controller.load(second)
         await controller.settle()
 
-        assert app.state[FieldVar.GLYPH_ROWS_OFF] == [] and app.state[FieldVar.GLYPH_KINDS_OFF] == [] and app.state[FieldVar.SELECTED_ENTITY] == ""
-        assert app.state[SetupVar.QUERY] == "face" and app.state[SetupVar.BOUNDARY_COUNT] == "2 of 3"
+        assert app.state[FieldVar.GLYPH_KINDS_OFF] == [] and app.state[FieldVar.SELECTED_ENTITY] == ""
 
-        panel.on_toggle_glyph("boundary:RIGHTFACE")
+        panel.on_kind("surface_force", False)
         app.state[FieldVar.SELECTED_ENTITY] = "boundary:LEFTFACE"
         await controller.load(second)
         await controller.settle()
 
-        assert app.state[FieldVar.GLYPH_ROWS_OFF] == ["boundary:RIGHTFACE"] and app.state[FieldVar.SELECTED_ENTITY] == "boundary:LEFTFACE", "the same run reopening keeps the toggles"
+        assert app.state[FieldVar.GLYPH_KINDS_OFF] == ["surface_force"] and app.state[FieldVar.SELECTED_ENTITY] == "boundary:LEFTFACE", "the same run reopening keeps the legend and the selection"
 
         await controller.load(tmp_path / "missing")
         await controller.settle()
@@ -679,10 +679,6 @@ def test_the_handlers_select_announce_clear_and_show(tmp_path: Path, monkeypatch
         panel.on_select("")
         assert app.state[FieldVar.SELECTED_ENTITY] == "" and app.state[SetupVar.ANNOUNCE] == "Selection cleared"
 
-        app.state[SetupVar.QUERY] = "left"
-        panel.on_select("")
-        assert app.state[SetupVar.QUERY] == "" and app.state[SetupVar.SEARCH_KEY] == 1, "Escape clears the search first"
-
         panel.on_select("material:Steel1080")
         assert app.state[FieldVar.SELECTED_ENTITY] == "", "a material row selects nothing"
 
@@ -700,9 +696,10 @@ def test_the_handlers_select_announce_clear_and_show(tmp_path: Path, monkeypatch
         panel.on_kind("thermal", True)
         assert app.state[FieldVar.GLYPH_KINDS_OFF] == []
 
-        panel.on_toggle_glyph("boundary:LEFTFACE")
-        panel.on_toggle_glyph("boundary:LEFTFACE")
-        assert app.state[FieldVar.GLYPH_ROWS_OFF] == []
+        panel.on_all_kinds(False)
+        assert app.state[FieldVar.GLYPH_KINDS_OFF] == ["surface_force", "fixed_displacement"], "All Glyphs off hides every kind the run draws"
+        panel.on_all_kinds(True)
+        assert app.state[FieldVar.GLYPH_KINDS_OFF] == []
 
         controller.highlightable = frozenset()
         panel.publish()
@@ -715,10 +712,6 @@ def test_the_handlers_select_announce_clear_and_show(tmp_path: Path, monkeypatch
 
         panel.on_visible(True)
         assert app.state[FieldVar.SETUP_SHOWN] is True
-
-        app.state[FieldVar.EXPANSION] = str(Expansion.REVOLVE)
-        panel.on_expansion()
-        assert [row["label"] for row in cast("list[dict[str, str]]", app.state[SetupVar.FRAME_FACTS])][-1] == "Plane State", "only a revolving frame reads Shown As"
 
     asyncio.run(run())
 

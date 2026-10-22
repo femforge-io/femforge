@@ -34,13 +34,14 @@ from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
 from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap
 from femforge.viz.field_lines import Bounds, FieldLineOptions, SeedPlacement
-from femforge.viz.glyphs import LABEL_FONT_PX, EntityKind, EntityRef, GlyphHost, GlyphLayer, GlyphView, GroupScene, plain_spec
-from femforge.viz.symmetry import Expansion
+from femforge.viz.glyphs import LABEL_FONT_PX, EntityKind, EntityRef, GlyphHost, GlyphLayer, GlyphView, GroupScene
+from femforge.viz.symmetry import EXTRUDING, REVOLVING, Expansion, offered, shown_as
 from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES, ColormapType
 from femforge_workbench.feeds import Feed
 from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
+from femforge_workbench.panels.artifacts import open_folder
 from femforge_workbench.panels.scene import ScenePanel, View, ViewMode, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
 from femforge_workbench.tasks import TaskPhase, TaskView
@@ -111,8 +112,10 @@ DEFAULTS = DisplaySpec()
 
 LINE_DEFAULTS = FieldLineOptions()
 FULL_WIDTH = "w-full"
-RUN_WIDTH = "w-96"
-PATH_WIDTH = "w-[28rem] shrink-0"
+RUN_WIDTH = "w-64"
+PATH_GROUP = "flex min-w-48 max-w-xl flex-1 items-center gap-1"
+PATH_FIELD = "h-8 min-w-0 flex-1 cursor-default truncate border-0 bg-readonly text-readonly-foreground shadow-none focus-visible:ring-0 dark:bg-readonly"
+"""The bundle path reads like the Setup tab's read-only fields: a dimmed fill with no border or focus ring."""
 """The bar is pulsed, not filled: the load reports no fraction."""
 
 SYMMETRY_SECTION = "symmetry"
@@ -147,23 +150,26 @@ BODY_ROW = "grid h-6 grid-cols-[1rem_minmax(0,1fr)_5.5rem_4.5rem] items-center g
 BODY_NAME = "truncate"
 MEMBER_NAME = "truncate pl-3"
 GROUP_NAME = "truncate font-medium"
-CHIP_SLOT = "grid grid-cols-[minmax(0,1fr)_1rem] items-center gap-0.5"
-CHIP = "h-4 w-full min-w-0 cursor-pointer rounded-sm border border-border p-0"
+CHIP_SLOT = "flex h-6 min-w-0 items-center gap-1 rounded-md border border-input px-1.5"
+"""A row's color control, boxed like the body colormap's select so every row's swatch and trailing icon line up with it."""
+CHIP = "h-3.5 min-w-0 flex-1 cursor-pointer rounded-sm border-0 p-0"
 COLOR_CHIP = f"{CHIP} [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[3px] [&::-webkit-color-swatch]:border-0"
-CHIP_CLEAR = "size-4"
+CHIP_CLEAR = "size-3.5 shrink-0 text-muted-foreground"
+CHIP_SPACER = "size-3.5 shrink-0"
 PRECISION = 3
 """Significant figures of the range readouts, matching the color bar's labels."""
 RANGE_VAR = "--ff-range"
 RANGE_TRACK = "[&_[data-slot=slider-range]]:[background-image:var(--ff-range)]"
 """Paints the track between the range thumbs with the field colormap, which the slider then reads as the legend."""
 
-RUN_GROUP = "flex items-center gap-3"
+OPEN_FOLDER = "Open Folder"
+
+RUN_GROUP = "flex min-w-0 flex-1 items-center gap-3"
 TOUR_PREFIX = "tour-"
 RUN_TOUR_ID = f"{TOUR_PREFIX}run"
 SWEEP_RANGE = (15.0, 360.0)
 SWEEP_STEP = 15.0
 DEGREES = "°"
-NOTHING_TO_EXPAND = title("nothing to expand")
 WARP_RANGE = 5.0
 """How far past the automatic scale the deformation slider reaches, as a multiple of it."""
 
@@ -225,6 +231,9 @@ class FieldVar(StrEnum):
     OUTLINE = "field_outline"
     LEGEND = "field_legend"
     EXPANSION = "field_expansion"
+    EXPANSIONS = "field_expansions"
+    """The Show As choices the open run offers, its 3D form last."""
+
     SWEEP = "field_sweep"
     SOLVED_AS = "field_solved_as"
     SYMMETRY = "field_symmetry"
@@ -263,23 +272,14 @@ class FieldVar(StrEnum):
     SETUP_SHOWN = "field_setup_shown"
     """Whether the Setup tab is on screen, the only time the scene draws glyphs."""
 
-    GLYPHS = "field_glyphs"
-    """The Show Glyphs switch."""
-
     GLYPH_KINDS_OFF = "field_glyph_kinds_off"
     """The glyph kinds the legend switched off, as ``ConditionGlyph`` values."""
-
-    GLYPH_ROWS_OFF = "field_glyph_rows_off"
-    """The entity ids whose glyphs a row switched off."""
 
     SELECTED_ENTITY = "field_selected_entity"
     """The entity id highlighted in the accent; empty highlights nothing."""
 
     HOVERED = "field_hovered"
     """The entity id whose row the pointer or the keyboard focus is on, which the browser outlines; empty outlines nothing."""
-
-    PLAIN_BODIES = "field_plain_bodies"
-    """The Plain Bodies switch."""
 
     SECTION_OUTLINE = "field_section_outline"
     """The Section Outline switch of a 2D run."""
@@ -362,11 +362,8 @@ DISPLAY_KEYS: tuple[FieldVar, ...] = (
 
 GLYPH_KEYS: tuple[FieldVar, ...] = (
     FieldVar.SETUP_SHOWN,
-    FieldVar.GLYPHS,
     FieldVar.GLYPH_KINDS_OFF,
-    FieldVar.GLYPH_ROWS_OFF,
     FieldVar.SELECTED_ENTITY,
-    FieldVar.PLAIN_BODIES,
     FieldVar.SECTION_OUTLINE,
     FieldVar.AUTHORED_GHOST,
 )
@@ -467,6 +464,8 @@ def expansion_label(value: str) -> str:
             return "Mirrored"
         case Expansion.REVOLVE:
             return "Revolved"
+        case Expansion.EXTRUDE:
+            return "Extruded"
 
 
 def placement_items(model_dim: int = 3) -> list[Item]:
@@ -586,10 +585,10 @@ class RunEntry:
         return not claimed(self.runs_dir, self.run_id)
 
     def item(self) -> Item:
-        """The run as a picker item: its description, else its id, then its flag and, muted, its id, else its physics and dimension."""
+        """The run as a picker item: its id, then its flag and, muted, its description, else its physics and dimension."""
         extent = f"{self.dim}D" if self.dim is not None else ""
-        identity = [self.run_id] if self.description else [part for part in (title(self.physics or ""), extent) if part]
-        item: Item = {ItemField.TITLE: self.name, ItemField.VALUE: self.value, ItemField.DETAIL: identity}
+        about = [self.description] if self.description else [part for part in (title(self.physics or ""), extent) if part]
+        item: Item = {ItemField.TITLE: self.run_id, ItemField.VALUE: self.value, ItemField.DETAIL: about}
         if self.flag is not None:
             item[ItemField.FLAG] = title(self.flag)
 
@@ -823,6 +822,10 @@ def setting(model: StrEnum, label: str, *, disabled: react.Bind | None = None) -
         Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled, aria_disabled=disabled)
 
 
+TWO_SEGMENTS = "grid-cols-2"
+"""The track of a two-way choice, which overrides the three columns `Cls.SEGMENTED` lays out."""
+
+
 def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
     """A captioned single choice among `values` as one row of equal segments; pressing the chosen segment again changes nothing.
 
@@ -833,8 +836,9 @@ def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callab
         read: Makes the text each value reads as; Title Case by default.
     """
     keep = react.Callback(f"{EVENT} && trame.state.set({json.dumps(str(model))}, {EVENT})")
+    track = f"{Cls.SEGMENTED} {TWO_SEGMENTS}" if len(values) == 2 else str(Cls.SEGMENTED)
     with captioned(label):
-        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, classes=str(Cls.SEGMENTED), aria_label=title(label)):
+        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, classes=track, aria_label=title(label)):
             for value in values:
                 ToggleGroupItem(read(value), value=value, classes=str(Cls.SEGMENT))
 
@@ -993,6 +997,7 @@ class FieldViewerController(TrameComponent):
                 FieldVar.OUTLINE: display.outline,
                 FieldVar.LEGEND: str(display.legend),
                 FieldVar.EXPANSION: str(display.expansion),
+                FieldVar.EXPANSIONS: [],
                 FieldVar.SWEEP: [display.sweep],
                 FieldVar.SOLVED_AS: NO_RUN,
                 FieldVar.SYMMETRY: str(SymmetryState.NONE),
@@ -1025,12 +1030,9 @@ class FieldViewerController(TrameComponent):
                 FieldVar.BODY_LEAD: self.lead(colormap_gradient(display.colormap, reverse=display.invert)),
                 FieldVar.COLORMAP_ITEMS: colormap_items(),
                 FieldVar.SETUP_SHOWN: False,
-                FieldVar.GLYPHS: True,
                 FieldVar.GLYPH_KINDS_OFF: [],
-                FieldVar.GLYPH_ROWS_OFF: [],
                 FieldVar.SELECTED_ENTITY: "",
                 FieldVar.HOVERED: "",
-                FieldVar.PLAIN_BODIES: False,
                 FieldVar.SECTION_OUTLINE: True,
                 FieldVar.AUTHORED_GHOST: False,
             }
@@ -1237,7 +1239,6 @@ class FieldViewerController(TrameComponent):
         listed = next((entry for entry in self.entries if entry.value == value), None)
         name = listed.name if listed is not None else value
         self.set_busy(True)
-        self.status(f"opening {name}")
         if self.scene is None:
             self.notice(f"Opening {name}")
 
@@ -1405,6 +1406,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.LINES_BODIES] = body_items([])
             self.state[FieldVar.SOLVED_AS] = NO_RUN
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.NONE)
+            self.state[FieldVar.EXPANSIONS] = []
             self.state[FieldVar.HAS_DISPLACEMENT] = False
 
         self.notice(reason)
@@ -1499,6 +1501,10 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.MODEL_DIM] = self.model_dim
             self.state[FieldVar.SOLVED_AS] = title(scene.frame.label)
             self.state[FieldVar.SYMMETRY] = str(SymmetryState.OPEN if scene.expandable else SymmetryState.FIXED)
+            self.state[FieldVar.EXPANSIONS] = [str(expansion) for expansion in offered(scene.frame)]
+            if scene.expandable:
+                self.state[FieldVar.EXPANSION] = str(scene.expansion_of(spec)[0])
+
             self.state[FieldVar.HAS_DISPLACEMENT] = warp is not None
             self.state[FieldVar.WARP_SCALE] = [self.warp_pinned or auto]
             self.state[FieldVar.WARP_SCALE_MAX] = reach if reach > 0.0 else 1.0
@@ -1524,8 +1530,7 @@ class FieldViewerController(TrameComponent):
         self.request_redraw()
         self.app.offer_tour()
 
-        log.bind(run_id=scene.run_id, model_dim=self.model_dim, cells=scene.grid.n_cells, location=location).info("Run shown.")
-        self.status(f"{scene.run_id}: {len(scene.fields)} fields, {len(self.bodies)} bodies, {self.model_dim}D")
+        log.bind(run_id=scene.run_id, model_dim=self.model_dim, fields=len(scene.fields), bodies=len(self.bodies), cells=scene.grid.n_cells, location=location).info("Run shown.")
 
     def seeds_for(self, dim: int) -> str:
         """The seed placement for a run shown in `dim` dimensions: a flat one has no volume, so Volume seeds move to the center plane until a solid one takes them back."""
@@ -1667,7 +1672,7 @@ class FieldViewerController(TrameComponent):
         hidden = tuple(name for name in self.bodies if name not in visible)
         expansion = Expansion(str(state[FieldVar.EXPANSION]))
         scene = self.scene
-        dim = expansion.dim if scene is not None and scene.expandable else self.model_dim
+        dim = shown_as(scene.frame, expansion).dim if scene is not None and scene.expandable else self.model_dim
         drawing_lines = bool(state[FieldVar.STREAMLINES]) and bool(state[FieldVar.HAS_VECTORS])
         streamlines = self.streamline_options(dim) if drawing_lines else None
         opacity_map = pair_of(state[FieldVar.OPACITY_RANGE]) if bool(state[FieldVar.OPACITY_MAPPING]) else None
@@ -1762,8 +1767,7 @@ class FieldViewerController(TrameComponent):
 
         view = self.scaled_glyphs()
         scene.glyph_view = view
-        shown = plain_spec(spec, self.bodies) if view is not None and view.plain_bodies else spec
-        await self.draw_plotter(scene, shown)
+        await self.draw_plotter(scene, spec)
         if scene is self.scene:
             self.publish_range(scene)
             self.turn_iso()
@@ -1786,13 +1790,11 @@ class FieldViewerController(TrameComponent):
             return None
 
         off = set(names_of(state[FieldVar.GLYPH_KINDS_OFF]))
-        kinds = frozenset(kind for kind in ConditionGlyph if kind.value not in off) if bool(state[FieldVar.GLYPHS]) else frozenset[ConditionGlyph]()
+        kinds = frozenset(kind for kind in ConditionGlyph if kind.value not in off)
         selected = str(state[FieldVar.SELECTED_ENTITY] or "")
 
         return GlyphView(
             kinds=kinds,
-            hidden=frozenset(names_of(state[FieldVar.GLYPH_ROWS_OFF])),
-            plain_bodies=bool(state[FieldVar.PLAIN_BODIES]),
             selected=selected or None,
             outline=bool(state[FieldVar.SECTION_OUTLINE]),
             ghost=bool(state[FieldVar.AUTHORED_GHOST]),
@@ -1937,7 +1939,7 @@ class FieldViewerController(TrameComponent):
         if scene is None or not scene.expandable:
             return self.model_dim
 
-        return Expansion(str(self.state[FieldVar.EXPANSION])).dim
+        return shown_as(scene.frame, Expansion(str(self.state[FieldVar.EXPANSION]))).dim
 
     def publish_seeds(self) -> None:
         """Offers the seed placements the coming draw's dimension allows, moving Volume seeds to the center plane while the run is shown flat, before the draw reads them."""
@@ -2191,7 +2193,7 @@ class FieldControlsPanel(PanelComponent):
         app.add_tour_steps(TOUR_STEPS)
 
     def build_run_picker(self) -> None:
-        """The run select, disabled while it has nothing to offer, and beside it the open run's bundle path to read or copy; built into the app bar, its one place."""
+        """The run select, disabled while it has nothing to offer, and beside it the open run's bundle path to read or copy and a button that opens its folder; the app bar holds it."""
         with html.Div(classes=RUN_GROUP, id=RUN_TOUR_ID):
             with labelled("Run"):
                 picker(
@@ -2205,7 +2207,19 @@ class FieldControlsPanel(PanelComponent):
                     on_open_change=setter(str(FieldVar.RUN_PICKING)),
                 )
 
-            Input(value=react.Bind(str(FieldVar.RUN_TEXT)), read_only=True, placeholder="Bundle Path", classes=PATH_WIDTH, aria_label="Bundle path")
+            with html.Div(classes=PATH_GROUP):
+                Input(value=react.Bind(str(FieldVar.RUN_TEXT)), read_only=True, placeholder="Bundle Path", classes=PATH_FIELD, aria_label="Bundle path")
+                with (
+                    Tip(content=OPEN_FOLDER),
+                    Button(size="icon-sm", variant="ghost", aria_label=OPEN_FOLDER, disabled=react.Bind(f"!{FieldVar.RUN_TEXT}"), on_click=self.callback(self.reveal_run)),
+                ):
+                    Icon("folder", size=16)
+
+    def reveal_run(self) -> None:
+        """Opens the open run's bundle directory in the file manager."""
+        path = str(self.state[FieldVar.RUN_TEXT] or "")
+        if path:
+            open_folder(Path(path))
 
     def build_colormap(self) -> None:
         """The field colormap picker: searchable, filtered by type and favorites, the arrow keys stepping through it while it is closed."""
@@ -2278,16 +2292,17 @@ class FieldControlsPanel(PanelComponent):
             self.slider(FieldVar.OPACITY_RANGE, "Opacity", OPACITY_RANGE, OPACITY_STEP)
 
     def build_symmetry(self) -> None:
-        """The symmetry section: what the run was solved as and, for a section, how it is expanded and how far a revolution sweeps."""
+        """The symmetry section of a section run that can be expanded: what it was solved as, the forms its frame offers and how far a revolution sweeps."""
         readouts("Solved as", react.Bind(str(FieldVar.SOLVED_AS)))
-        with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.OPEN))}"), html.Div(classes=str(Cls.SECTION_BODY_STACK)):
-            segmented(FieldVar.EXPANSION, "Show as", [str(expansion) for expansion in Expansion], read=expansion_label)
+        with html.Div(classes=str(Cls.SECTION_BODY_STACK)):
+            for family in (REVOLVING, EXTRUDING):
+                values = [str(expansion) for expansion in family]
+                with react.If(f"{FieldVar.EXPANSIONS}.join() === {json.dumps(','.join(values))}"):
+                    segmented(FieldVar.EXPANSION, "Show as", values, read=expansion_label)
+
             with Reveal(open_=react.Bind(f"{FieldVar.EXPANSION} === {json.dumps(str(Expansion.REVOLVE))}"), classes=STACK):
                 readouts("Sweep", react.Bind(f"{FieldVar.SWEEP}[0] + {json.dumps(DEGREES)}"))
                 self.slider(FieldVar.SWEEP, "Sweep angle", SWEEP_RANGE, SWEEP_STEP)
-
-        with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.FIXED))}"):
-            html.Span(NOTHING_TO_EXPAND, classes=str(Cls.CAPTION))
 
     def build_deformation(self) -> None:
         """The deformation section: for a run with a displacement, the Deformed Shape switch and, while it is on, the scale the displacement is exaggerated by."""
@@ -2402,6 +2417,9 @@ class FieldControlsPanel(PanelComponent):
                             on_click=self.callback(controller.on_row_colormap, args=f"[{row}.{RowKey.ID}]"),
                         )
 
+                    with react.If(f"!({painted})"):
+                        html.Span(classes=CHIP_SPACER, aria_hidden=True)
+
                 opacity_slider(
                     f"{row}.{RowKey.OPACITY}",
                     self.callback(controller.on_row_opacity, args=f"[{row}.{RowKey.ID}, {EVENT}[0]]"),
@@ -2440,7 +2458,9 @@ class FieldControlsPanel(PanelComponent):
             Busy(active=react.Bind(str(FieldVar.BUSY)))
 
             with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
-                section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry)
+                with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.OPEN))}"):
+                    section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry)
+
                 section(DEFORMATION_SECTION, "Deformation", self.build_deformation)
                 section(FIELD_SECTION, "Field", self.build_field)
                 section(LINES_SECTION, "Field Lines", self.build_lines)

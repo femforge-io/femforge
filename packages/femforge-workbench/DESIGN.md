@@ -32,7 +32,9 @@ The workbench has one scheme, dark. All values are OKLCH. Neutrals are cool, wit
 | `--wash-selected` | `oklch(0.3 0.008 255)` | A selected row, a pressed button or the active toggle item. Also `--accent`, `--muted` and `--secondary`. |
 | `--wash-selected-hover` | `oklch(0.34 0.008 255)` | A selected row or active item under the pointer. |
 | `--border` | `oklch(1 0 0 / 9%)` | Hairlines. |
-| `--input` | `oklch(1 0 0 / 10%)` | Field borders, read-only fills and the off track of a switch. |
+| `--input` | `oklch(1 0 0 / 10%)` | Field borders and the off track of a switch. |
+| `--readonly` | `oklch(0.8 0 0 / 10%)` | The fill of a read-only field. Darker than `--input`, so it never reads as editable. |
+| `--readonly-foreground` | `oklch(0.8 0.008 255)` | The text of a read-only field. |
 | `--foreground` | `oklch(0.93 0.006 255)` | Primary text. |
 | `--muted-foreground` | `oklch(0.66 0.012 255)` | Labels, units, secondary text and inactive toggle items. |
 | `--primary` | `oklch(0.8756 0.2202 153.5)` | The signature green. Use it only where the list below allows. |
@@ -47,7 +49,7 @@ Green (`--primary`) appears only on:
 - the keyboard focus ring;
 - checked switches and checkboxes, and the filled part of a slider;
 - the 2 px marker of a selected row;
-- the 2 px left edge of a tooltip;
+- the 2 px left edge of a definition tooltip;
 - the hover and selection outlines in the 3D view;
 - the progress bar of a running task and the busy line.
 
@@ -154,8 +156,12 @@ A click always gets an answer in the same frame, even when its result takes seco
   - An icon button's tooltip names its action and shortcut, because the icon has no text.
   - Truncated text shows its full text.
   - A row or label gets a tooltip only for facts it does not show, such as the run a reused task came from.
-- The `popover` plane, a 1 px `--foreground` ring at 10 %, the floating shadow, and a 2 px `--primary` edge on the left.
+- The `popover` plane, a 1 px `--foreground` ring at 10 % and the floating shadow.
+- A tooltip is a label or a definition:
+  - A label names what a control does in a word or two, such as `Top view` on a view button. It has no edge.
+  - A definition explains a value, such as what Plane Stress means or why a component is inactive. It has a 2 px `--primary` edge on the left.
 - `text-label`, at most 20 rem wide, no arrow.
+- A tooltip opens below its element. It flips above only where the window has no room below.
 - A tooltip opens after the pointer rests for `--delay-tooltip`. Once one is open, the next one opens at once while the pointer moves within `--skip-tooltip` of leaving the last.
 - Every tooltip also opens on keyboard focus.
 - The native `title` attribute is not used.
@@ -181,13 +187,13 @@ A click always gets an answer in the same frame, even when its result takes seco
 
 ### Checkbox and switch
 
-- A checkbox controls visibility. A parent checkbox in a section header controls its rows and shows the mixed state when they differ.
+- A checkbox controls visibility. It is a row action, so it sits in the last column. A parent checkbox in the first row, such as All Glyphs, controls the rows below it and shows the mixed state when they differ.
 - A switch turns a setting on or off, in a settings row: the label on the left, the switch in the right-hand column.
 
 ### Read-only field
 
 - The same height and layout as the editable field.
-- An `--input` fill with no border and the default cursor. The text stays selectable.
+- A `--readonly` fill with no border, `--readonly-foreground` text and the default cursor. The text stays selectable.
 - A read-only select shows its value without the chevron.
 
 ### Quantity field
@@ -197,12 +203,13 @@ A click always gets an answer in the same frame, even when its result takes seco
 ### Vector field
 
 - One cell per component, labelled with the frame's axis names: X, Y and Z, or Radial and Axial in an axisymmetric run.
-- The unit follows the last cell.
+- The unit follows the last cell. In one set of fields, every vector ends at the same column: a vector without a unit keeps an empty unit slot when another vector has a unit.
 - A free component shows an empty cell with the placeholder `Free`.
+- An authored component the solve frame has no coordinate for, such as Z in a 2D run normal to Z, is inactive: its cell shows `—` at 50 % opacity, and its tooltip gives the reason.
 
 ### Condition editor
 
-- One card per condition.
+- One card per condition. The card sits on the `--background` plane, so a hovered or selected row washes around the card, never under its fields.
 - The first row holds the condition type as a select, led by the condition's glyph icon.
 - The rows below hold the condition's own fields, such as Magnitude and Direction.
 - Two conditions on one entity are two cards.
@@ -210,25 +217,50 @@ A click always gets an answer in the same frame, even when its result takes seco
 ### Entity row
 
 - Bodies and boundaries list in entity rows: kind icon, name and measure (volume, area or length). A body also shows its material in a read-only field.
+- Kind icons: `box` for a body and `scan` for a face; in a 2D run, `pentagon` for a body and `minus` for an edge. A kind icon never looks like a control.
 - A boundary without a name shows the bodies it touches as color chips: `● Flexure ↔ ● External`. Each body name truncates by the same amount, and the tooltip shows the full pair.
 - Hover or keyboard focus washes the row and outlines the entity in the 3D view.
-- A click or Enter selects the row and the entity. Clicking a selected row keeps it selected. Escape clears the selection.
+- A click or Enter selects the row and the entity. Clicking a selected row keeps it selected. Escape clears the selection wherever the focus is, the 3D view included, unless a menu or dialog is open.
 - A double-click or `F` fits the camera to the entity.
 
 ### Section
 
 - The header sits on the `card` plane: title at weight 600, count right-aligned in `--muted-foreground`, and a chevron that turns over `--duration-micro`.
 - The body expands and collapses over `--duration-panel`.
-- A section that controls a layer's visibility carries the parent checkbox in its header, such as Glyphs.
+- A section with nothing to show is hidden, never shown empty. A run with nothing to expand has no Symmetry section.
+- A section shows only what its tab is about. The Setup tab shows the run's inputs: no computed results such as the geometry check, and no display choices such as Show As.
+
+### Frame section
+
+- The Frame section is always present for a run whose frame is known. Its first row is the frame Type, such as Solid, Cartesian 2D or Axisymmetric, with a definition tooltip saying what the frame solves.
+- A frame that solves a section adds its own facts below the Type, such as Normal, Plane Origin and Thickness.
+- A failed geometry check is a warning notice over the tables, one line per failing body and test.
+
+### Select and menu
+
+- An item under the pointer or the keyboard takes the hover wash.
+- The chosen item uses the selected-row treatment: `--wash-selected` with the 2 px `--primary` marker on its left edge. No checkmark.
+- An item's label never wraps. Detail after the label truncates with an ellipsis.
 
 ### Run select
 
 - The trigger shows the run's name.
-- Each item in the list shows the run's name, then its load and frame in columns.
+- Each item in the list shows the run's name, then its description, which truncates.
+- Beside the select, the run's folder reads as a read-only field, at most 36 rem wide, followed by an Open Folder icon button.
+
+### Status bar
+
+- A 24 px bar under the dock holds the task bar on its left and the status line on its right.
+- The status line is `text-label` in `--muted-foreground`, at most 40 % of the bar, and truncates. It never moves the controls beside it.
+
+### Toast
+
+- A toast confirms an action that finished out of view, such as a screenshot download. It rises in the bottom-right corner over the status bar and fades after 3 s.
+- The `popover` plane and `text-label`, with no edge and no buttons.
 
 ### Task bar and drawer
 
-- The task bar is hidden while there are no tasks.
+- The task bar is hidden while there are no tasks; the status bar stays.
 - The whole task bar is one button with the pointer cursor. A click opens or closes the drawer.
 - The bar counts tasks by status, each count with its icon. A failed count is `--destructive`.
 - The drawer slides up over `--duration-panel`. The summary moves from the bar into the drawer header.
@@ -239,9 +271,12 @@ A click always gets an answer in the same frame, even when its result takes seco
 ## 3D view
 
 - The camera's near and far planes enclose every visible actor, glyphs included. The view recomputes them after every scene change and every camera move. The near plane may come as close as 0.001 of the far plane's distance (`NEAR_TOLERANCE` in `panels/scene.py`), so a model zoomed in close keeps its glyphs.
-- The orientation axes sit in the corner. Their labels are X, Y and Z, or the frame's axis names. The scene holds no other axes.
-- Hover outlines an entity's feature edges at 2 px in `--primary` mixed 60 % into `--background`. The outline is a hidden actor the browser shows, so it follows the pointer without a server round trip; in Server mode no outline shows. Selection outlines them at 2 px in `--primary`. A body drawn in a plain color also takes a 30 % `--primary` tint when selected. A field plot takes no tint, because its colormap can contain green.
+- The orientation axes sit in the corner, colored X red, Y green and Z blue, without labels. The scene holds no other axes.
+- Hover outlines an entity's feature edges at 2 px in `--primary` mixed 60 % into `--background`. The outline is a hidden actor the browser shows, so it follows the pointer without a server round trip; in Server mode no outline shows. Selection outlines them at 2 px in `--primary`. The hovered or selected entity's glyph arrows and pins draw in the same color as its outline.
+- A tint, fill or accent copy keeps its points on the geometry it covers. A depth offset draws it over that geometry instead of lifting it off, in layers: face tint, then selection, then hover (`Layer` and `FORWARD_STEP` in `viz/glyphs.py`). The offset holds at any zoom. A body drawn in a plain color also takes a 30 % `--primary` tint when selected. A field plot takes no tint, because its colormap can contain green.
 - A body with no field to show draws shaded in its body color, with its feature edges outlined. Body colors keep neighbouring bodies apart without looking like a field. Body `i`, counted from 0 in the run's body order, has the color `oklch(0.72 0.06 h)` with hue h = (255 + 137.5·i) mod 360.
+- A run solved on a 2D section offers its own forms under Show As: Section, Mirrored and Revolved for an axisymmetric section; Section and Extruded for a Cartesian one. Each opens in its 3D form.
+- Extruded draws the section through its thickness, with the section plane at mid-depth like the Setup ghost. Condition glyphs sit on the front face, a boundary's tint, hover and selection fill its face through the depth, and field lines run at the depth of their seeds.
 
 ### View toolbar
 
@@ -255,9 +290,9 @@ A click always gets an answer in the same frame, even when its result takes seco
 | Front | `js/src/assets/view-front.svg` | |
 | Back | `js/src/assets/view-back.svg` | |
 | 2D | `js/src/assets/view-2d.svg` | |
-| Isometric | Lucide `box` | |
+| Isometric, from (−0.6, −0.8, 0.5) with Z up | Lucide `box` | |
 | Axes | Lucide `axis-3d`, as a toggle button | |
-| Screenshot | Lucide `camera` | |
+| Screenshot, downloaded by the browser at twice the panel's size | Lucide `camera` | |
 
 ## Voice
 

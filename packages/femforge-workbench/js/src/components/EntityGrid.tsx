@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ConditionCardView, type ConditionCard } from "@/components/Fields";
 import { Icon } from "@/components/Icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { IconName } from "@/icons";
@@ -7,36 +8,31 @@ import { cn } from "@/lib/utils";
 import { action, nextFocus } from "./entity-grid/keys";
 
 const VIRTUAL_ROWS = 200;
-const ROW_PX = 24;
-const LINE_PX = 18;
+const ROW_PX = 26;
+const CARD_PX = 64;
 const OVERSCAN = 12;
-const COLUMNS = "grid grid-cols-[minmax(0,1fr)_5.5rem_2.25rem] items-center gap-x-2";
-const ROW_KEYS = "Enter G F S Escape";
+const COLUMNS = "grid grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-2";
+const ROW_KEYS = "Enter F S Escape";
+const POPUP = '[data-radix-popper-content-wrapper], [role="dialog"]';
 
-/** One run of text in a condition line; a muted part reads dimmer and may carry its own tooltip. */
-export interface LinePart {
-  text: string;
-  muted?: boolean;
-  tip?: string;
+/** A body a boundary touches, by its name and its body color. */
+export interface BodyChip {
+  name: string;
+  color?: string;
 }
 
-/** One condition a row received, as the parts it reads in. */
-export interface ConditionLine {
-  parts: LinePart[];
-}
-
-/** One body or boundary group: its name, its material or measure, its condition lines and its glyph toggle. */
+/** One body or boundary group: its kind icon, its name or the bodies it touches, its material and measure, and its conditions as cards. */
 export interface EntityRow {
   id: string;
   name: string;
   detail?: string;
   detail_tip?: string;
+  material?: string;
+  material_tip?: string;
   tip?: string[];
-  lines?: ConditionLine[];
-  icon?: IconName;
-  glyph_shown?: boolean;
-  glyph_note?: string;
-  fit?: boolean;
+  kind_icon?: IconName;
+  chips?: BodyChip[];
+  cards?: ConditionCard[];
   group?: boolean;
   member?: boolean;
   dimmed?: boolean;
@@ -51,7 +47,6 @@ export interface EntityGridProps {
   label: string;
   columns?: string[];
   onSelect?: (id: string) => void;
-  onToggleGlyph?: (id: string) => void;
   onFrame?: (id: string) => void;
   onShow?: (id: string) => void;
   onHover?: (id: string) => void;
@@ -60,7 +55,6 @@ export interface EntityGridProps {
 
 interface Handlers {
   onSelect?: (id: string) => void;
-  onToggleGlyph?: (id: string) => void;
   onFrame?: (id: string) => void;
   onShow?: (id: string) => void;
   onHover?: (id: string) => void;
@@ -107,7 +101,7 @@ function Tipped({
       <TooltipTrigger asChild>
         <span className={className}>{children}</span>
       </TooltipTrigger>
-      <TooltipContent side="right" className="max-w-80">
+      <TooltipContent side="right" className="max-w-80" definition>
         {tip}
       </TooltipContent>
     </Tooltip>
@@ -131,45 +125,19 @@ function nameTip(row: EntityRow): ReactNode {
   );
 }
 
-function GlyphCell({ row, onToggleGlyph }: { row: EntityRow; onToggleGlyph?: (id: string) => void }) {
-  if (row.group) return null;
-
-  if (row.icon && row.glyph_shown !== undefined) {
-    const overruled = Boolean(row.glyph_note);
-
-    return (
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-pressed={row.glyph_shown}
-        aria-keyshortcuts="G"
-        aria-label={overruled ? `Show glyph for ${row.name}, ${row.glyph_note}` : `Show glyph for ${row.name}`}
-        title={row.glyph_note}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleGlyph?.(row.id);
-        }}
-        className={cn(
-          "flex size-6 cursor-pointer items-center justify-center rounded-sm hover:bg-wash-hover",
-          (overruled || row.glyph_shown === false) && "text-muted-foreground opacity-50",
-        )}
-      >
-        <Icon name={row.icon} size={14} />
-      </button>
-    );
-  }
-
-  if (row.icon) {
-    return (
-      <span aria-hidden className="flex size-6 items-center justify-center text-muted-foreground">
-        <Icon name={row.icon} size={14} />
-      </span>
-    );
-  }
-
+/** A boundary's name as the bodies it touches: each body's color chip and name, joined by a two-way arrow. */
+function Chips({ chips }: { chips: BodyChip[] }) {
   return (
-    <span aria-hidden className="text-muted-foreground">
-      ─
+    <span className="flex min-w-0 items-center gap-1">
+      {chips.map((chip, index) => (
+        <span key={`${chip.name}-${index}`} className="flex min-w-0 items-center gap-1">
+          {index ? <span className="shrink-0 text-muted-foreground">↔</span> : null}
+          {chip.color ? (
+            <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ background: chip.color }} />
+          ) : null}
+          <span className="min-w-0 truncate">{chip.name}</span>
+        </span>
+      ))}
     </span>
   );
 }
@@ -182,14 +150,13 @@ function RowView({
   selected,
   onFocusRow,
   onSelect,
-  onToggleGlyph,
   onFrame,
   onShow,
   onHover,
 }: RowViewProps) {
   const [keyboard, setKeyboard] = useState(false);
-  const lines = row.lines ?? [];
-  const indent = row.member ? "pl-6" : "pl-3";
+  const cards = row.cards ?? [];
+  const indent = row.member ? "pl-8" : "pl-6";
   const interactive = !row.group;
 
   return (
@@ -216,66 +183,51 @@ function RowView({
       onClick={interactive ? () => onSelect?.(row.id) : undefined}
       onDoubleClick={interactive ? () => onFrame?.(row.id) : undefined}
       className={cn(
-        "group/row flex flex-col border-l-2 pr-0.5 pl-1.5 outline-none",
-        interactive && "cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+        "group/row flex flex-col gap-1 border-l-2 pr-1 pl-1.5 outline-none",
+        cards.length || row.hidden ? "pb-1.5" : "",
+        "transition-[background-color] duration-(--duration-micro) ease-instrument",
+        interactive && "cursor-pointer focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
         selected && interactive ? "border-primary bg-wash-selected hover:bg-wash-selected-hover" : "border-transparent",
         interactive && !selected && "hover:bg-wash-hover",
         row.dimmed && "opacity-60",
       )}
     >
-      <div className={cn(COLUMNS, "h-6")}>
-        <span role="gridcell" className="flex min-w-0 items-center gap-1">
+      <div className={cn(COLUMNS, "h-6.5")}>
+        <span role="gridcell" aria-hidden className="flex items-center text-muted-foreground">
+          {row.kind_icon ? <Icon name={row.kind_icon} size={14} /> : null}
+        </span>
+        <span role="gridcell" className={cn("flex min-w-0 items-center", row.member && "pl-3")}>
           <Tipped
             tip={nameTip(row)}
             open={keyboard && focused}
-            className={cn("block min-w-0 truncate", row.group && "font-medium", row.member && "pl-3")}
+            className={cn("block min-w-0 truncate", row.group ? "font-medium" : "font-semibold")}
           >
-            {row.name}
+            {row.chips?.length ? <Chips chips={row.chips} /> : row.name}
           </Tipped>
-          {row.fit && interactive ? (
-            <button
-              type="button"
-              tabIndex={-1}
-              aria-label={`Fit view to ${row.name}`}
-              aria-keyshortcuts="F"
-              title={`Fit view to ${row.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onFrame?.(row.id);
-              }}
-              className={cn(
-                "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-wash-hover hover:text-foreground",
-                selected ? "visible" : "invisible group-hover/row:visible group-focus/row:visible",
-              )}
-            >
-              <Icon name="maximize-2" size={12} />
-            </button>
-          ) : null}
         </span>
-        <span role="gridcell" className="min-w-0 text-right">
+        <span role="gridcell" className="flex min-w-0 items-center justify-end gap-2">
+          {row.material ? (
+            <Tipped
+              tip={row.material_tip}
+              className="flex h-5 items-center rounded-md bg-readonly px-1.5 text-label text-readonly-foreground"
+            >
+              {row.material}
+            </Tipped>
+          ) : null}
           <Tipped tip={row.detail_tip} className="block truncate text-muted-foreground tabular-nums">
             {row.detail ?? ""}
           </Tipped>
         </span>
-        <span role="gridcell" className="flex justify-center">
-          <GlyphCell row={row} onToggleGlyph={onToggleGlyph} />
-        </span>
       </div>
-      {lines.map((line, number) => (
-        <div key={number} aria-hidden className={cn("pb-0.5 text-label leading-4 text-muted-foreground", indent)}>
-          {line.parts.map((part, at) =>
-            part.tip || part.muted ? (
-              <Tipped key={at} tip={part.tip} className={part.muted ? "opacity-60" : undefined}>
-                {part.text}
-              </Tipped>
-            ) : (
-              <span key={at}>{part.text}</span>
-            ),
-          )}
+      {cards.length ? (
+        <div className={cn("flex flex-col gap-1", indent)}>
+          {cards.map((card, number) => (
+            <ConditionCardView key={number} card={card} />
+          ))}
         </div>
-      ))}
+      ) : null}
       {row.hidden ? (
-        <div className={cn("pb-0.5 text-label leading-4 text-muted-foreground", indent)}>
+        <div className={cn("text-label leading-4 text-muted-foreground", indent)}>
           Hidden in Field Viewer ·{" "}
           <button
             type="button"
@@ -285,7 +237,7 @@ function RowView({
               event.stopPropagation();
               onShow?.(row.id);
             }}
-            className="cursor-pointer text-primary underline-offset-2 hover:underline"
+            className="cursor-pointer text-foreground underline underline-offset-2"
           >
             Show
           </button>
@@ -296,22 +248,20 @@ function RowView({
 }
 
 function HeaderRow({ columns }: { columns: string[] }) {
-  const [name, detail, glyph] = columns;
+  const [name, detail] = columns;
 
   return (
     <div
       role="row"
       aria-rowindex={1}
-      className={cn(COLUMNS, "h-5 border-l-2 border-transparent pr-0.5 pl-1.5 text-label text-muted-foreground")}
+      className={cn(COLUMNS, "h-5 border-l-2 border-transparent pr-1 pl-1.5 text-label text-muted-foreground")}
     >
+      <span role="columnheader" aria-hidden />
       <span role="columnheader" className="min-w-0 truncate">
         {name ?? ""}
       </span>
       <span role="columnheader" className="min-w-0 truncate text-right">
         {detail ?? ""}
-      </span>
-      <span role="columnheader" className="justify-self-center whitespace-nowrap">
-        {glyph ?? ""}
       </span>
     </div>
   );
@@ -339,7 +289,7 @@ function VirtualRows({ rows, focus, selected, scroller, ...rest }: RowsProps & {
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewport.current,
-    estimateSize: (index) => ROW_PX + (rows[index]?.lines?.length ?? 0) * LINE_PX,
+    estimateSize: (index) => ROW_PX + (rows[index]?.cards?.length ?? 0) * CARD_PX,
     overscan: OVERSCAN,
   });
   useImperativeHandle(scroller, () => ({ toIndex: (index) => virtualizer.scrollToIndex(index, { align: "auto" }) }));
@@ -374,14 +324,13 @@ function VirtualRows({ rows, focus, selected, scroller, ...rest }: RowsProps & {
   );
 }
 
-/** Rows of bodies or boundaries as one grid under its column headers with a single tab stop: the arrows move over the rows a group heads, Enter selects, G toggles the glyph, F frames, S shows a hidden body and Escape clears. */
+/** Rows of bodies or boundaries as one grid under its column headers with a single tab stop: the arrows move over the rows a group heads, Enter selects, F frames, S shows a hidden body and Escape, pressed anywhere, clears; hover and focus name the row the scene outlines. */
 export function EntityGrid({
   rows,
   selected,
   label,
   columns,
   onSelect,
-  onToggleGlyph,
   onFrame,
   onShow,
   onHover,
@@ -402,6 +351,25 @@ export function EntityGrid({
     moved.current = false;
     root.current?.querySelector<HTMLElement>(`[role="row"][data-index="${shown}"]`)?.focus();
   }, [shown]);
+
+  const holdsSelection = Boolean(selected) && rows.some((row) => row.id === selected);
+
+  // Escape clears the selection wherever the focus is, the 3D view included, unless a popup is open to close. The listener captures, because
+  // the 3D view keeps the keys it receives from the page; a key in a grid is left to the grid's own handler.
+  useEffect(() => {
+    if (!holdsSelection) return undefined;
+
+    const clear = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (document.querySelector(POPUP) || (event.target instanceof Element && event.target.closest('[role="grid"]')))
+        return;
+
+      onSelect?.("");
+    };
+    window.addEventListener("keydown", clear, true);
+
+    return () => window.removeEventListener("keydown", clear, true);
+  }, [holdsSelection, onSelect]);
 
   function moveTo(index: number): void {
     moved.current = true;
@@ -428,11 +396,8 @@ export function EntityGrid({
       case "select":
         onSelect?.(row.id);
         break;
-      case "glyph":
-        if (row.icon && row.glyph_shown !== undefined) onToggleGlyph?.(row.id);
-        break;
       case "frame":
-        if (row.fit) onFrame?.(row.id);
+        if (!row.dimmed) onFrame?.(row.id);
         break;
       case "show":
         if (row.hidden) onShow?.(row.id);
@@ -443,7 +408,7 @@ export function EntityGrid({
     }
   }
 
-  const handlers = { onSelect, onToggleGlyph, onFrame, onShow, onHover, onFocusRow: setFocus, offset };
+  const handlers = { onSelect, onFrame, onShow, onHover, onFocusRow: setFocus, offset };
 
   return (
     <TooltipProvider>

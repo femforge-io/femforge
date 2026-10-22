@@ -22,7 +22,7 @@ from femforge.config import RunMeta, SimulationConfig
 from femforge.elmer.config import PhysicsSelection
 from femforge.elmer.physics import Physics
 from femforge.meshing.config import MeshConfig
-from femforge.physical.conditions import SurfaceForce
+from femforge.physical.conditions import ConditionGlyph, SurfaceForce
 from femforge.physical.domain import DomainConfig, EntityTag
 from femforge.physical.units import quantity
 from femforge.run.bundle import write_manifest
@@ -36,13 +36,13 @@ from femforge.telemetry.paths import Telemetry
 from femforge.telemetry.schemas import RUN_INDEX_SCHEMA, RunColumn
 from femforge.viz.field_display import BodyPaint, BodyStyle, DisplayMode, DisplaySpec, SceneActor
 from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, StreamlineActor
-from femforge.viz.glyphs import PLAIN_BODY, GlyphLayer, GlyphView, GroupScene
+from femforge.viz.glyphs import GlyphLayer, GlyphView, GroupScene
 from femforge.viz.symmetry import Expansion
 from femforge_workbench.dock import Split, panels, template_name
 from femforge_workbench.feeds import Feed
 from femforge_workbench.persist import LocalJsonStore
 from femforge_workbench.registry import FIELD_VIEWER, resolve
-from tests.workbench.tree import Node, find, prop, props, texts
+from tests.workbench.tree import Node, find, prop, texts
 
 
 pytest.importorskip("trame")
@@ -57,7 +57,7 @@ from femforge_workbench.colormaps import COLORMAPS, FAVORITES  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
 from femforge_workbench.panels.setup import SetupPanel  # noqa: E402
-from femforge_workbench.panels.scene import StateVar as SceneVar, View, ViewMode  # noqa: E402
+from femforge_workbench.panels.scene import SIDES, StateVar as SceneVar, View, ViewMode  # noqa: E402
 from femforge_workbench.panels.field_viewer import (  # noqa: E402
     FieldControlsPanel,
     FieldPanel,
@@ -263,9 +263,10 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
     assert _bound(sliders[1], "max") == str(FieldVar.WARP_SCALE_MAX) and _bound(sliders[1], "step") == f"{FieldVar.WARP_SCALE_MAX} / 100"
     assert _bound(sliders[2], "min") == str(FieldVar.CLIM_MIN) and prop(sliders[2], "disabled") is None, "a moved thumb pins the range instead"
     assert str(FieldVar.FIELD_GRADIENT) in str(prop(sliders[2], "style")), "the range track wears the colormap"
-    assert [_bound(node, "value") for node in find(template, "ff-toggle-group")] == [str(FieldVar.EXPANSION), str(FieldVar.LEGEND)]
-    assert [texts(node) for node in find(template, "ff-toggle-group-item")] == [["Section"], ["Mirrored"], ["Revolved"], ["Hidden"], ["Vertical"], ["Horizontal"]]
-    assert [prop(node, "aria-label") for node in find(template, "ff-toggle-group")] == ["Show as", "Legend"]
+    assert [_bound(node, "value") for node in find(template, "ff-toggle-group")] == [str(FieldVar.EXPANSION), str(FieldVar.EXPANSION), str(FieldVar.LEGEND)]
+    assert [texts(node) for node in find(template, "ff-toggle-group-item")] == [["Section"], ["Mirrored"], ["Revolved"], ["Section"], ["Extruded"], ["Hidden"], ["Vertical"], ["Horizontal"]]
+    assert [prop(node, "aria-label") for node in find(template, "ff-toggle-group")] == ["Show as", "Show as", "Legend"], "a revolving and a Cartesian section each offer their own forms"
+    assert [str(prop(node, "className")).endswith("grid-cols-2") for node in find(template, "ff-toggle-group")] == [False, True, False], "a two-way choice fills its track"
     assert len(rows) == 1 and find(template, "ff-tree") == []
     assert [texts(node)[0] for node in find(template, "ff-accordion-trigger")] == ["Symmetry", "Deformation", "Field", "Field Lines", "Bodies"]
     assert [prop(node, "id") for node in find(template, "ff-accordion-item")] == ["tour-symmetry", "tour-deformation", "tour-field", "tour-lines", "tour-bodies"]
@@ -292,6 +293,16 @@ def test_the_run_picker_and_the_bundle_path_field_sit_in_the_app_bar(tmp_path: P
     assert _bound(find(header, "ff-select-item")[0], "detail") == f"item.{ItemField.DETAIL}"
     assert _bound(find(header, "ff-select-item")[0], "flag") == f"item.{ItemField.FLAG}"
     assert app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_INDEX
+
+    opened: list[Path] = []
+    monkeypatch.setattr(field_viewer_module, "open_folder", opened.append)
+    controls = app.panel(FieldPanel.CONTROLS, FieldControlsPanel)
+    folder = next(node for node in find(header, "ff-button") if prop(node, "aria-label") == "Open Folder")
+    assert _bound(folder, "disabled") == f"!{FieldVar.RUN_TEXT}", "Open Folder waits for an open run"
+    controls.reveal_run()
+    app.state[FieldVar.RUN_TEXT] = str(tmp_path)
+    controls.reveal_run()
+    assert opened == [tmp_path], "only an open run's folder opens"
 
 
 # --- the controller's paths -----------------------------------------------------
@@ -470,7 +481,7 @@ def test_a_run_without_a_vector_field_draws_with_the_field_line_switch_left_on(t
 
         assert app.state[FieldVar.HAS_VECTORS] is False and app.state[FieldVar.STREAMLINES] is True
         assert controller.scene is not None and controller.scene.spec.streamlines is None
-        assert str(app.state[StateVar.STATUS]) == "plain: 1 fields, 2 bodies, 3D"
+        assert not str(app.state[StateVar.STATUS]).startswith("opening"), "the busy line, not the status, says a run is opening"
 
     asyncio.run(run())
 
@@ -1022,7 +1033,7 @@ def test_the_run_picker_names_a_bundle_the_index_does_not_know(tmp_path: Path, m
         await controller.settle()
 
         assert app.state[FieldVar.RUN] == "hex", "a bundle the index lists is picked as its indexed run"
-        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "4 mm gap", "value": "hex", "detail": ["hex"]}]
+        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "hex", "value": "hex", "detail": ["4 mm gap"]}]
 
     asyncio.run(run())
 
@@ -1043,14 +1054,14 @@ def test_the_picker_keeps_bundles_opened_by_path_the_open_run_and_the_run_being_
     assert merged([RunEntry("hex", "hex"), *indexed], [by_path], None, str(by_path.value)) == [RunEntry("hex", "hex"), *indexed], "never twice"
 
 
-def test_a_run_reads_as_its_description_with_its_id_or_physics_muted_beside_it(tmp_path: Path) -> None:
+def test_a_run_reads_as_its_id_with_its_description_or_physics_muted_beside_it(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path / "hex", _hex_grid())
     plain = bundle_entry(Run(bundle), str(bundle), None)
     _ = write_manifest(bundle, RunManifest.build(SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), meta=RunMeta(description="4 mm gap")), status=RunStatus.OK, run_id="hex"))
     described = bundle_entry(Run(bundle), "hex", RunFlag.SOLVING)
 
     assert plain == RunEntry(str(bundle), "hex") and plain.by_path and not described.by_path
-    assert described.item() == {"title": "4 mm gap", "value": "hex", "detail": ["hex"], "flag": "Solving"}
+    assert described.item() == {"title": "hex", "value": "hex", "detail": ["4 mm gap"], "flag": "Solving"}
     assert RunEntry("a", "a", None, "magnetostatics", 2).item() == {"title": "a", "value": "a", "detail": ["Magnetostatics", "2D"]}
     assert RunEntry("a", "a", flag=RunFlag.NO_FIELDS).item() == {"title": "a", "value": "a", "detail": [], "flag": "No Fields"}
     assert described.runs_dir == tmp_path, "an opened bundle knows where its claim lives"
@@ -1471,6 +1482,50 @@ def test_a_flat_run_revolves_into_the_plotter_by_default_and_flattens_on_request
     assert solid == ["fixed", "Solid"]
 
 
+def test_a_cartesian_section_extrudes_by_default_and_a_revolving_one_takes_the_revolve_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from femforge.frames import Cartesian2D
+
+    async def run() -> tuple[list[object], list[object], list[object]]:
+        app = _shell("extrude", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+        started = _start(app)
+        _ = await app.server.ready
+
+        bundle = _bundle(tmp_path / "planar", _quad_grid())
+        config = SimulationConfig(mesh=MeshConfig(step="data/does-not-exist.step"), frame=Cartesian2D(thickness=quantity(10, "mm")), physics=PhysicsSelection(selected=Physics.THERMAL))
+        _ = write_manifest(bundle, RunManifest.build(config, status=RunStatus.OK, run_id="planar"))
+        await controller.load(bundle)
+        await controller.settle()
+        scene = controller.scene
+        assert scene is not None
+        extruded: list[object] = [app.state[FieldVar.EXPANSIONS], app.state[FieldVar.EXPANSION], scene.display_dim, controller.display_dim(), viewer.plotter.bounds[4], viewer.plotter.bounds[5]]
+
+        with app.state:
+            app.state[FieldVar.EXPANSION] = str(Expansion.SECTION)
+
+        await controller.settle()
+        flat: list[object] = [scene.display_dim, controller.display_dim(), controller.drawn_dim]
+
+        with app.state:
+            app.state[FieldVar.EXPANSION] = str(Expansion.EXTRUDE)
+
+        await controller.load(_bundle(tmp_path / "quad", _quad_grid()))
+        await controller.settle()
+        revolving: list[object] = [app.state[FieldVar.EXPANSIONS], app.state[FieldVar.EXPANSION], controller.drawn_dim]
+
+        await app.server.stop()
+        await cast("asyncio.Future[object]", started)
+
+        return extruded, flat, revolving
+
+    extruded, flat, revolving = asyncio.run(run())
+
+    assert extruded == [["section", "extrude"], "extrude", 3, 3, pytest.approx(-0.005), pytest.approx(0.005)], "a Cartesian section opens extruded through its thickness"
+    assert flat == [2, 2, 2]
+    assert revolving == [["section", "mirror", "revolve"], "revolve", 3], "an extrusion asked of a revolving section reads as its revolve"
+
+
 def test_the_tour_opens_once_after_the_first_run_shows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from femforge_workbench import app as shell
     from femforge_workbench.persist import StateKey
@@ -1665,8 +1720,8 @@ def test_the_newest_run_with_fields_opens_once_and_a_run_that_lands_later_never_
         assert controller.scene is not None and controller.scene.run_id == "solved", "a run with fields opens before a newer one still solving"
         assert app.state[FieldVar.RUN] == "solved" and app.state[FieldVar.RUN_PLACEHOLDER] == NO_RUN_SELECTED
         assert app.state[FieldVar.RUN_ITEMS] == [
-            {"title": "1 mm gap", "value": "solving", "detail": ["solving"], "flag": "Solving"},
-            {"title": "0.5 mm gap", "value": "solved", "detail": ["solved"]},
+            {"title": "solving", "value": "solving", "detail": ["1 mm gap"], "flag": "Solving"},
+            {"title": "solved", "value": "solved", "detail": ["0.5 mm gap"]},
         ]
 
         _ = _bundle(runs_dir / "newer", _hex_grid())
@@ -1895,7 +1950,7 @@ def test_the_open_run_loses_its_solving_flag_once_its_solve_ends_and_stays_open(
         await controller.settle()
 
         assert controller.scene is not None and controller.scene.run_id == "solving" and app.state[FieldVar.RUN] == "solving"
-        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "0.5 mm gap", "value": "solving", "detail": ["solving"]}]
+        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "solving", "value": "solving", "detail": ["0.5 mm gap"]}]
         assert app.state[FieldVar.BUSY] is False
 
     asyncio.run(run())
@@ -1918,7 +1973,7 @@ def test_a_failed_run_opens_when_nothing_else_is_listed_and_says_why(tmp_path: P
         assert opening == "Opening 0.5 mm gap", "the run is named the way the picker names it"
         assert app.state[FieldVar.RUN] == "broken" and app.state[FieldVar.BUSY] is False
         assert app.state[viewer.key(SceneVar.NOTICE)] == "broken: The solve wrote no fields"
-        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "0.5 mm gap", "value": "broken", "detail": ["broken"], "flag": "Failed"}]
+        assert app.state[FieldVar.RUN_ITEMS] == [{"title": "broken", "value": "broken", "detail": ["0.5 mm gap"], "flag": "Failed"}]
 
     asyncio.run(run())
 
@@ -2064,7 +2119,7 @@ def test_the_glyph_keys_default_to_a_hidden_layer(tmp_path: Path, monkeypatch: p
     app = _shell("glyph-defaults", tmp_path, monkeypatch)
     controller = _controller(app)
 
-    assert [app.state[key] for key in GLYPH_KEYS] == [False, True, [], [], "", False, True, False]
+    assert [app.state[key] for key in GLYPH_KEYS] == [False, [], "", True, False]
     assert controller.glyph_view_from_state() is None
 
 
@@ -2099,11 +2154,11 @@ def test_the_setup_tab_draws_the_glyphs_while_shown_follows_the_warp_and_removes
 
         assert _arrow_bounds(viewer)[0] > before[0], "the arrow tail rides the displaced face"
 
-        app.state[FieldVar.GLYPHS] = False
+        app.state[FieldVar.GLYPH_KINDS_OFF] = [str(kind) for kind in ConditionGlyph]
         controller.on_glyphs()
         await controller.settle()
 
-        assert "glyph-arrows" not in _glyph_actors(viewer) and "glyph-selection-fill" in _glyph_actors(viewer), "Show Glyphs off keeps the selection"
+        assert "glyph-arrows" not in _glyph_actors(viewer) and "glyph-selection-fill" in _glyph_actors(viewer), "All Glyphs off keeps the selection"
 
         app.state[FieldVar.SETUP_SHOWN] = False
         controller.on_glyphs()
@@ -2114,7 +2169,7 @@ def test_the_setup_tab_draws_the_glyphs_while_shown_follows_the_warp_and_removes
     asyncio.run(run())
 
 
-def test_plain_bodies_paint_the_bodies_grey_and_the_ghost_turns_the_camera_to_iso_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_ghost_turns_the_camera_to_iso_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> None:
         app = _shell("plain", tmp_path, monkeypatch)
         controller = _controller(app)
@@ -2124,27 +2179,22 @@ def test_plain_bodies_paint_the_bodies_grey_and_the_ghost_turns_the_camera_to_is
         await controller.settle()
         viewer.look(View.TOP)
         app.state[FieldVar.SETUP_SHOWN] = True
-        app.state[FieldVar.PLAIN_BODIES] = True
         app.state[FieldVar.AUTHORED_GHOST] = True
         controller.on_glyphs()
         await controller.settle()
 
-        actor = viewer.plotter.renderer.actors[SceneActor.STYLED.of("LEFT")]
-        assert isinstance(actor, pv.Actor)
-        assert actor.GetProperty().GetColor() == pytest.approx(pv.Color(PLAIN_BODY).float_rgb)
         camera = viewer.plotter.camera
         offset = np.subtract(camera.position, camera.focal_point)
-        assert offset / np.linalg.norm(offset) == pytest.approx(np.array([1.0, -1.0, 1.0]) / math.sqrt(3.0)), "the ghost turns the view to Iso"
+        assert offset / np.linalg.norm(offset) == pytest.approx(np.array(SIDES[View.ISO][0]) / np.linalg.norm(SIDES[View.ISO][0])), "the ghost turns the view to Iso"
         assert controller.iso_pending is False
 
         viewer.look(View.TOP)
-        app.state[FieldVar.PLAIN_BODIES] = False
+        app.state[FieldVar.SELECTED_ENTITY] = "boundary:TIP"
         controller.on_glyphs()
         await controller.settle()
 
         offset = np.subtract(camera.position, camera.focal_point)
         assert offset / np.linalg.norm(offset) == pytest.approx(np.array([0.0, 0.0, 1.0])), "only switching the ghost on turns the camera"
-        assert SceneActor.STYLED.of("LEFT") not in viewer.plotter.renderer.actors
 
     asyncio.run(run())
 

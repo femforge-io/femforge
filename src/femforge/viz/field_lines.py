@@ -14,7 +14,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.viz.colormaps import register_paraview
-from femforge.viz.symmetry import Basis
+from femforge.viz.symmetry import Basis, Prism
 
 
 if TYPE_CHECKING:
@@ -446,19 +446,19 @@ def build_swept_streamlines(
     section: pv.DataSet,
     b_name: str,
     options: FieldLineOptions,
-    basis: Basis,
+    basis: Basis | Prism,
     bounds: Bounds,
     *,
     seeds: np.typing.NDArray[np.float64] | None = None,
 ) -> StreamlineActors:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration tests
-    """Field lines of a revolved axisymmetric section: seeded in the authored frame, folded into the section, integrated there and swept back to each seed's angle.
+    """Field lines of a revolved or extruded section: seeded in the shown 3D frame, folded into the section, integrated there and carried back to each seed's angle or depth.
 
     Args:
         section: The solved section in the solve frame, carrying B on its points.
         b_name: The point array the lines follow.
         options: The field-line options.
-        basis: Where the section sits in the authored frame.
-        bounds: The revolved display's authored bounds, which the seeds fill and the outline draws.
+        basis: How the section folds out of the shown frame: a revolution's basis or an extrusion's prism.
+        bounds: The shown 3D bounds, which the seeds fill and the outline draws.
         seeds: ``(N, 3)`` authored seed points to use instead of seeding ``bounds``.
     """
     import pyvista as pv

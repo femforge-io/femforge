@@ -228,7 +228,7 @@ def test_a_claim_wait_and_a_stall_move_the_row() -> None:
     flat = observe(solving, _record(stall="repeated", solver="linear elasticity", iteration=1339, residual=3.14e-8))
     slow = observe(solving, _record(stall="no_progress"))
 
-    assert (waiting.phase, waiting.state, waiting.glyph, waiting.active) == (TaskPhase.WAITING, "Waiting · Another Process Is Solving It", "◐", True)
+    assert (waiting.phase, waiting.state, waiting.icon, waiting.active) == (TaskPhase.WAITING, "Waiting · Another Process Is Solving It", "loader-circle", True)
     assert observe(waiting, _record(run_id="r1", run_dir="runs/r1")).phase is TaskPhase.STARTING, "a claim taken after the wait starts the run"
     assert flat.stall == "residual flat at 3.14e-08 since it 1339" and slow.stall == "residual not improving", "a reason is data, not a label"
     assert observe(solving, _record(stall="not a reason")) is solving
@@ -292,15 +292,15 @@ def test_the_strip_copy_names_the_queue_place_the_runs_and_the_failure() -> None
     failed = TaskRow(label="a", title="A", phase=TaskPhase.FAILED, error="RuntimeError: boom")
 
     assert queued.state == "Queued · 2nd In Line" and TaskRow(label="a", title="A", position=1).state == "Queued"
-    assert done.state == "Done · 2 Runs" and done.glyph == "●" and not done.retryable and not done.cancellable
-    assert failed.state == "Failed · RuntimeError: boom" and failed.failed and failed.glyph == "⊘" and failed.retryable
+    assert done.state == "Done · 2 Runs" and done.icon == "check" and not done.retryable and not done.cancellable
+    assert failed.state == "Failed · RuntimeError: boom" and failed.failed and failed.icon == "x" and failed.retryable
     assert TaskRow(label="a", title="A", phase=TaskPhase.STOPPED).state == "Cancelled" and TaskRow(label="a", title="A", phase=TaskPhase.STOPPED).retryable
-    assert not TaskRow(label="a", title="A", phase=TaskPhase.REUSED).retryable, "Done and Reused rows offer Open only"
+    assert not TaskRow(label="a", title="A", phase=TaskPhase.REUSED).retryable, "a Done or Reused row opens its run and offers no Retry"
     assert TaskRow(label="a", title="A", phase=TaskPhase.GEOMETRY).state == "Preparing Geometry"
     assert [ordinal(number) for number in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23)] == ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd"]
     assert [clock(seconds) for seconds in (None, 0.3, 9.94, 9.96, 12.0, 72.0, 2463.0, 3720.0)] == ["—", "0.3s", "9.9s", "10s", "12s", "1m 12s", "41m 03s", "1h 02m"]
     stalled = TaskRow(label="a", title="A", phase=TaskPhase.STALLED, stall="residual flat at 3.14e-08 since it 1339")
-    assert (stalled.state, stalled.glyph, stalled.failed, stalled.stalled, stalled.retryable) == ("Stalled · residual flat at 3.14e-08 since it 1339", "⧖", True, True, True)
+    assert (stalled.state, stalled.icon, stalled.failed, stalled.stalled, stalled.retryable) == ("Stalled · residual flat at 3.14e-08 since it 1339", "triangle-alert", True, True, True)
     cancelling = TaskRow(label="a", title="A", phase=TaskPhase.SOLVING, solver="linear elasticity", stopping=True)
     assert (cancelling.state, cancelling.cancellable, cancelling.active) == ("Cancelling", False, True), "a confirmed Cancel shows at once and cannot be pressed twice"
 

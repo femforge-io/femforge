@@ -1,5 +1,5 @@
 /** What a key does to the focused row of an entity grid. */
-export type RowAction = "select" | "glyph" | "frame" | "show" | "clear";
+export type RowAction = "select" | "frame" | "show" | "clear";
 
 /** The row index a navigation key moves the focus to, or null for any other key; the ends hold the focus. */
 export function nextFocus(key: string, index: number, count: number): number | null {
@@ -35,9 +35,6 @@ export function action(key: string, held: Modifiers): RowAction | null {
     case "Enter":
     case " ":
       return "select";
-    case "g":
-    case "G":
-      return "glyph";
     case "f":
     case "F":
       return "frame";

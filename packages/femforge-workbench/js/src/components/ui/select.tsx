@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cn } from "cn"
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 
 function Select({
@@ -114,7 +114,7 @@ function SelectItemDetail({
     <div
       id={id}
       data-slot="select-item-detail"
-      className="ml-auto shrink-0 text-label whitespace-nowrap text-muted-foreground"
+      className="ml-auto min-w-0 truncate text-right text-label text-muted-foreground"
     >
       {pieces.map((piece, index) => (
         <React.Fragment key={index}>
@@ -147,25 +147,15 @@ function SelectItem({
       data-slot="select-item"
       aria-labelledby={detailed ? `${textId} ${detailId}` : textId}
       className={cn(
-        "relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex w-full cursor-pointer items-center gap-2 rounded-r-sm border-l-2 border-transparent py-1.5 pr-2 pl-1.5 text-sm outline-hidden select-none focus:bg-wash-hover data-[state=checked]:border-primary data-[state=checked]:bg-wash-selected data-[state=checked]:focus:bg-wash-selected-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}
     >
-      <span
-        data-slot="select-item-indicator"
-        className="absolute right-2 flex size-3.5 items-center justify-center"
-      >
-        <SelectPrimitive.ItemIndicator>
-          <CheckIcon className="size-4" />
-        </SelectPrimitive.ItemIndicator>
+      {/* ItemText drops a className, since Radix copies it into the trigger, so a wrapper keeps the label on one line. */}
+      <span className={detailed ? "shrink-0 whitespace-nowrap" : undefined}>
+        <SelectPrimitive.ItemText id={textId}>{children}</SelectPrimitive.ItemText>
       </span>
-      <SelectPrimitive.ItemText
-        id={textId}
-        className={detailed ? "min-w-0 truncate" : undefined}
-      >
-        {children}
-      </SelectPrimitive.ItemText>
       {detailed && " "}
       {detailed && (
         <SelectItemDetail id={detailId} flag={flag} parts={detail ?? []} />

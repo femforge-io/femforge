@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
-from enum import StrEnum
+from dataclasses import dataclass, field, replace
+from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import numpy as np
@@ -36,7 +36,7 @@ from femforge.physical.readout import readout
 from femforge.physical.units import Quantity, U, Unit, quantity
 from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, SceneActor, feature_outline, run_manifest, warped
 from femforge.viz.field_lines import Bounds
-from femforge.viz.symmetry import Basis, Expansion, Surface, swept_lines
+from femforge.viz.symmetry import Basis, Expansion, Surface, extruded_lines, prism_depth, swept_lines
 
 
 if TYPE_CHECKING:
@@ -72,6 +72,7 @@ __all__ = [
     "mirrored",
     "clamp_ticks",
     "spread",
+    "body_color",
     "densified",
     "dashed",
     "circles",
@@ -109,10 +110,16 @@ LEADER_SHARE: float = 0.08
 """`[-]`: How far a label chip sits off its face along the outward normal, as a share of the scene diagonal."""
 
 TINT_LIFT: float = 1e-3
-"""`[-]`: How far a tint sits off its face toward the viewer, as a share of the scene diagonal, so it never fights the body for depth."""
+"""`[-]`: How far a line on a flat section sits toward the viewer, as a share of the scene diagonal, so it never fights the section for depth."""
 
 TINT_OPACITY: float = 0.6
 """`[-]`: The opacity of a face tint."""
+
+FORWARD_STEP: tuple[float, float] = (-1.0, -20.0)
+"""`[-]`: The depth offset factor and units between one layer and the next, as OpenGL's polygon offset reads them.
+
+VTK.wasm scales the factor by the depth slope per pixel, which zooming in shrinks, so the units alone must keep a layer in front.
+"""
 
 SELECTION_OPACITY: float = 0.7
 """`[-]`: The opacity of a selected boundary's accent cells."""
@@ -144,8 +151,6 @@ TURN_STEP: float = 0.25
 HALO_WIDTH: float = 0.012
 """`[-]`: How far the dark halo behind an arrow stands off its surface, as a share of the arrow length."""
 
-TRIAD_SHARE: float = 0.06
-"""`[-]`: The length of a solve triad arrow, as a share of the scene diagonal."""
 
 DASH_SHARE: float = 0.01
 """`[-]`: The length of a dash of the prism hull, as a share of the scene diagonal."""
@@ -172,7 +177,7 @@ HOVER_OPACITY: float = 0.4
 """`[-]`: The opacity of a hovered boundary of a revolved section, which shows as a swept surface."""
 
 OUTLINE_LINE_PX: float = 2.0
-"""`[px]`: The width of the section outline and the solve triad in CSS pixels."""
+"""`[px]`: The width of the section outline in CSS pixels."""
 
 LABEL_OPACITY: float = 0.8
 """`[-]`: The opacity of a label chip's dark box."""
@@ -194,6 +199,18 @@ GLYPH_ACCENT = "#3b82f6"
 
 PLAIN_BODY = "#8c8c8c"
 """The grey every body takes under Plain Bodies."""
+
+BODY_LIGHTNESS: float = 0.72
+"""`L` `[-]`: The OKLCH lightness of a body color, light enough for the black feature edges to read on it."""
+
+BODY_CHROMA: float = 0.06
+"""`C` `[-]`: The OKLCH chroma of a body color, muted so a plain body never reads as a field."""
+
+BODY_HUE: float = 255.0
+"""`h_0` `[deg]`: The hue of the first body's color."""
+
+GOLDEN_ANGLE: float = 137.5
+"""`[deg]`: The hue step between bodies, which keeps any run of neighbours apart."""
 
 PLAIN_SPECULAR: float = 0.3
 """`[-]`: The specular strength of a plain body, so its faces read apart under the light."""
@@ -240,7 +257,7 @@ class GlyphActor(StrEnum):
     """The lines from a face to its label chip."""
 
     LABELS = "glyph-labels"
-    """Value and triad labels."""
+    """Value labels."""
 
     SELECTION = "glyph-selection"
     """The accent silhouette or line of the selected entity."""
@@ -248,14 +265,14 @@ class GlyphActor(StrEnum):
     SELECTION_FILL = "glyph-selection-fill"
     """The accent fill of the selected entity."""
 
+    SELECTION_GLYPHS = "glyph-selection-glyphs"
+    """The selected entity's arrows and pins redrawn in the accent."""
+
     OUTLINE = "glyph-outline"
     """The boundary loops of a 2D section."""
 
     PLANE = "glyph-plane"
     """The section plane under a revolved display."""
-
-    TRIAD = "glyph-triad"
-    """The solve axes of a 2D section."""
 
     GHOST = "glyph-ghost"
     """The translucent authored bodies a 2D frame sectioned."""
@@ -447,7 +464,7 @@ def shown_diagonal(bounds: Sequence[float], expansion: Expansion) -> float:
     axial: float = y_max - y_min
 
     match expansion:
-        case Expansion.SECTION:
+        case Expansion.SECTION | Expansion.EXTRUDE:
             return math.hypot(x_max - x_min, axial, z_max - z_min)
         case Expansion.MIRROR:
             return math.hypot(2.0 * radius, axial, z_max - z_min)
@@ -707,7 +724,7 @@ class GlyphView(BaseModel):
     """The entity id highlighted in the accent; None highlights nothing."""
 
     outline: bool = True
-    """Draw a 2D section's boundary loops and solve triad."""
+    """Draw a 2D section's boundary loops."""
 
     ghost: bool = False
     """Draw the authored bodies a 2D frame sectioned, beside the prism or revolved outline they are checked against."""
@@ -719,12 +736,12 @@ class GlyphView(BaseModel):
     """The hover outline color, any color pyvista resolves."""
 
     ink: str = GLYPH_HALO
-    """The color of lines drawn against the background: marks, leaders, the outline, the triad and the hull."""
+    """The color of lines drawn against the background: marks, leaders, the outline and the hull."""
 
 
 @dataclass(frozen=True)
 class GlyphPlacement:
-    """How solve-frame geometry lands in the displayed scene: as solved, beside its mirror image, or on the planes of a revolution."""
+    """How solve-frame geometry lands in the displayed scene: as solved, beside its mirror image, on the planes of a revolution, or on the front face of an extrusion."""
 
     expansion: Expansion = Expansion.SECTION
     """How the section is shown."""
@@ -741,10 +758,23 @@ class GlyphPlacement:
     flat: bool = False
     """Whether the run solved on a 2D section."""
 
+    depth: float = 0.0
+    """`t` `[m]`: The depth an extruded display extrudes the section through."""
+
     @property
     def revolved(self) -> bool:
         """Whether the section is shown revolved into the authored frame."""
         return self.expansion is Expansion.REVOLVE and self.basis is not None
+
+    @property
+    def extruded(self) -> bool:
+        """Whether the section is shown extruded through its depth."""
+        return self.expansion is Expansion.EXTRUDE and self.depth > 0.0
+
+    @property
+    def front(self) -> FloatArray:
+        """The offset from the section plane to the front face of an extruded display, which the viewer of a flat run faces; zero otherwise."""
+        return np.array([0.0, 0.0, self.depth / 2.0 if self.extruded else 0.0])
 
     def placed(self, points: FloatArray, theta: float = 0.0) -> FloatArray:
         """Solve-frame ``(n, 3)`` points on the plane at ``theta`` radians of a revolved display, unchanged otherwise."""
@@ -754,11 +784,23 @@ class GlyphPlacement:
         return np.asarray(self.basis.origin) + self.basis.rotate(points, theta)
 
     def copies(self, points: FloatArray) -> list[FloatArray]:
-        """Solve-frame ``(n, 3)`` points as the display shows them: once, beside their mirror image, or on the 0° plane of a revolution."""
+        """Solve-frame ``(n, 3)`` points as the display shows them: once, beside their mirror image, on the 0° plane of a revolution, or on an extrusion's front face."""
         if self.expansion is Expansion.MIRROR:
             return [points, points * MIRROR]
 
-        return [self.placed(points)]
+        return [self.placed(points) + self.front]
+
+    def swept_face(self, segments: FloatArray) -> Surface | None:
+        """The surface solve-frame ``(n, 2, 3)`` line segments sweep in a revolved or extruded display, standing for the face a section line is; None in a flat one."""
+        points: FloatArray = segments.reshape(-1, 3)
+        pairs: IntArray = np.arange(len(points), dtype=np.int64).reshape(-1, 2)
+        if self.revolved and self.basis is not None:
+            return swept_lines(points, pairs, self.basis, sweep=self.sweep)
+
+        if self.extruded:
+            return extruded_lines(points, pairs, self.depth)
+
+        return None
 
     def angles(self) -> tuple[float, ...]:
         """The radians a revolved display repeats a body's arrow at; only 0 otherwise."""
@@ -766,6 +808,29 @@ class GlyphPlacement:
             return (0.0,)
 
         return tuple(math.radians(angle) for angle in revolve_angles(self.sweep))
+
+
+def body_color(index: int) -> str:
+    """The plain color of body ``index``, counted from 0 in the run's body order, as sRGB hex: `oklch(L C h)` with h = h_0 + 137.5 i."""
+    hue: float = math.radians((BODY_HUE + GOLDEN_ANGLE * index) % 360.0)
+    a: float = BODY_CHROMA * math.cos(hue)
+    b: float = BODY_CHROMA * math.sin(hue)
+    long: float = (BODY_LIGHTNESS + 0.3963377774 * a + 0.2158037573 * b) ** 3
+    medium: float = (BODY_LIGHTNESS - 0.1055613458 * a - 0.0638541728 * b) ** 3
+    short: float = (BODY_LIGHTNESS - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    linear: tuple[float, float, float] = (
+        4.0767416621 * long - 3.3077115913 * medium + 0.2309699292 * short,
+        -1.2684380046 * long + 2.6097574011 * medium - 0.3413193965 * short,
+        -0.0041960863 * long - 0.7034186147 * medium + 1.7076147010 * short,
+    )
+
+    def encoded(channel: float) -> int:
+        clipped: float = min(max(channel, 0.0), 1.0)
+        gamma: float = 12.92 * clipped if clipped <= 0.0031308 else 1.055 * clipped ** (1.0 / 2.4) - 0.055
+
+        return round(255.0 * gamma)
+
+    return "#" + "".join(f"{encoded(channel):02x}" for channel in linear)
 
 
 def plain_spec(spec: DisplaySpec, bodies: Iterable[str]) -> DisplaySpec:
@@ -802,6 +867,22 @@ class GlyphHost(Protocol):
     def group_cells(self, ref: EntityRef) -> pv.DataSet | None: ...
 
 
+class Layer(IntEnum):
+    """How far forward a glyph draws over coincident geometry: each layer over every lower one."""
+
+    BASE = 0
+    """The bodies, the glyphs and lines that coincide with nothing."""
+
+    TINT = 1
+    """A held face's tint, over its face."""
+
+    SELECTION = 2
+    """The selection's fill and accent glyphs, over the tints and the glyphs they copy."""
+
+    HOVER = 3
+    """The hover outline and accent glyphs, over a selection of the same entity."""
+
+
 @dataclass(frozen=True)
 class GlyphDraw:
     """One merged glyph actor: its name, its geometry and how it is styled."""
@@ -832,6 +913,22 @@ class GlyphDraw:
 
     overlay: bool = False
     """Whether the lines draw over the scene as a 2D overlay at their world positions rather than among the bodies."""
+
+    layer: Layer = Layer.BASE
+    """Which coincident geometry it draws over by a depth offset, its points left where they are."""
+
+
+def _forward(actor: pv.Actor, layer: Layer) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+    """Draws ``actor`` over the coincident geometry of every lower layer by a depth offset."""
+    if layer is Layer.BASE:
+        return
+
+    factor, units = (step * layer for step in FORWARD_STEP)
+    mapper = actor.GetMapper()
+    # The resolve mode is global to VTK and travels to the mirror in every mapper's state.
+    mapper.SetResolveCoincidentTopologyToPolygonOffset()
+    mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)
+    mapper.SetRelativeCoincidentTopologyLineOffsetParameters(factor, units)
 
 
 def _segments(dataset: pv.DataSet) -> FloatArray:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
@@ -970,21 +1067,16 @@ def glyph_actors(
             surface: pv.PolyData = cast("pv.PolyData", found.extract_surface(algorithm=None))
             surface.clear_data()
 
-            if glyph.normal is not None:
-                surface.points = np.asarray(surface.points, dtype=np.float64) + lift * point(glyph.normal)
-
             faces.append(surface)
             areas.append(float(surface.area))
 
             return np.asarray(surface.points, dtype=np.float64)
 
         segments: FloatArray = _segments(found)
+        swept: Surface | None = placement.swept_face(segments)
 
-        if placement.revolved and placement.basis is not None:
-            outward: FloatArray = np.zeros(3) if glyph.normal is None else lift * point(glyph.normal)
-            raised: FloatArray = segments.reshape(-1, 3) + outward
-            pairs: IntArray = np.arange(len(raised), dtype=np.int64).reshape(-1, 2)
-            faces.append(_surface(swept_lines(raised, pairs, placement.basis, sweep=placement.sweep)))
+        if swept is not None:
+            faces.append(_surface(swept))
         else:
             lines.append(segments + toward_viewer)
 
@@ -1087,7 +1179,7 @@ def glyph_actors(
         draws.append(GlyphDraw(GlyphActor.HALOS, _merged(halos), color=GLYPH_HALO, culling="front"))
 
     if faces:
-        draws.append(GlyphDraw(GlyphActor.FACES, _merged(faces), color=GLYPH_TINT, opacity=TINT_OPACITY))
+        draws.append(GlyphDraw(GlyphActor.FACES, _merged(faces), color=GLYPH_TINT, opacity=TINT_OPACITY, layer=Layer.TINT))
 
     for actor, groups, color, px in (
         (GlyphActor.LINES, lines, GLYPH_TINT, TINT_LINE_PX),
@@ -1100,7 +1192,7 @@ def glyph_actors(
             draws.append(GlyphDraw(actor, mesh, color=color, line_width=px * width))
 
     if spots:
-        located: FloatArray = placement.placed(np.asarray(spots, dtype=np.float64))
+        located: FloatArray = placement.placed(np.asarray(spots, dtype=np.float64)) + placement.front
         draws.append(GlyphDraw(GlyphActor.LABELS, pv.PolyData(located), labels=tuple(texts), font_size=round(LABEL_FONT_PX * view.scale)))
 
     return draws
@@ -1229,6 +1321,7 @@ class GlyphLayer:
             basis=host.basis,
             diagonal=shown_diagonal(tuple(host.section_blocks.bounds), expansion),
             flat=host.frame.model_dim == 2,
+            depth=prism_depth(host.frame),
         )
 
     def bounds_of(self, ref: EntityRef) -> Bounds | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
@@ -1285,7 +1378,13 @@ class GlyphLayer:
         if view is None:
             return
 
-        built: list[GlyphDraw] = [*self.glyph_draws(host, view), *self.decorations(host, view)]
+        moved, cells = self.moved_glyphs(host, view)
+        placement: GlyphPlacement = self.placement(host)
+        built: list[GlyphDraw] = [*glyph_actors(moved, cells, placement, view), *self.decorations(host, view)]
+        chosen: pv.PolyData | None = self.accent_glyphs(view.selected, moved, cells, placement, view) if view.selected else None
+        if chosen is not None:
+            built.append(GlyphDraw(GlyphActor.SELECTION_GLYPHS, chosen, color=view.accent, line_width=MARK_LINE_PX * view.scale, layer=Layer.SELECTION))
+
         draws: list[GlyphDraw] = [draw for draw in built if draw.mesh.n_points]
         labelled: list[GlyphDraw] = [draw for draw in draws if draw.labels]
         merged: list[GlyphDraw] = [draw for draw in draws if not draw.labels]
@@ -1320,7 +1419,7 @@ class GlyphLayer:
                 )
                 continue
 
-            _ = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
+            added = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
                 draw.mesh,
                 color=draw.color,
                 opacity=draw.opacity,
@@ -1331,11 +1430,16 @@ class GlyphLayer:
                 render=False,
                 name=str(draw.actor),
             )
+            _forward(added, draw.layer)
 
         for ref in self.refs(host):
             hover: GlyphDraw | None = self.hover_draw(ref, host, view)
             if hover is None or not hover.mesh.n_points:
                 continue
+
+            accent: pv.PolyData | None = self.accent_glyphs(ref.id, moved, cells, placement, view)
+            if accent is not None:
+                hover = replace(hover, mesh=_merged([hover.mesh, accent]), layer=Layer.HOVER)
 
             actor = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
                 hover.mesh,
@@ -1348,6 +1452,8 @@ class GlyphLayer:
                 name=hover.actor,
             )
             actor.SetVisibility(False)
+            _forward(actor, hover.layer)
+
             self.hover_actors[ref.id] = actor
 
         hovers: list[str] = [f"{GlyphActor.HOVER}{ref_id}" for ref_id in self.hover_actors]
@@ -1383,7 +1489,7 @@ class GlyphLayer:
             if edges is None:
                 return None
 
-            if placement.flat and not placement.revolved:
+            if placement.flat and not placement.revolved and not placement.extruded:
                 edges.points = np.asarray(edges.points, dtype=np.float64) + np.array([0.0, 0.0, lift])
 
             return GlyphDraw(name, edges, color=view.hover, line_width=width)
@@ -1398,14 +1504,9 @@ class GlyphLayer:
             carrying: pv.DataSet = cells if field in cells.point_data else cast("pv.DataSet", cells.sample(host.section_blocks.combine()))
             cells = warped(carrying, field, scale) if field in carrying.point_data else cells
 
-        boundary: Boundary | None = next((candidate for candidate in self.boundaries if candidate.name == ref.name), None)
-        normal: FloatArray = np.zeros(3) if boundary is None or boundary.normal is None else np.asarray(boundary.normal.to_list(), dtype=np.float64)
-
-        if placement.flat and placement.revolved and placement.basis is not None:
-            raised: FloatArray = _segments(cells).reshape(-1, 3) + lift * normal
-            pairs: IntArray = np.arange(len(raised), dtype=np.int64).reshape(-1, 2)
-
-            return GlyphDraw(name, _surface(swept_lines(raised, pairs, placement.basis, sweep=placement.sweep)), color=view.hover, opacity=HOVER_OPACITY)
+        swept: Surface | None = placement.swept_face(_segments(cells)) if placement.flat else None
+        if swept is not None:
+            return GlyphDraw(name, _surface(swept), color=view.hover, opacity=HOVER_OPACITY, layer=Layer.HOVER)
 
         if placement.flat:
             segments: FloatArray = _segments(cells) + np.array([0.0, 0.0, lift])
@@ -1421,9 +1522,8 @@ class GlyphLayer:
 
         return GlyphDraw(name, rim, color=view.hover, line_width=width) if rim is not None else None
 
-    def glyph_draws(self, host: GlyphHost, view: GlyphView) -> list[GlyphDraw]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-        """The condition glyphs over ``host``, their anchors and cells moved with its warp."""
-        placement: GlyphPlacement = self.placement(host)
+    def moved_glyphs(self, host: GlyphHost, view: GlyphView) -> tuple[list[Glyph], dict[str, pv.DataSet]]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The shown glyphs with their anchors moved with ``host``'s warp, and the warped cells of each glyph's group by entity id."""
         shown: list[Glyph] = [glyph for glyph in self.glyphs if glyph.kind in view.kinds and glyph.ref.id not in view.hidden]
         cells: dict[str, pv.DataSet] = {}
         moved: list[Glyph] = []
@@ -1442,10 +1542,28 @@ class GlyphLayer:
             displaced: bool = warp is not None and (warp[0] in found.point_data or warp[0] in found.cell_data)
             cells[glyph.ref.id] = warped(found, *warp) if warp is not None and displaced else found
 
-        return glyph_actors(moved, cells, placement, view)
+        return moved, cells
+
+    @staticmethod
+    def accent_glyphs(
+        ref_id: str, glyphs: Sequence[Glyph], cells: Mapping[str, pv.DataSet], placement: GlyphPlacement, view: GlyphView
+    ) -> pv.PolyData | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The arrows and pins of one entity's glyphs, which a highlight redraws in its color; None when the entity shows none.
+
+        Args:
+            ref_id: The entity id whose glyphs to take.
+            glyphs: The shown glyphs, anchors already moved with the warp.
+            cells: The warped cells of each glyph's group by entity id.
+            placement: How the solve frame lands in the displayed scene.
+            view: How large the glyphs draw.
+        """
+        own: list[Glyph] = [glyph for glyph in glyphs if glyph.ref.id == ref_id]
+        pieces: list[pv.PolyData] = [draw.mesh for draw in glyph_actors(own, cells, placement, view) if draw.actor in (GlyphActor.ARROWS, GlyphActor.MARKS)] if own else []
+
+        return _merged(pieces) if pieces else None
 
     def decorations(self, host: GlyphHost, view: GlyphView) -> list[GlyphDraw]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-        """The selection highlight, the section outline with its triad and plane, and the authored ghost with its hull."""
+        """The selection highlight, the section outline with its plane, and the authored ghost with its hull."""
         import pyvista as pv
 
         placement: GlyphPlacement = self.placement(host)
@@ -1464,7 +1582,7 @@ class GlyphLayer:
         if ref is not None and ref.kind is EntityKind.BODY and ref.name in host.blocks.keys():
             block = cast("pv.DataSet", host.blocks[ref.name])
             edges: pv.PolyData | None = feature_outline(pv.MultiBlock([block]))
-            raise_by: FloatArray = 2.0 * lift if placement.flat and not placement.revolved else np.zeros(3)
+            raise_by: FloatArray = 2.0 * lift if placement.flat and not placement.revolved and not placement.extruded else np.zeros(3)
 
             if edges is not None:
                 edges.points = np.asarray(edges.points, dtype=np.float64) + raise_by
@@ -1474,51 +1592,36 @@ class GlyphLayer:
                 fill: pv.PolyData = cast("pv.PolyData", block.extract_surface(algorithm=None))
                 fill.clear_data()
                 fill.points = np.asarray(fill.points, dtype=np.float64) + raise_by
-                draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, fill, color=view.accent, opacity=SELECTION_TINT))
+                draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, fill, color=view.accent, opacity=SELECTION_TINT, layer=Layer.SELECTION))
         elif ref is not None and ref.kind is EntityKind.BOUNDARY:
             cells: pv.DataSet | None = self.group_cells(ref, host)
-            boundary: Boundary | None = next((candidate for candidate in self.boundaries if candidate.name == ref.name), None)
-            normal: FloatArray = np.zeros(3) if boundary is None or boundary.normal is None else np.asarray(boundary.normal.to_list(), dtype=np.float64)
 
             if cells is not None and host.warped is not None and host.warped[0] in cells.point_data:
                 cells = warped(cells, *host.warped)
 
-            if cells is not None and placement.flat and placement.revolved and placement.basis is not None:
-                raised: FloatArray = _segments(cells).reshape(-1, 3) + 2.0 * TINT_LIFT * diagonal * normal
-                pairs: IntArray = np.arange(len(raised), dtype=np.int64).reshape(-1, 2)
-                draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, _surface(swept_lines(raised, pairs, placement.basis, sweep=placement.sweep)), color=view.accent, opacity=SELECTION_OPACITY))
+            swept: Surface | None = placement.swept_face(_segments(cells)) if cells is not None and placement.flat else None
+
+            if swept is not None:
+                draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, _surface(swept), color=view.accent, opacity=SELECTION_OPACITY, layer=Layer.SELECTION))
             elif cells is not None and placement.flat:
                 draws.append(GlyphDraw(GlyphActor.SELECTION, segments_mesh(_segments(cells) + 2.0 * lift), color=view.accent, line_width=SELECTION_LINE_PX * view.scale))
             elif cells is not None:
                 surface: pv.PolyData = cast("pv.PolyData", cells.extract_surface(algorithm=None))
                 surface.clear_data()
-                surface.points = np.asarray(surface.points, dtype=np.float64) + 2.0 * TINT_LIFT * diagonal * normal
-                draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, surface, color=view.accent, opacity=SELECTION_OPACITY))
+                draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, surface, color=view.accent, opacity=SELECTION_OPACITY, layer=Layer.SELECTION))
 
         if plane is not None and view.outline:
             loops: pv.PolyData | None = feature_outline(self.deformed_section(host))
 
-            # VTK.wasm lets a revolved display's translucent bodies hide or stipple the lines behind and along them, so there the outline and triad draw on top in both renderers.
+            # VTK.wasm lets a revolved display's translucent bodies hide or stipple the lines behind and along them, so there the outline draws on top in both renderers.
             def stroked(actor: GlyphActor, lines: pv.PolyData) -> GlyphDraw:
                 return GlyphDraw(actor, lines, color=view.ink, line_width=OUTLINE_LINE_PX * view.scale, overlay=placement.revolved)
 
             if loops is not None:
                 draws.append(stroked(GlyphActor.OUTLINE, segments_mesh(_segments(loops) + lift)))
 
-            bounds: Sequence[float] = tuple(host.section_blocks.bounds)
-            reach: float = TRIAD_SHARE * diagonal
-            gap: float = reach / 2.0
-            # Labels run right from their point, so the triad sits wholly below the section to keep its Y label off the body.
-            corner: FloatArray = np.array([bounds[0], bounds[2] - gap - reach, 0.0])
-            axes: FloatArray = np.array([[corner, corner + [reach, 0.0, 0.0]], [corner, corner + [0.0, reach, 0.0]]])
-            draws.append(stroked(GlyphActor.TRIAD, _polylines(np.concatenate(placement.copies(axes.reshape(-1, 3))[:1]).reshape(-1, 2, 3))))
-
-            if view.labels is GlyphLabels.SCENE:
-                across, up = self.frame.axis_names
-                tips: FloatArray = placement.placed(axes[:, 1])
-                draws.append(GlyphDraw(GlyphActor.LABELS, pv.PolyData(tips), labels=(across, up), font_size=round(LABEL_FONT_PX * view.scale)))
-
             if placement.revolved:
+                bounds: Sequence[float] = tuple(host.section_blocks.bounds)
                 square: FloatArray = np.array([[bounds[0], bounds[2], 0.0], [bounds[1], bounds[2], 0.0], [bounds[1], bounds[3], 0.0], [bounds[0], bounds[3], 0.0]])
                 quad: pv.PolyData = pv.PolyData(placement.placed(square), faces=np.array([4, 0, 1, 2, 3]))
                 draws.append(GlyphDraw(GlyphActor.PLANE, quad, color=GLYPH_TINT, opacity=PLANE_OPACITY))
@@ -1573,8 +1676,7 @@ class GlyphLayer:
 
             return np.concatenate([_segments(rings), *meridians])
 
-        # A Cartesian 2D frame totals a per-metre integral over the prism depth, so a unit X integral totals to the depth.
-        depth: float = self.frame.total(Vec3(1.0, 0.0, 0.0)).x
+        depth: float = prism_depth(self.frame)
         surface: pv.PolyData = cast("pv.PolyData", host.section_blocks.extract_surface(algorithm=None))
         surface.clear_data()
         surface.points = np.asarray(surface.points, dtype=np.float64) - [0.0, 0.0, depth / 2.0]
@@ -1664,13 +1766,13 @@ class GroupScene:
         return cells
 
     def render(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated glyph tests
-        """Draw every body plain grey and shaded, a solid run's feature edges in black over them, then the glyph layer."""
-        for name in (str(key) for key in self.blocks.keys()):
+        """Draw every body shaded in its body color, a solid run's feature edges in black over them, then the glyph layer."""
+        for index, name in enumerate(str(key) for key in self.blocks.keys()):
             surface: pv.PolyData = cast("pv.PolyData", cast("pv.DataSet", self.blocks[name]).extract_surface(algorithm=None))
             surface.clear_data()
             _ = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
                 surface,
-                color=PLAIN_BODY,
+                color=body_color(index),
                 smooth_shading=True,
                 split_sharp_edges=True,
                 specular=PLAIN_SPECULAR,

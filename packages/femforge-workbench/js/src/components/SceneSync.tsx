@@ -51,6 +51,7 @@ interface NativeSession {
   observe(id: number, event: string, callback: () => void): unknown;
   unObserve(id: number, tag: unknown): void;
   invoke(id: number, method: string, args: unknown[]): unknown;
+  getAllDependencies(id: number): ArrayLike<number>;
 }
 
 interface RemoteSession {
@@ -111,6 +112,16 @@ function stateOf(session: RemoteSession, id: number): unknown {
   }
 }
 
+/** The ids of every object the mirror has built for its render windows; unlike getState, it never logs an error for an id the mirror has not built, such as a redrawn scene's outline before its sync lands. */
+function builtIds(session: RemoteSession): Set<number> {
+  const ids = new Set<number>();
+  for (const window of session.renderWindowIdsWithRunningEventLoops ?? []) {
+    for (const id of Array.from(session.native.getAllDependencies(window))) ids.add(id);
+  }
+
+  return ids;
+}
+
 /** Turns the mirror's triad with its camera, glides the camera to each move the server sends, and tells the server how large the mirror's canvas is; renders nothing but an anchor to find that canvas by. */
 export function SceneSync({
   viewRef,
@@ -135,7 +146,8 @@ export function SceneSync({
       const session = handle?.getRemoteSession?.();
       if (!handle || !session) return;
 
-      const known = (id: number | undefined): id is number => Boolean(id) && Boolean(stateOf(session, id as number));
+      const built = builtIds(session);
+      const known = (id: number | undefined): id is number => id !== undefined && built.has(id);
       const previous = outlined.current;
       let changed = false;
       // The wasm bindings take VTK's int flag; a JS boolean leaves the actor as it was.
