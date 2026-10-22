@@ -44,6 +44,7 @@ class Cls(StrEnum):
 
     TOOLBAR = "flex shrink-0 items-center gap-1 border-b border-border px-1.5 text-label h-(--ff-tab-height)"
     TOGGLE = "h-6 px-1.5 text-label"
+    TOOLBAR_DIVIDER = "mx-1 h-4 w-px shrink-0 bg-border"
     FILL = "relative min-h-0 flex-1"
     SCROLL = "overflow-auto"
     CAPTION = "text-label text-muted-foreground"
@@ -225,6 +226,20 @@ class PanelComponent(TrameComponent):
         """Reports in the shell's status line."""
         self.app.status(message)
 
+    def toast(self, text: str) -> None:
+        """Shows a short message in the shell's bottom-right corner."""
+        self.app.toast(text)
+
+    def download(self, name: str, data: bytes, media_type: str) -> None:
+        """Hands the browser a file to save, through the shell.
+
+        Args:
+            name: The file name the browser suggests.
+            data: The file's bytes.
+            media_type: The file's media type, such as ``image/png``.
+        """
+        self.app.download(name, data, media_type)
+
     def refresh(self) -> None:
         """Pushes the template again after its widgets changed."""
         self.layout.flush_content()
@@ -242,7 +257,7 @@ class PanelComponent(TrameComponent):
             fn: The server handler, which writes the same value and so changes nothing the control shows.
             model: The state variable the control binds.
             value: The JS expression the control's new state evaluates to.
-            args: The JS expression of `fn`'s argument list.
+            args: The JS expression of `fn`'s argument list, evaluated after the write, so the model already holds the new value.
         """
         self.bound.append(fn)
         name = json.dumps(self.server.trigger_name(fn))

@@ -1,4 +1,4 @@
-"""Expansion of an axisymmetric r–z section into the mirrored plane or the revolved solid of the frame it was authored in."""
+"""Expansion of a 2D section into a 3D view: an axisymmetric r–z section mirrored or revolved, a Cartesian one extruded through its depth."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 import numpy as np
 
-from femforge.frames import Axisymmetric, SolvePlane
+from femforge.common.vector import Vec3
+from femforge.frames import Axisymmetric, Frame, SolvePlane
 
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ AXIS_TOLERANCE = 1e-9
 
 
 class Expansion(StrEnum):
-    """How an axisymmetric section is shown."""
+    """How a 2D section is shown."""
 
     SECTION = "section"
     """The r–z half-plane as solved."""
@@ -39,14 +40,50 @@ class Expansion(StrEnum):
     REVOLVE = "revolve"
     """The section swept around the axis into the authored 3D frame."""
 
+    EXTRUDE = "extrude"
+    """A Cartesian section extruded through its depth, centred on the section plane in the solve frame."""
+
     @property
     def dim(self) -> Literal[2, 3]:
         """The dimension of the shown geometry."""
-        return 3 if self is Expansion.REVOLVE else 2
+        return 3 if self in (Expansion.REVOLVE, Expansion.EXTRUDE) else 2
+
+
+REVOLVING: tuple[Expansion, ...] = (Expansion.SECTION, Expansion.MIRROR, Expansion.REVOLVE)
+"""The ways an axisymmetric section can be shown, its 3D form last."""
+
+EXTRUDING: tuple[Expansion, ...] = (Expansion.SECTION, Expansion.EXTRUDE)
+"""The ways a Cartesian section can be shown, its 3D form last."""
+
+
+def offered(frame: Frame) -> tuple[Expansion, ...]:
+    """The ways a run solved in ``frame`` can be shown; none for a frame that solves the model whole."""
+    if frame.plane is None:
+        return ()
+
+    return REVOLVING if frame.revolves else EXTRUDING
+
+
+def shown_as(frame: Frame, expansion: Expansion) -> Expansion:
+    """``expansion`` when ``frame`` offers it, else the frame's 3D form; a frame that offers none shows its section."""
+    choices: tuple[Expansion, ...] = offered(frame)
+    if not choices:
+        return Expansion.SECTION
+
+    return expansion if expansion in choices else choices[-1]
+
+
+def prism_depth(frame: Frame) -> float:
+    """`t` `[m]`: The depth a Cartesian section's results total over, the extrusion of its 3D form; 0 for any other frame."""
+    if frame.plane is None or frame.revolves:
+        return 0.0
+
+    # A Cartesian 2D frame totals a per-metre integral over the prism depth, so a unit X integral totals to the depth.
+    return frame.total(Vec3(1.0, 0.0, 0.0)).x
 
 
 class VtkCell(IntEnum):
-    """The VTK cell types a section's 2D cells arrive as."""
+    """The VTK cell types a section's 2D cells arrive as; a quadratic cell is read by its corners."""
 
     TRIANGLE = 5
     """A three-corner cell."""
@@ -57,15 +94,24 @@ class VtkCell(IntEnum):
     QUAD = 9
     """A four-corner cell walked around its boundary."""
 
+    QUADRATIC_TRIANGLE = 22
+    """A six-node triangle, its corners first."""
+
+    QUADRATIC_QUAD = 23
+    """An eight-node quad, its corners first."""
+
+    BIQUADRATIC_QUAD = 28
+    """A nine-node quad, its corners first."""
+
     @property
     def order(self) -> list[int]:
         """The corner order that walks the cell's boundary."""
         match self:
-            case VtkCell.TRIANGLE:
+            case VtkCell.TRIANGLE | VtkCell.QUADRATIC_TRIANGLE:
                 return [0, 1, 2]
             case VtkCell.PIXEL:
                 return [0, 1, 3, 2]
-            case VtkCell.QUAD:
+            case VtkCell.QUAD | VtkCell.QUADRATIC_QUAD | VtkCell.BIQUADRATIC_QUAD:
                 return [0, 1, 2, 3]
 
 
@@ -156,6 +202,30 @@ Basis.SOLVE = Basis(origin=(0.0, 0.0, 0.0), radial=(1.0, 0.0, 0.0), axis=(0.0, 1
 
 
 @dataclass(frozen=True)
+class Prism:
+    """A Cartesian section's depth along the solve Z, with the section plane at its middle."""
+
+    depth: float
+    """`t` `[m]`: The extrusion depth."""
+
+    def fold(self, points: FloatArray) -> tuple[FloatArray, FloatArray]:
+        """The section points ``(x, y, 0)`` of solve-frame points and their Z, inverting [`place`][]."""
+        along: FloatArray = np.asarray(points[:, 2], dtype=np.float64).copy()
+
+        return np.column_stack([points[:, 0], points[:, 1], np.zeros_like(along)]), along
+
+    def place(self, section: FloatArray, along: FloatArray | float) -> FloatArray:
+        """Section points ``(x, y)`` at solve Z ``along``; any section Z is ignored."""
+        heights: FloatArray = np.broadcast_to(np.asarray(along, dtype=np.float64), (len(section),))
+
+        return np.column_stack([section[:, 0], section[:, 1], heights])
+
+    def carry(self, values: AnyArray, _along: FloatArray | float) -> AnyArray:
+        """``values`` unchanged, since an extrusion turns no vector."""
+        return values
+
+
+@dataclass(frozen=True)
 class Block:
     """Same-sized 2D cells: their corner point ids and their cell index in the source dataset."""
 
@@ -181,7 +251,7 @@ class Polygons:
 
     @classmethod
     def of(cls, cells: Mapping[int, IntArray], celltypes: np.typing.NDArray[np.uint8]) -> Polygons:
-        """The triangles, quads and pixels (as quads) of a pyvista ``cells_dict``; every other cell type is dropped."""
+        """The triangles, quads and pixels (as quads) of a pyvista ``cells_dict``, quadratic ones by their corners; every other cell type is dropped."""
         blocks: list[Block] = []
         for kind in VtkCell:
             if kind not in cells:
@@ -460,6 +530,90 @@ def swept_lines(points: FloatArray, lines: IntArray, basis: Basis, *, segments: 
     )
 
 
+def _layers(points: FloatArray, used: IntArray, depth: float) -> tuple[FloatArray, IntArray]:
+    """The back and front copies of section points ``used`` at solve Z ``∓depth/2``, and the back-layer id of every section point."""
+    prism = Prism(depth)
+    back: IntArray = np.zeros(len(points), dtype=np.int64)
+    back[used] = np.arange(len(used), dtype=np.int64)
+    layered: FloatArray = np.concatenate([prism.place(points[used], -depth / 2.0), prism.place(points[used], depth / 2.0)])
+
+    return layered, back
+
+
+def _quads(starts: IntArray, ends: IntArray, front: int) -> IntArray:
+    """The size-prefixed quads that join each back-layer edge ``starts → ends`` to its copy ``front`` ids on, facing out of a counterclockwise cell."""
+    quads: IntArray = np.column_stack([starts, ends, ends + front, starts + front])
+    sizes: IntArray = np.full(len(quads), 4, dtype=np.int64)
+
+    return np.column_stack([sizes, quads]).reshape(-1)
+
+
+def extruded(points: FloatArray, polygons: Polygons, depth: float) -> Surface:
+    """The closed, outward-facing surface of the section's cells extruded along the solve Z through ``depth``, centred on the section plane.
+
+    Args:
+        points: The ``(N, 3)`` section points in the solve frame.
+        polygons: The section's 2D cells.
+        depth: `t` `[m]`: The extrusion depth.
+    """
+    if depth <= 0.0:
+        raise ValueError(f"An extrusion needs a positive depth, not {depth:g}.")
+
+    if not polygons.blocks:
+        return Surface.empty(Basis.SOLVE)
+
+    cells: Polygons = polygons.oriented(points)
+    edges, owners = cells.boundary()
+    used: IntArray = np.unique(np.concatenate([block.corners.reshape(-1) for block in cells.blocks]))
+    layered, back = _layers(points, used, depth)
+    count: int = len(used)
+    front_faces, front_corners, front_cells = cells.flat(back + count)
+    back_faces, back_corners, back_cells = cells.reversed().flat(back)
+    side_cells: int = len(edges)
+    cell_count: int = side_cells + len(front_cells) + len(back_cells)
+
+    return Surface(
+        points=layered,
+        faces=np.concatenate([_quads(back[edges[:, 0]], back[edges[:, 1]], count), front_faces, back_faces]),
+        corners=np.concatenate([np.full(side_cells, 4, dtype=np.int64), front_corners, back_corners]),
+        point_source=np.tile(used, 2),
+        point_theta=np.zeros(2 * count, dtype=np.float64),
+        cell_source=np.concatenate([owners, front_cells, back_cells]),
+        cell_theta=np.zeros(cell_count, dtype=np.float64),
+        basis=Basis.SOLVE,
+    )
+
+
+def extruded_lines(points: FloatArray, lines: IntArray, depth: float) -> Surface:
+    """The quads a section's line cells sweep along the solve Z through ``depth``, centred on the section plane, uncapped.
+
+    Args:
+        points: The ``(N, 3)`` section points in the solve frame.
+        lines: The ``(E, 2)`` point ids of each line cell.
+        depth: `t` `[m]`: The extrusion depth.
+    """
+    if depth <= 0.0:
+        raise ValueError(f"An extrusion needs a positive depth, not {depth:g}.")
+
+    if not len(lines):
+        return Surface.empty(Basis.SOLVE)
+
+    used: IntArray = np.unique(lines)
+    layered, back = _layers(points, used, depth)
+    count: int = len(used)
+
+    return Surface(
+        points=layered,
+        faces=_quads(back[lines[:, 0]], back[lines[:, 1]], count),
+        corners=np.full(len(lines), 4, dtype=np.int64),
+        point_source=np.tile(used, 2),
+        point_theta=np.zeros(2 * count, dtype=np.float64),
+        cell_source=np.arange(len(lines), dtype=np.int64),
+        cell_theta=np.zeros(len(lines), dtype=np.float64),
+        basis=Basis.SOLVE,
+    )
+
+
 def _section(dataset: pv.DataSet) -> tuple[pv.UnstructuredGrid, FloatArray, Polygons]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
     """A dataset as an unstructured grid, with its points and its 2D cells."""
     import pyvista as pv
@@ -515,6 +669,27 @@ def revolve(
 
     grid, points, polygons = _section(dataset)
     surface: Surface = swept(points, polygons, basis, segments=segments, sweep=sweep)
+    if not surface.corners.size:
+        return pv.PolyData()
+
+    output = pv.PolyData(surface.points, faces=surface.faces)
+    _dress(grid, surface, output, still)
+
+    return output
+
+
+def extrude(dataset: pv.DataSet, depth: float, *, still: frozenset[str] = frozenset()) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated tests
+    """The closed surface of a Cartesian section extruded along the solve Z through ``depth``, centred on the section plane.
+
+    Args:
+        dataset: The section in the solve frame; line and vertex cells are dropped.
+        depth: `t` `[m]`: The extrusion depth.
+        still: The array names copied as they are; an extrusion turns no vector, so it changes nothing.
+    """
+    import pyvista as pv
+
+    grid, points, polygons = _section(dataset)
+    surface: Surface = extruded(points, polygons, depth)
     if not surface.corners.size:
         return pv.PolyData()
 

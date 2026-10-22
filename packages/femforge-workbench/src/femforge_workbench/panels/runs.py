@@ -687,7 +687,7 @@ class RunDetailPanel(PanelComponent):
     def build(self) -> None:
         """Builds the toolbar, the bundle's sections and the purge dialog, then follows the shared run selection."""
         with html.Div(classes=str(Cls.TOOLBAR)):
-            with Tip(content=react.Bind(self.key(DetailVar.FIELDS_NOTE))):
+            with Tip(content=react.Bind(self.key(DetailVar.FIELDS_NOTE)), definition=True):
                 Button(
                     "Fields",
                     size=BUTTON_SIZE,

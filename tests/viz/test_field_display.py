@@ -56,7 +56,7 @@ from femforge.viz.field_display import (
     scaled_basis,
     split_by_body,
 )
-from femforge.viz.field_lines import FieldLineOptions, SeedPlacement, prepare_streamline_source
+from femforge.viz.field_lines import FieldLineOptions, SeedPlacement
 from femforge.viz.symmetry import Expansion
 
 
@@ -1125,20 +1125,49 @@ def test_a_solid_run_is_shown_as_is_whatever_the_spec_asks() -> None:
     assert not scene.expand(DisplaySpec())
 
 
-def test_a_planar_section_is_shown_flat_and_never_expands() -> None:
-    pytest.importorskip("pyvista")
+def _planar_scene(columns: int = 4, rows: int = 2) -> FieldScene:  # pragma: no cover - helper for the pyvista-gated tests below
     from femforge.frames import Cartesian2D
     from femforge.physical.units import U
 
-    grid = _section_grid()
+    grid = _section_grid(columns, rows)
     bodies = Bodies([Body(name="INNER", mesh_id=1), Body(name="OUTER", mesh_id=2)])
-    frame = Cartesian2D(thickness=10 * U.mm)
-    scene = FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=2, run_id="planar", bodies=bodies, frame=frame)
 
-    assert not scene.expandable and scene.basis is None
-    assert scene.display_dim == 2 and scene.dim_for(DisplaySpec()) == 2
-    assert scene.expansion_of(DisplaySpec()) == (Expansion.SECTION, 360.0)
-    assert not scene.expand(DisplaySpec())
+    return FieldScene(grid=grid, blocks=split_by_body(grid, bodies), fields=list_fields(grid), model_dim=2, run_id="planar", bodies=bodies, frame=Cartesian2D(thickness=10 * U.mm))
+
+
+def test_a_planar_section_extrudes_through_its_thickness_by_default_and_shows_flat_on_request() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    scene = _planar_scene()
+    flat = DisplaySpec(field="magnetic flux density", expansion=Expansion.SECTION)
+
+    assert scene.expandable and scene.basis is None and scene.depth == pytest.approx(0.01)
+    assert scene.display_dim == 2 and scene.dim_for(DisplaySpec()) == 3 and scene.dim_for(flat) == 2
+    assert scene.expansion_of(DisplaySpec()) == (Expansion.EXTRUDE, 360.0), "a Cartesian section takes a revolve as its own 3D form"
+    assert scene.expansion_of(DisplaySpec(expansion=Expansion.MIRROR)) == (Expansion.EXTRUDE, 360.0)
+    assert not scene.expand(flat), "the section is what the scene starts from"
+
+    _ = scene.apply(DisplaySpec(field="magnetic flux density"))
+
+    assert scene.display_dim == 3 and scene.expanded == (Expansion.EXTRUDE, 360.0)
+    assert all(isinstance(scene.blocks[name], pv.PolyData) for name in scene.blocks.keys()), "only the surfaces are extruded"
+    assert scene.bounds[4] == pytest.approx(-0.005) and scene.bounds[5] == pytest.approx(0.005), "the section plane sits mid-thickness, as the authored ghost does"
+    assert all(np.allclose(np.asarray(cast("pv.DataSet", scene.blocks[name]).point_data["magnetic flux density"]), [0.0, 1.0, 0.0]) for name in scene.blocks.keys())
+    assert scene.grid is scene.section_grid, "the field lines integrate in the section"
+
+
+def test_an_extruded_section_carries_its_field_lines_to_each_seed_depth() -> None:
+    pytest.importorskip("pyvista")
+
+    scene = _planar_scene(columns=16, rows=8)
+    _ = scene.apply(DisplaySpec(field="magnetic flux density"))
+
+    actors = scene.integrate_streamlines(FieldLineOptions(line_count=3, seed_placement=SeedPlacement.VOLUME))
+    depths = np.unique(np.round(np.asarray(actors.streamlines.points)[:, 2], 9))
+
+    assert actors.streamlines.n_points > 0 and len(actors.magnitudes) == 2
+    assert len(depths) > 1 and depths.min() >= -0.005 and depths.max() <= 0.005, "each line keeps the depth of its seed inside the prism"
 
 
 def test_the_basis_origin_comes_from_millimetres_to_metres() -> None:

@@ -73,8 +73,10 @@ def test_the_tree_mounts_the_header_and_the_dock_hosting_server_templates(tmp_pa
     close_all = find(root, "ReactIf")
 
     assert prop(root, "className") == "flex h-full flex-col"
-    assert [child["tag"] for child in children] == ["header", "ff-tour", "main", "ReactIf"]
-    assert prop(children[-1], "value") == {"js": f"{StateVar.TASKS}.length"}, "the task strip shows only when a script passed tasks"
+    assert [child["tag"] for child in children] == ["header", "ff-tour", "main", "div", "ff-download", "ff-toast"], "the status bar sits under the dock"
+    bar = find(children[3], "ReactIf")
+    assert prop(bar[0], "value") == {"js": f"{StateVar.TASKS}.length"}, "the task strip shows only when a script passed tasks"
+    assert [prop(node, "role") for node in find(children[3], "span") if prop(node, "className") == str(Cls.STATUS)] == ["status"], "the status line sits in the bottom bar"
     header = cast("list[dict[str, object]]", children[0]["children"])
     assert [child["tag"] for child in header[:2]] == ["div", "div"], "the brand and a divider lead the title"
     assert [prop(node, "src") for node in find(header[0], "img")] == ["/__ff/ff-logo.svg"] and texts(find(header[0], "span")[0]) == ["femforge"]
@@ -88,7 +90,7 @@ def test_the_tree_mounts_the_header_and_the_dock_hosting_server_templates(tmp_pa
     assert cast("dict[str, object]", cast("dict[str, object]", prop(switcher[0], "onSelect"))["callback"])["args"] == {"js": "[card.name]"}
     assert prop(close_all[0], "value") == {"js": f"{StateVar.OPENED}.length"} and texts(find(close_all[0], "ff-button")[0]) == ["Close All"]
     assert [prop(node, "templateName") for node in find(root, "trame-template")][0] == str(Template.HEADER)
-    assert [prop(node, "name") for node in find(root, "ff-icon")] == ["chevron-down", "layout-grid", "circle-help"]
+    assert [prop(node, "name") for node in find(children[0], "ff-icon")] == ["chevron-down", "layout-grid", "circle-help"]
     assert find(root, "trame-script") == [], "the reload script is served only under the dev flag"
 
 
@@ -142,7 +144,10 @@ def test_add_registers_a_template_per_panel_and_types_the_components(tmp_path: P
     sphere = cast("dict[str, object]", app.state[f"trame__template_{template_name(str(DemoPanel.SPHERE))}"])
     assert prop(sphere, "style") == {"height": "100%", "width": "100%", "display": "flex", "flexDirection": "column", "minHeight": "0"}
     assert len(find(sphere, "vtk-local")) == 1, "the demo sphere mirrors in the browser by default"
-    assert [texts(node) for node in find(sphere, "ff-button")][:3] == [["Fit"], ["Top"], ["Bottom"]]
+    buttons = find(sphere, "ff-button")
+    assert [prop(node, "aria-label") for node in buttons][:3] == ["Fit the model", "Top view", "Bottom view"], "the view presets are icon buttons named for a screen reader"
+    assert [[prop(icon, "name") for icon in find(node, "ff-icon")] for node in buttons][:3] == [["scaling"], ["arrow-down-to-line"], ["arrow-up-to-line"]]
+    assert [prop(node, "content") for node in find(sphere, "ff-tip")][:3] == ["Fit the model", "Top view", "Bottom view"]
 
 
 def test_a_mirrored_scene_fits_the_canvas_the_browser_reports_and_pushes_every_preset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,7 +360,7 @@ def test_a_workbench_can_put_controls_in_the_header_bound_to_the_state(tmp_path:
     assert asyncio.run(run()) == ["beta"]
 
 
-def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path) -> None:
+def test_the_task_drawer_shows_the_board_and_its_rows_and_buttons_act_on_it(tmp_path: Path) -> None:
     app = _shell("smoke-tasks", tmp_path)
     app.board = TaskBoard(app, "main:tasks", [Task("Solve 3D", sys.gettrace), Task("Planar 2D", sys.gettrace)], path=None, roots=[])
     root = cast("dict[str, object]", app.ui.html)
@@ -364,45 +369,50 @@ def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path
     statuses = [node for node in find(root, "span") if prop(node, "role") == "status"]
     alerts = [node for node in statuses if "Script Error · " in texts(node)]
     assert len(toggles) == 1 and prop(toggles[0], "aria-expanded") == {"js": str(StateVar.TASK_SHEET)}
-    assert len(statuses) == 2 and all(prop(node, "aria-live") == "polite" for node in statuses), "the summary and a script error are announced"
+    assert len(statuses) == 3 and all(prop(node, "aria-live") == "polite" for node in statuses), "the summary, a script error and the status line are announced"
     assert len(alerts) == 1 and prop(alerts[0], "className") == str(Cls.TASK_ALERT)
     assert app.state[StateVar.TASK_SUMMARY] == "0 of 2 Done"
     assert cast("dict[str, object]", app.state[StateVar.TASK_FOCUS])["label"] == "Solve 3D"
 
     escape = [node for node in find(root, "div") if prop(node, "onKeyDown") is not None]
-    lines = [node for node in find(root, "div") if prop(node, "className") == str(Cls.TASK_SUMMARY_LINE)]
-    narrow = [node for node in find(root, "span") if prop(node, "className") == "hidden tabular-nums max-[800px]:inline"]
+    drawers = find(root, "ff-drawer")
     assert len(escape) == 1 and "Escape" in str(prop(escape[0], "onKeyDown")) and "task-toggle" in str(prop(escape[0], "onKeyDown")), "Escape closes the sheet and hands focus back to the toggle"
     assert prop(escape[0], "className") == str(Cls.ROOT), "the root catches Escape wherever the focus is in the page"
-    assert prop(toggles[0], "id") == "task-toggle" and len(lines) == 1 and prop(lines[0], "onClick") is not None, "the summary line opens the sheet too"
+    assert len(drawers) == 1 and prop(drawers[0], "open") == {"js": f"{StateVar.TASKS}.length > 0 && {StateVar.TASK_SHEET}"}, "the sheet slides up from the bar instead of repeating it"
+    assert prop(toggles[0], "id") == "task-toggle" and "cursor-pointer" in str(Cls.TASK_BAR) and f"!{StateVar.TASK_SHEET}" in str(prop(toggles[0], "onClick")), "the whole bar toggles the drawer on the client"
+    assert toggles[0] in find(drawers[0], "button") and "task-sheet" in [prop(node, "id") for node in find(drawers[0], "div")]
 
     buttons = find(root, "ff-button")
     details = [node for node in buttons if "Details for " in str(prop(node, "aria-label"))]
     copies = [node for node in buttons if "Copy Traceback" in str(node.get("children"))]
-    reused = [span for tip in find(root, "ff-tip") if prop(tip, "content") == "Tasks that reused a finished run" for span in find(tip, "span")]
+    tallies = [node for node in find(toggles[0], "span") if prop(node, "className") in [str(Cls.TASK_TALLY), str(Cls.TASK_TALLY_FAILED), str(Cls.TASK_TALLY_WARNING)]]
     assert len(details) == 1 and prop(details[0], "aria-expanded") == {"js": f"{StateVar.TASK_DETAILS} === task.label"}
     assert prop(details[0], "aria-label") == {"js": "(task.stalled ? 'Log for ' : 'Details for ') + task.title"}, "the toggle names its task"
+    assert prop(details[0], "onClick") == {"callback": {"trigger": app.ctrl.trigger_name(app.toggle_task_details), "args": {"js": "[task.label]"}}, "modifiers": ["stop"]}, "a button in a row does not also open the row"
     assert len(copies) == 1 and "'Copied'" in str(copies[0].get("children")) and prop(copies[0], "aria-live") == "polite"
     copy = str(prop(copies[0], "onClick"))
     assert "navigator.clipboard.writeText(task.traceback)" in copy and f'trame.state.set("{StateVar.TASK_COPIED}", label)' in copy and f"{COPIED_MS})" in copy, "Copy reads Copied for a moment"
-    assert len(reused) == 1 and reused[0].get("children") == ["↺ ", {"js": str(StateVar.TASK_REUSED)}, " Reused"] and app.state[StateVar.TASK_REUSED] == 0
-    assert len(narrow) == 1 and app.state[StateVar.TASK_COUNT] == "0/2"
+    assert [prop(find(node, "ff-icon")[0], "name") for node in tallies] == ["check", "copy-check", "x", "triangle-alert"], "each tally leads with its phase's icon, Reused with no refresh arrow"
+    assert [find(node, "span")[-1].get("children") for node in tallies] == [[{"js": str(count)}, f" {word}"] for count, word in ((StateVar.TASK_DONE, "Done"), (StateVar.TASK_REUSED, "Reused"), (StateVar.TASK_FAILED, "Failed"), (StateVar.TASK_STALLED, "Stalled"))]
+    assert app.state[StateVar.TASK_DONE] == 0 and app.state[StateVar.TASK_REUSED] == 0
     assert app.state[StateVar.TASK_BUSY] is True and str(app.state[StateVar.TASK_SUBMITTED]).startswith("Submitted at ")
 
     headings = find(root, "th")
+    rows = [node for node in find(root, "tr") if prop(node, "onClick") is not None]
     errors = [node for node in find(root, "div") if prop(node, "className") == str(Cls.TASK_SCRIPT_ERROR)]
-    slides = [node for node in find(root, "div") if prop(node, "className") == str(Cls.TASK_SLIDE)]
-    pulses = [node for node in find(root, "div") if prop(node, "role") == "progressbar"]
-    opens = [node for node in find(root, "ff-button") if prop(node, "aria-label") == {"js": "'Open run for ' + wb_task_focus.title"}]
+    bars = find(root, "ff-progress")
+    icons = [prop(node, "name") for node in find(root, "ff-icon")]
     details_box = [node for node in find(root, "pre") if prop(node, "className") == str(Cls.TASK_DETAIL)]
     assert [texts(node) for node in headings] == [[], ["Task"], ["State"], ["Elapsed"], ["Run"], []]
     assert prop(headings[3], "className") == str(Cls.TASK_HEAD_ELAPSED) and "text-right" in str(Cls.TASK_HEAD_ELAPSED), "the Elapsed heading aligns with its figures"
     assert [texts(node) for node in find(headings[5], "span")] == [["Actions"]] and prop(find(headings[5], "span")[0], "className") == "sr-only"
     assert "table-fixed" in str(Cls.TASK_TABLE), "the columns keep their place while the state text changes"
+    assert "even:bg-stripe" in str(Cls.TASK_ROW) and "hover:bg-wash-hover" in str(Cls.TASK_ROW_OPEN) and "cursor-pointer" in str(Cls.TASK_ROW_OPEN), "rows alternate, and one that opens shows it on hover"
+    assert len(rows) == 1 and prop(rows[0], "onClick") == {"callback": {"trigger": app.ctrl.trigger_name(app.open_task_row), "args": {"js": "[task.label]"}}}, "a click anywhere on a row opens it"
     assert len(errors) == 1 and errors[0].get("children") == ["Script Error · ", {"js": str(StateVar.TASK_ERROR)}], "the sheet repeats a script error untruncated"
     assert "truncate" not in str(Cls.TASK_SCRIPT_ERROR)
-    assert len(pulses) == 2 and len(slides) == 2 and all(prop(node, "aria-valuenow") is None for node in pulses), "an indeterminate bar slides a segment along its track"
-    assert len(opens) == 1, "the strip names the run Open opens"
+    assert len(bars) == 2, "the focus task and each row show their solve progress"
+    assert {"js": "wb_task_focus.icon"} in icons and {"js": "task.icon"} in icons and icons[-1] == "arrow-up-right", "a row with a run marks that a click opens it"
     assert len(details_box) == 1 and "whitespace-pre-wrap" in str(Cls.TASK_DETAIL), "a long traceback line wraps"
 
     app.state.ready()
@@ -441,3 +451,14 @@ def test_the_task_strip_shows_the_board_and_its_buttons_act_on_it(tmp_path: Path
 
     app.open_task_run("r1")
     assert app.state[StateVar.STATUS] == "no field viewer to open the run in"
+
+    app.open_task_row("Planar 2D")
+    assert app.state[StateVar.TASK_DETAILS] == "", "a row with neither a run nor a traceback opens nothing"
+    app.board.by_label["Planar 2D"] = app.board.by_label["Planar 2D"].model_copy(update={"traceback": "boom"})
+    app.open_task_row("Planar 2D")
+    assert app.state[StateVar.TASK_DETAILS] == "Planar 2D", "a row without a run opens its details"
+    app.state[StateVar.STATUS] = ""
+    app.board.by_label["Planar 2D"] = app.board.by_label["Planar 2D"].model_copy(update={"run_id": "r2"})
+    app.open_task_row("Planar 2D")
+    app.open_task_row("Unknown")
+    assert app.state[StateVar.STATUS] == "no field viewer to open the run in", "a row with a run opens it"

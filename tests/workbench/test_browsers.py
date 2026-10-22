@@ -64,7 +64,6 @@ from femforge_workbench.panels.runs import (  # noqa: E402
     RunRow,
     STARTING,
     StageField,
-    StageState,
     StatusVariant,
     UNKNOWN_VARIANT,
     component_rows,

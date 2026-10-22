@@ -28,6 +28,11 @@ class Solid(Frame):
         return "solid"
 
     @property
+    def description(self) -> str:
+        """One sentence on what the frame solves, for a reader who has not met it."""
+        return "The authored 3D model, solved whole."
+
+    @property
     def model_dim(self) -> Literal[2, 3]:
         """The mesh dimension this frame solves on."""
         return 3

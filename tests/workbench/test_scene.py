@@ -1,14 +1,17 @@
 """The scene panel: the per-panel view mode and its persistence, the mirror pass and its size guard, the interactive cap, the camera round trip, the axes and the screenshot."""
 
 import asyncio
+import base64
+import io
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 import pytest
 
+from femforge.common.log import log
 from femforge_workbench.persist import LocalJsonStore
 from femforge_workbench.theme import hex_color
 from tests.workbench.tree import find, prop, texts
@@ -17,7 +20,6 @@ from tests.workbench.tree import find, prop, texts
 pytest.importorskip("trame")
 pytest.importorskip("pyvista")
 
-import platformdirs  # noqa: E402
 import pyvista as pv  # noqa: E402
 from numpy.typing import NDArray  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -26,9 +28,10 @@ from trame_rca.schedulers import RcaImageRenderScheduler  # noqa: E402
 from trame_vtklocal.module.protocol import ObjectManagerAPI  # noqa: E402
 from vtkmodules.vtkCommonCore import vtkDataArray, vtkIdTypeArray  # noqa: E402
 from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkMultiBlockDataSet, vtkPolyData, vtkUnstructuredGrid  # noqa: E402
-from vtkmodules.vtkRenderingCore import vtkActor, vtkDataSetMapper, vtkPolyDataMapper  # noqa: E402
+from vtkmodules.vtkRenderingCore import vtkActor, vtkCompositePolyDataMapper, vtkDataSetMapper, vtkPolyDataMapper  # noqa: E402
 from vtkmodules.vtkSerializationManager import vtkObjectManager  # noqa: E402
 
+from femforge.viz.scene import Renderable  # noqa: E402
 from femforge_workbench.app import StateVar as AppVar, Workbench  # noqa: E402
 from femforge_workbench.dock import Panel as DockPanel, Split  # noqa: E402
 from femforge_workbench.panels import Carry  # noqa: E402
@@ -45,6 +48,7 @@ from femforge_workbench.panels.scene import (  # noqa: E402
     CameraKey,
     InteractiveCap,
     ScenePanel,
+    SceneViewerPanel,
     StateVar,
     StoreKey,
     View,
@@ -54,6 +58,7 @@ from femforge_workbench.panels.scene import (  # noqa: E402
     tolerate_dropped_objects,
     view_rotation,
 )
+from femforge_workbench.registry import renderable  # noqa: E402
 
 
 LIFT = 0.05
@@ -69,6 +74,7 @@ LINE_CELLS = 2
 """The segments of LINE_PATH left inside LINE_CLIP."""
 STALE_ID = 999_999
 """An object id the mirror's manager never had, like one of an actor the scene has dropped."""
+USE_POINT_FIELD_DATA = 3
 
 
 def _shell(name: str, root: Path) -> Workbench:
@@ -622,22 +628,24 @@ def test_the_camera_the_mirror_reported_travels_through_legacy_to_a_successor(tm
     assert app.persist.load(app.scope, rebuilt.store_key) is None
 
 
-def test_the_screenshot_adopts_the_mirror_camera_and_is_twice_the_panel_in_either_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(platformdirs, "user_pictures_dir", lambda: str(tmp_path / "pictures"))
+def test_the_screenshot_adopts_the_mirror_camera_downloads_twice_the_panel_in_either_mode_and_toasts(tmp_path: Path) -> None:
     app = _shell("shot", tmp_path)
     panel = ScenePanel(app, "scene", "Scene", renderable=Volume())
     panel.on_client_size({"width": PANEL_SIZE[0], "height": PANEL_SIZE[1], "ratio": 1})
     panel.on_camera(_reported(panel.camera_id, (5.0, 5.0, 5.0)))
 
+    def saved() -> Image.Image:
+        file = cast("dict[str, object]", app.state[AppVar.DOWNLOAD])
+        assert file["type"] == "image/png" and str(file["name"]).startswith("femforge-workbench-scene-")
+        return Image.open(io.BytesIO(base64.b64decode(str(file["data"]))))
+
     panel.screenshot()
 
-    status = str(app.state[AppVar.STATUS])
-    assert status.startswith("screenshot ")
-    path = Path(status.removeprefix("screenshot "))
-    assert path.exists() and path.parent == tmp_path / "pictures" / "femforge-workbench"
-    with Image.open(path) as image:
+    with saved() as image:
         assert image.size == tuple(side * SCREENSHOT_SCALE for side in PANEL_SIZE), "the mirror renders at the device ratio, so the file is scaled twice"
 
+    toast = cast("dict[str, object]", app.state[AppVar.TOAST])
+    assert str(toast["text"]).startswith("Screenshot downloaded: femforge-workbench-scene-")
     assert panel.plotter.camera.position == pytest.approx((5.0, 5.0, 5.0))
 
     panel.set_mode("server")
@@ -646,9 +654,11 @@ def test_the_screenshot_adopts_the_mirror_camera_and_is_twice_the_panel_in_eithe
 
     panel.screenshot()
 
-    streamed = Path(str(app.state[AppVar.STATUS]).removeprefix("screenshot "))
-    with Image.open(streamed) as image:
+    with saved() as image:
         assert image.size == tuple(side * SCREENSHOT_SCALE for side in PANEL_SIZE), "the stream already renders at STILL_SCALE, so the file is not scaled twice again"
+
+    app.on_downloaded()
+    assert app.state[AppVar.DOWNLOAD] is None, "the browser has the file, so the state drops it"
 
 
 def test_the_axes_are_a_mirrored_triad_in_client_mode_and_the_labelled_marker_in_server_mode(tmp_path: Path) -> None:
@@ -678,3 +688,175 @@ def test_the_axes_are_a_mirrored_triad_in_client_mode_and_the_labelled_marker_in
 
     panel.look(View.RIGHT)
     assert tuple(panel.triad.matrix.GetData())[:12] == pytest.approx((0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0)), "looking down -x: right is +y, up is +z, back is +x"
+
+
+def test_mirror_friendly_skips_an_actor_without_a_mapper_or_input_and_keeps_a_cell_field_mode() -> None:
+    plotter = pv.Plotter(off_screen=True)
+    plotter.renderer.AddActor(vtkActor())
+    empty = vtkActor()
+    empty.SetMapper(vtkPolyDataMapper())
+    plotter.renderer.AddActor(empty)
+    field_mapper = vtkDataSetMapper()
+    field_mapper.SetInputData(_grid())  # pyright: ignore[reportUnknownMemberType]  # overloaded twice in the VTK stubs without @overload
+    field_mapper.SetScalarModeToUseCellFieldData()
+    field_actor = vtkActor()
+    field_actor.SetMapper(field_mapper)
+    plotter.renderer.AddActor(field_actor)
+    blocks = vtkMultiBlockDataSet()
+    blocks.SetBlock(0, _grid())
+    composite = vtkCompositePolyDataMapper()
+    composite.SetInputDataObject(blocks)  # pyright: ignore[reportUnknownMemberType]  # overloaded twice in the VTK stubs without @overload
+    composite_actor = vtkActor()
+    composite_actor.SetMapper(composite)
+    plotter.renderer.AddActor(composite_actor)
+
+    footprint = mirror_friendly(plotter)
+
+    assert isinstance(field_mapper.GetInput(), vtkPolyData) and field_mapper.GetScalarMode() == USE_POINT_FIELD_DATA  # pyright: ignore[reportUnknownMemberType]  # vtkMapper.GetInput is untyped in the VTK stubs
+    assert footprint.cells == SURFACE_CELLS + _grid().n_cells, "a composite leaf that is no polydata is counted as it is"
+    plotter.close()
+
+
+def test_a_wheel_end_without_a_start_lifts_nothing() -> None:
+    async def run() -> None:
+        window = _Window()
+        cap = InteractiveCap(window, "area", scheduler=_Scheduler(window), delay=LIFT)
+
+        cap.on_interaction("client", {"type": "EndMouseWheel"})
+
+        assert not cap.capped and cap.lift_handle is None
+        await cap.close()
+
+    asyncio.run(run())
+
+
+def test_fit_keeps_the_side_a_hostless_rehost_does_nothing_and_a_disposed_panel_has_no_window(tmp_path: Path) -> None:
+    app = _shell("fit", tmp_path)
+    panel = ScenePanel(app, "scene", "Scene", renderable=Volume())
+    panel.look(View.TOP)
+    direction = panel.plotter.renderer.GetActiveCamera().GetDirectionOfProjection()
+
+    panel.fit()
+
+    assert panel.plotter.renderer.GetActiveCamera().GetDirectionOfProjection() == pytest.approx(direction)
+
+    template = _template(app, panel)
+    panel.host = None
+    panel.rehost()
+
+    assert _template(app, panel) == template
+
+    panel.dispose()
+    with pytest.raises(RuntimeError, match="no render window"):
+        _ = panel.window()
+
+
+def test_the_view_events_ignore_what_they_cannot_read_and_log_a_finished_sync_and_the_stream_rate(tmp_path: Path) -> None:
+    app = _shell("events", tmp_path)
+    panel = ScenePanel(app, "scene", "Scene", renderable=Volume())
+    records: list[tuple[str, dict[str, object]]] = []
+
+    sink = log.add(lambda message: records.append((message.record["message"], dict(message.record["extra"]))), level="DEBUG")
+    try:
+        panel.on_camera("not a camera")
+        panel.on_client_size(None)
+        panel.on_progress([])
+        panel.on_progress({"active": True})
+        panel.on_progress({"active": False, "elapsed": 1500.0})
+        panel.on_stats("not stats")
+        panel.on_stats({"fps": 29.6, "bps": 2_000_000})
+        panel.set_mode("server")
+        panel.on_progress({"active": False, "elapsed": 10.0})
+    finally:
+        log.remove(sink)
+
+    synced = [extra for message, extra in records if message == "Scene synced."]
+    rates = [extra for message, extra in records if message == "Stream rate."]
+    assert panel.last_camera is None and panel.canvas is None
+    assert [extra["seconds"] for extra in synced] == [1.5], "a sync still in flight or one the stream made stale is not logged"
+    assert [(extra["fps"], extra["kilobytes"]) for extra in rates] == [(30, 2000)]
+
+
+def test_disposing_a_stream_on_a_running_server_unregisters_its_area_and_holds_the_close(tmp_path: Path) -> None:
+    async def run() -> tuple[list[str], str, bool]:
+        app = _shell("release", tmp_path)
+        panel = ScenePanel(app, "scene", "Scene", mode=ViewMode.SERVER)
+        handler = panel.handler
+        assert handler is not None
+        unregistered: list[str] = []
+        app.ctrl["rc_area_unregister"] = unregistered.append
+        app.loop = asyncio.get_running_loop()
+
+        panel.dispose()
+
+        closing = panel.closing
+        assert closing is not None
+        await closing
+
+        return unregistered, handler.area_name, closing.done()
+
+    unregistered, area, closed = asyncio.run(run())
+
+    assert unregistered == [area] and closed
+
+
+class _Reloader:
+    """Builds on request in place of a watching thread: the first request renders a volume, every later one fails."""
+
+    made: list["_Reloader"] = []
+
+    def __init__(self, target: str, roots: Sequence[Path], apply: Callable[[Renderable, float], None], *, kind: type[object], marshal: object, failed: Callable[[Exception], None]) -> None:
+        self.target = target
+        self.roots = list(roots)
+        self.apply = apply
+        self.failed = failed
+        self.requests = 0
+        self.running = False
+        _Reloader.made.append(self)
+
+    def start(self) -> None:
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+
+    def request(self) -> None:
+        self.requests += 1
+        if self.requests == 1:
+            self.apply(Volume(), 1.5)
+            return
+
+        self.failed(ValueError("broken save"))
+
+
+def test_a_viewer_panel_renders_its_card_names_its_tab_after_it_and_reports_a_broken_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_Reloader, "made", [])
+    monkeypatch.setattr(scene_module, "Reloader", _Reloader)
+    app = _shell("viewer", tmp_path)
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def record(ref: str | None = None, method: str | None = None, *args: object) -> None:
+        calls.append((str(method), args))
+
+    monkeypatch.setattr(app.server, "js_call", record)
+    panel = SceneViewerPanel(app, "viewer", "Viewer", watch=[tmp_path])
+    panel.reload()
+    spec = renderable("volume", "Volume", target=f"{__name__}:Volume")
+
+    panel.show(spec)
+
+    reloader = _Reloader.made[0]
+    assert reloader.running and reloader.target == spec.target and reloader.roots[-1] == tmp_path
+    assert panel.renderable is not None and not panel.fresh and app.state[AppVar.STATUS] == "Volume rendered in 1.5 s"
+    assert ("setTitle", ("viewer", "Viewer: Volume")) in calls
+
+    panel.reload()
+
+    assert app.state[AppVar.STATUS] == "ValueError: broken save"
+
+    app.dock = None
+    calls.clear()
+    panel.retitle("Elsewhere")
+    panel.dispose()
+
+    assert calls == [] and not reloader.running and panel.reloader is None

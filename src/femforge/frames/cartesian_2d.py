@@ -80,6 +80,11 @@ class Cartesian2D(Frame):
         return f"Cartesian 2D normal to {self.normal.label}"
 
     @property
+    def description(self) -> str:
+        """One sentence on what the frame solves, for a reader who has not met it."""
+        return "A section solved in its plane, standing for a prism of the given thickness."
+
+    @property
     def model_dim(self) -> Literal[2, 3]:
         """The mesh dimension this frame solves on."""
         return 2

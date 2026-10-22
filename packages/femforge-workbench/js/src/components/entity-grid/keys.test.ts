@@ -20,17 +20,16 @@ test("other keys and an empty grid move nothing", () => {
   expect(nextFocus("ArrowDown", 0, 0)).toBeNull();
 });
 
-test("Enter and Space select, G toggles the glyph, F frames, S shows and Escape clears", () => {
+test("Enter and Space select, F frames, S shows and Escape clears", () => {
   expect(action("Enter", NONE)).toBe("select");
   expect(action(" ", NONE)).toBe("select");
-  expect(action("g", NONE)).toBe("glyph");
-  expect(action("G", NONE)).toBe("glyph");
   expect(action("f", NONE)).toBe("frame");
   expect(action("F", NONE)).toBe("frame");
   expect(action("s", NONE)).toBe("show");
   expect(action("S", NONE)).toBe("show");
   expect(action("Escape", NONE)).toBe("clear");
   expect(action("x", NONE)).toBeNull();
+  expect(action("g", NONE)).toBeNull();
 });
 
 test("a chord with Ctrl, Meta or Alt is left to the browser", () => {

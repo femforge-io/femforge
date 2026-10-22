@@ -111,6 +111,10 @@ def axis_word(direction: Vec3) -> str:
     return f"{sign}{'XYZ'[coordinate]}"
 
 
+PLANE_STRESS_TIP = "No stress through the thickness, as in a thin plate loaded in its plane."
+PLANE_STRAIN_TIP = "No strain through the thickness, as in a long prism held between rigid ends."
+
+
 class FrameFact(BaseModel):
     """One row of the Setup tab's Frame section: a label and the value it reads."""
 
@@ -121,6 +125,9 @@ class FrameFact(BaseModel):
 
     value: str
     """The row's value, such as ``(0, 0, 5) mm``."""
+
+    tip: str = ""
+    """What the value means, for a value its name does not explain; empty for none."""
 
 
 def least_aligned_world_axis(direction: Vec3) -> Vec3:
@@ -291,6 +298,11 @@ class Frame(ConfigArea, ABC):
 
     @property
     @abstractmethod
+    def description(self) -> str:
+        """One sentence on what the frame solves, for a reader who has not met it."""
+
+    @property
+    @abstractmethod
     def model_dim(self) -> Literal[2, 3]:
         """The mesh dimension this frame solves on."""
 
@@ -395,7 +407,9 @@ class Frame(ConfigArea, ABC):
         if state is None:
             return (pointing, origin, axes)
 
-        return (pointing, origin, axes, FrameFact(label="Plane State", value="Plane Stress" if state else "Plane Strain"))
+        plane_state = FrameFact(label="Plane State", value="Plane Stress" if state else "Plane Strain", tip=PLANE_STRESS_TIP if state else PLANE_STRAIN_TIP)
+
+        return (pointing, origin, axes, plane_state)
 
     def face_measure(self, length: float, centroid: Vec3) -> FrameFact | None:
         """What a boundary group meshed as a line of ``length`` metres at ``centroid`` measures in the whole model; None for a frame that meshes faces as faces.

@@ -4,7 +4,7 @@ import pytest
 
 from femforge.common.vector import Direction, Vec3
 from femforge.frames import Axis, Axisymmetric, Cartesian2D, FrameFact, PlaneState, Solid
-from femforge.frames.base import axis_word
+from femforge.frames.base import PLANE_STRAIN_TIP, PLANE_STRESS_TIP, axis_word
 from femforge.physical.units import quantity
 
 
@@ -22,6 +22,7 @@ def test_a_cartesian_2d_frame_reads_its_plane_thickness_and_state() -> None:
 
     assert _read(frame.facts()) == [("Normal", "(0, 0, 1)"), ("Plane Origin", "(0, 0, 5) mm"), ("Solve X, Y", "+X, +Y"), ("Thickness", "10 mm"), ("Plane State", "Plane Stress")]
     assert frame.face_measure(0.02, Vec3(0.05, 0, 0)) == FrameFact(label="Face Area", value="200 mm² at 10 mm Thickness")
+    assert frame.facts()[-1].tip == PLANE_STRESS_TIP
 
 
 def test_a_plane_strain_frame_off_the_world_axes_reads_its_axes_in_component_form() -> None:
@@ -34,6 +35,7 @@ def test_a_plane_strain_frame_off_the_world_axes_reads_its_axes_in_component_for
         ("Thickness", "10 mm"),
         ("Plane State", "Plane Strain"),
     ]
+    assert frame.facts()[-1].tip == PLANE_STRAIN_TIP
 
 
 def test_an_axisymmetric_frame_reads_its_axis_and_the_revolved_area() -> None:
@@ -49,3 +51,7 @@ def test_an_axisymmetric_frame_reads_its_axis_and_the_revolved_area() -> None:
 @pytest.mark.parametrize(("direction", "expected"), [(Vec3(0, -1, 0), "-Y"), (Vec3(0, 0, 2), "+Z"), (Vec3(0.6, 0.8, 0), "(0.6, 0.8, 0)")])
 def test_an_axis_reads_as_its_signed_world_axis_or_its_components(direction: Vec3, expected: str) -> None:
     assert axis_word(direction) == expected
+
+
+def test_every_frame_says_what_it_solves() -> None:
+    assert all(frame.description.endswith(".") for frame in (Solid(), Axisymmetric(), Cartesian2D(normal=Axis(direction=Direction(0, 0, 1)), thickness=quantity(10, "mm"))))

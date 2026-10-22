@@ -38,11 +38,11 @@ from femforge.run.entities import Body, Boundary, BoundaryKind
 from femforge.run.fields import BC_ID_OFFSET
 from femforge.viz.field_display import DisplaySpec, BodyPaint, BodyStyle
 from femforge.viz.glyphs import (
+    FORWARD_STEP,
     ARROW_FLOOR,
     ARROW_SHARE,
     CIRCLE_SIDES,
     GLYPH_ACTORS,
-    PIN_COUNT,
     PLAIN_BODY,
     EntityKind,
     EntityRef,
@@ -202,6 +202,7 @@ def test_the_shown_diagonal_follows_the_expansion_of_the_section() -> None:
     assert shown_diagonal(bounds, Expansion.SECTION) == pytest.approx(math.hypot(2.0, 1.0))
     assert shown_diagonal(bounds, Expansion.MIRROR) == pytest.approx(math.hypot(4.0, 1.0))
     assert shown_diagonal(bounds, Expansion.REVOLVE) == pytest.approx(math.hypot(4.0, 4.0, 1.0))
+    assert shown_diagonal(bounds, Expansion.EXTRUDE) == shown_diagonal(bounds, Expansion.SECTION), "glyphs keep their size when the section extrudes"
 
 
 def test_a_mirrored_glyph_negates_its_radial_components() -> None:
@@ -385,6 +386,23 @@ def test_a_placement_mirrors_or_revolves_solve_frame_points() -> None:
     assert flat.angles() == (0.0,) and revolve.angles() == pytest.approx((0.0, math.pi / 4, math.pi / 2))
 
 
+def test_an_extruded_placement_lifts_points_to_the_front_face_and_sweeps_lines_through_the_depth() -> None:
+    points = np.array([[1.0, 2.0, 0.0]])
+    segments = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+    extruded = GlyphPlacement(expansion=Expansion.EXTRUDE, depth=0.5, flat=True)
+    revolve = GlyphPlacement(expansion=Expansion.REVOLVE, sweep=90.0, basis=Basis.DEFAULT, flat=True)
+    shallow = GlyphPlacement(expansion=Expansion.EXTRUDE)
+
+    assert extruded.extruded and not shallow.extruded and not revolve.extruded
+    assert np.allclose(extruded.copies(points), [[[1.0, 2.0, 0.25]]]) and np.allclose(extruded.placed(points), points), "the ghost keeps its solve-frame place"
+    assert np.allclose(shallow.front, 0.0)
+    face = extruded.swept_face(segments)
+    assert face is not None and np.allclose(face.points[:, 2], [-0.25, -0.25, 0.25, 0.25])
+    turned = revolve.swept_face(segments)
+    assert turned is not None and len(turned.corners) > 1
+    assert GlyphPlacement(flat=True).swept_face(segments) is None
+
+
 def test_plain_bodies_paint_every_body_grey_and_keep_its_opacity() -> None:
     spec = DisplaySpec(body_styles=(BodyStyle(body="A", paint=BodyPaint.COLORMAP, opacity=0.5),))
 
@@ -462,7 +480,7 @@ def _flexure_scene(frame: Cartesian2D | Axisymmetric | None = None, order: int =
         boundaries=Boundaries(_flexure_boundaries()),
     )
     scene.glyphs = GlyphLayer(glyphs_of(_flexure_conditions(), _flexure_bodies(), _flexure_boundaries(), scene.frame), bodies=_flexure_bodies(), boundaries=_flexure_boundaries(), frame=scene.frame)
-    scene.spec = DisplaySpec(field="displacement", mode=scene.spec.mode, warp=None, streamlines=None)
+    scene.spec = DisplaySpec(field="displacement", mode=scene.spec.mode, warp=None, streamlines=None, expansion=Expansion.SECTION)
 
     return scene
 
@@ -526,7 +544,7 @@ def test_a_flexure_draws_named_glyph_actors_the_mirror_can_serialize() -> None:
     props = plotter.renderer.GetViewProps()
     drawn = [props.GetItemAsObject(index) for index in range(props.GetNumberOfItems())]
 
-    assert names == sorted(["glyph-arrows", "glyph-halos", "glyph-lines", "glyph-marks", "glyph-outline", "glyph-triad", "glyph-labels-labels"])
+    assert names == sorted(["glyph-arrows", "glyph-halos", "glyph-lines", "glyph-marks", "glyph-outline", "glyph-labels-labels"])
     assert len(condition_actors) <= len(GLYPH_ACTORS) == 7
     hovers = _hover_names(plotter)
     assert any(name.startswith(f"{GlyphActor.HOVER}body:") for name in hovers) and any(name.startswith(f"{GlyphActor.HOVER}boundary:") for name in hovers), "every body and boundary carries an outline"
@@ -611,40 +629,48 @@ def test_a_selected_body_gets_an_accent_silhouette_and_fill_and_a_boundary_an_ac
     assert line[0] == pytest.approx(0.1) and line[1] == pytest.approx(0.1)
 
 
-def test_the_outline_and_triad_label_the_solve_axes_by_name() -> None:
+@pytest.mark.parametrize("order", [1, 2])
+def test_an_extruded_flexure_draws_its_glyphs_on_the_front_face_and_its_faces_through_the_depth(order: int) -> None:
     pytest.importorskip("pyvista")
-    from vtkmodules.vtkCommonCore import vtkStringArray
-    from vtkmodules.vtkCommonDataModel import vtkDataSet
+
+    scene = _flexure_scene(order=order)
+    extruded = scene.spec.model_copy(update={"expansion": Expansion.EXTRUDE})
+    plotter = _drawn(scene, GlyphView(selected="boundary:RIGHTFACE"), extruded)
+    front = scene.depth / 2.0
+
+    assert scene.display_dim == 3 and "glyph-lines" not in _glyph_names(plotter), "a held face tints the extruded face, not a line"
+    arrows = _bounds(plotter, GlyphActor.ARROWS)
+    assert (arrows[4] + arrows[5]) / 2.0 == pytest.approx(front), "the arrows sit on the front face, out of the solid"
+    assert _bounds(plotter, GlyphActor.FACES)[4] == pytest.approx(-front) and _bounds(plotter, GlyphActor.FACES)[5] == pytest.approx(front)
+    assert _bounds(plotter, GlyphActor.SELECTION_FILL)[4] == pytest.approx(-front), "a selected boundary fills its face through the depth"
+    hover = _actor(plotter, f"{GlyphActor.HOVER}boundary:RIGHTFACE").GetBounds()
+    assert hover[4] == pytest.approx(-front) and hover[5] > front, "the hover fills the face through the depth and lights the face's arrows"
+    assert _bounds(plotter, GlyphActor.SELECTION_GLYPHS) == pytest.approx(arrows), "the selected face's arrows redraw in the accent"
+    assert _actor(plotter, f"{GlyphActor.HOVER}body:FLEXURE").GetBounds()[5] == pytest.approx(front), "a body outline is the extruded solid's edges"
+
+    plotter = _drawn(scene, GlyphView(selected="body:FLEXURE"), extruded)
+    assert _bounds(plotter, GlyphActor.SELECTION_FILL)[5] == pytest.approx(front), "a selected body fills the solid, not a lifted copy"
+
+
+def test_a_section_draws_its_outline_and_no_axes_of_its_own() -> None:
+    pytest.importorskip("pyvista")
 
     plotter = _drawn(_flexure_scene(), GlyphView(kinds=frozenset()))
-    points = cast("object", _hierarchy(plotter).GetInput())  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
-    assert isinstance(points, vtkDataSet)
-    labels = cast("object", points.GetPointData().GetAbstractArray("labels"))  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
-    assert isinstance(labels, vtkStringArray)
 
-    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["X", "Y"]
     assert _bounds(plotter, GlyphActor.OUTLINE)[1] == pytest.approx(0.1)
-    assert _bounds(plotter, GlyphActor.TRIAD)[3] < 0.0, "the triad sits below the section, so its labels never cover the body"
+    assert _glyph_names(plotter) == ["glyph-outline"], "the corner orientation axes are the only axes"
 
 
-def test_a_revolved_outline_and_triad_draw_over_the_scene_and_name_the_radial_and_axial_axes() -> None:
+def test_a_revolved_outline_draws_over_the_scene() -> None:
     pytest.importorskip("pyvista")
-    from vtkmodules.vtkCommonCore import vtkStringArray
-    from vtkmodules.vtkCommonDataModel import vtkDataSet
     from vtkmodules.vtkRenderingCore import vtkActor2D, vtkPolyDataMapper2D
 
     scene = _flexure_scene(Axisymmetric())
     revolved = scene.spec.model_copy(update={"expansion": Expansion.REVOLVE, "sweep": 360.0})
     plotter = _drawn(scene, GlyphView(kinds=frozenset()), revolved)
-    points = cast("object", _hierarchy(plotter).GetInput())  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
-    assert isinstance(points, vtkDataSet)
-    labels = cast("object", points.GetPointData().GetAbstractArray("labels"))  # pyright: ignore[reportUnknownMemberType]  # the VTK and pyvista stubs leave this partially untyped
-    assert isinstance(labels, vtkStringArray)
 
-    assert [labels.GetValue(index) for index in range(labels.GetNumberOfValues())] == ["Radial", "Axial"]
-    for name in ("glyph-outline", "glyph-triad"):
-        actor = plotter.renderer.actors[name]
-        assert isinstance(actor, vtkActor2D) and isinstance(actor.GetMapper(), vtkPolyDataMapper2D), f"{name} draws over the translucent revolved bodies"
+    actor = plotter.renderer.actors["glyph-outline"]
+    assert isinstance(actor, vtkActor2D) and isinstance(actor.GetMapper(), vtkPolyDataMapper2D), "the outline draws over the translucent revolved bodies"
 
 
 def test_the_outline_and_a_framed_boundary_follow_the_deformed_shape() -> None:
@@ -728,7 +754,7 @@ def test_a_revolved_section_repeats_the_magnet_arrow_every_45_degrees_and_sweeps
     assert _bounds(plotter, GlyphActor.ARROWS)[0] < -0.1, "a mirrored load arrow points the other way"
 
 
-def test_a_3d_held_face_tint_is_lifted_off_the_face_and_pinned() -> None:
+def test_a_3d_held_face_tint_stays_on_the_face_drawn_forward_by_a_depth_offset_and_pinned() -> None:
     pytest.importorskip("pyvista")
     import pyvista as pv
     from femforge.run.entities import Bodies, Boundaries
@@ -748,10 +774,21 @@ def test_a_3d_held_face_tint_is_lifted_off_the_face_and_pinned() -> None:
     scene.glyphs = GlyphLayer(glyphs_of(conditions, bodies, [tip], Solid()), bodies=bodies, boundaries=[tip], frame=Solid())
     scene.spec = DisplaySpec(field="temperature", streamlines=None)
 
-    plotter = _drawn(scene, GlyphView(selected="boundary:TIP"))
-    diagonal = math.sqrt(6.0)
+    from vtkmodules.vtkCommonCore import reference
 
-    assert _bounds(plotter, GlyphActor.FACES)[0] == pytest.approx(2.0 + 1e-3 * diagonal)
+    plotter = _drawn(scene, GlyphView(selected="boundary:TIP"))
+    faces = _actor(plotter, GlyphActor.FACES).GetMapper()
+    fill = _actor(plotter, GlyphActor.SELECTION_FILL)
+
+    assert _bounds(plotter, GlyphActor.FACES)[0] == pytest.approx(2.0) and fill.GetBounds()[0] == pytest.approx(2.0), "tints keep their points on the face"
+    factor, units = reference(0.0), reference(0.0)
+    faces.GetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)  # pyright: ignore[reportArgumentType]  # the VTK stubs type the by-reference outputs as plain floats
+    assert faces.GetResolveCoincidentTopology() == 1 and (factor, units) == FORWARD_STEP, "the tint draws one layer over the face it lies on"
+    fill.GetMapper().GetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)  # pyright: ignore[reportArgumentType]  # the VTK stubs type the by-reference outputs as plain floats
+    assert (factor, units) == tuple(2 * step for step in FORWARD_STEP), "the selection draws over the tint"
+    hover = _actor(plotter, f"{GlyphActor.HOVER}boundary:TIP").GetMapper()
+    hover.GetRelativeCoincidentTopologyLineOffsetParameters(factor, units)  # pyright: ignore[reportArgumentType]  # the VTK stubs type the by-reference outputs as plain floats
+    assert (factor, units) == tuple(3 * step for step in FORWARD_STEP), "the hover, with the face's accent glyphs, draws over the selection"
     assert {"glyph-marks", "glyph-arrows", "glyph-selection-fill"} <= set(_glyph_names(plotter)), "pins, with roller balls for the free axis"
     assert "glyph-outline" not in plotter.renderer.actors, "a solid run has no section to outline"
     assert scene.glyphs.bounds_of(EntityRef(EntityKind.BOUNDARY, "TIP")) == pytest.approx((2.0, 2.0, 0.0, 1.0, 0.0, 1.0))

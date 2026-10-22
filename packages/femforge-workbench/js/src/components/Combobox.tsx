@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -107,9 +107,9 @@ export function Combobox({
         value={item.value}
         keywords={[item.label, ...(item.groups ?? [])]}
         onSelect={() => choose(item.value)}
+        aria-current={item.value === value ? "true" : undefined}
       >
         <Entry item={item} />
-        <CheckIcon className={cn("ml-auto", item.value === value ? "opacity-100" : "opacity-0")} />
       </CommandItem>
     );
   }

@@ -69,7 +69,7 @@ from femforge.viz.glyphs import (
     plain_spec,
 )
 from femforge.viz.scene import Renderable, Scene
-from femforge.viz.symmetry import Basis, Expansion, mirror, revolve, swept_lines
+from femforge.viz.symmetry import Basis, Expansion, Prism, extrude, mirror, revolve, swept_lines
 
 
 __all__ = [
@@ -121,6 +121,8 @@ __all__ = [
     "Scene",
     "Expansion",
     "Basis",
+    "Prism",
+    "extrude",
     "mirror",
     "revolve",
     "swept_lines",

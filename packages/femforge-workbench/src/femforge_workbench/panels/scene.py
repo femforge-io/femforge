@@ -2,7 +2,9 @@
 
 import asyncio
 import copy
+import json
 import math
+import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -12,7 +14,6 @@ from functools import partial, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import platformdirs
 import pyvista as pv
 from trame.widgets import html, rca, react, vtklocal
 from trame_rca.rca import window_wrapper
@@ -37,6 +38,7 @@ from femforge_workbench.registry import WorkbenchSpec
 from femforge_workbench.reload import Reloader, default_roots
 from femforge_workbench.theme import hex_color
 from femforge_workbench.widgets.button import Button
+from femforge_workbench.widgets.icon import Icon, IconName
 from femforge_workbench.widgets.scene import SceneSync
 from femforge_workbench.widgets.tip import Tip
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
@@ -58,6 +60,7 @@ INTERACTIVE_PIXELS = 2_000_000
 LIFT_DELAY = 0.4
 MULTI_SAMPLES = 8
 SCREENSHOT_SCALE = 2
+PNG = "image/png"
 AXES_LINE_WIDTH = 3
 THROTTLE_RATE = 20
 CACHE_BYTES = 512 << 20
@@ -104,9 +107,10 @@ class View(StrEnum):
     FIT = "Fit"
     TOP = "Top"
     BOTTOM = "Bottom"
-    FRONT = "Front"
     RIGHT = "Right"
     LEFT = "Left"
+    FRONT = "Front"
+    BACK = "Back"
     PLANE = "2D"
     ISO = "Iso"
 
@@ -120,6 +124,7 @@ class StateVar(StrEnum):
     MOVE = "move"
     HIGHLIGHTS = "highlights"
     HOVERED = "hovered"
+    AXES = "axes"
 
 
 class StoreKey(StrEnum):
@@ -165,12 +170,33 @@ SIDES: dict[View, tuple[Vector, Vector]] = {
     View.TOP: ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
     View.BOTTOM: ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0)),
     View.FRONT: ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+    View.BACK: ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
     View.RIGHT: ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-    View.LEFT: ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    View.LEFT: ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
     View.PLANE: ((0.0, 0.0, -1.0), (1.0, 0.0, 0.0)),
-    View.ISO: ((1.0, -1.0, 1.0), (0.0, 0.0, 1.0)),
+    View.ISO: ((-0.6, -0.8, 0.5), (0.0, 0.0, 1.0)),
 }
 """The camera direction and up vector of each preset; Fit keeps the current ones."""
+
+VIEW_ICONS: dict[View, IconName] = {
+    View.FIT: "scaling",
+    View.TOP: "arrow-down-to-line",
+    View.BOTTOM: "arrow-up-to-line",
+    View.RIGHT: "arrow-left-to-line",
+    View.LEFT: "arrow-right-to-line",
+    View.FRONT: "view-front",
+    View.BACK: "view-back",
+    View.PLANE: "view-2d",
+    View.ISO: "box",
+}
+"""The icon of each preset: an arrow toward the face a side view looks at, the cube corner of front and back."""
+
+VIEW_GROUPS: tuple[tuple[View, ...], ...] = ((View.FIT,), (View.TOP, View.BOTTOM, View.RIGHT, View.LEFT, View.FRONT, View.BACK), (View.PLANE, View.ISO))
+"""The presets in the toolbar's groups, a divider between groups."""
+
+ICON_BUTTON = "icon-xs"
+TOOL_ICON = "size-4"
+"""A toolbar icon fills 16 px of its 24 px button."""
 
 
 @dataclass(frozen=True)
@@ -590,9 +616,17 @@ class ScenePanel(PanelComponent):
         self.state[self.key(StateVar.MOVE)] = None
         self.state[self.key(StateVar.HIGHLIGHTS)] = {}
         self.state[self.key(StateVar.HOVERED)] = ""
+        self.state[self.key(StateVar.AXES)] = self.axes_shown
+        axes = self.key(StateVar.AXES)
         with html.Div(classes=str(Cls.TOOLBAR), id=self.toolbar_id):
-            for view in View:
-                Button(str(view), size="xs", variant="ghost", on_click=self.callback(partial(self.look, view, glide=True)))
+            for index, group in enumerate(VIEW_GROUPS):
+                if index:
+                    html.Div(classes=str(Cls.TOOLBAR_DIVIDER), aria_hidden=True)
+
+                for view in group:
+                    label = "Fit the model" if view is View.FIT else f"{view} view"
+                    with Tip(content=label), Button(size=ICON_BUTTON, variant="ghost", aria_label=label, on_click=self.callback(partial(self.look, view, glide=True))):
+                        Icon(VIEW_ICONS[view], classes=TOOL_ICON)
 
             html.Span(classes=str(Cls.SPACER))
             html.Span([react.Bind(self.key(StateVar.STATUS))], classes=str(Cls.CAPTION))
@@ -609,10 +643,20 @@ class ScenePanel(PanelComponent):
                 for mode in ViewMode:
                     ToggleGroupItem(title(str(mode)), value=str(mode), classes=str(Cls.TOGGLE))
 
-            with Tip(content="Show or hide the orientation axes"):
-                Button("Axes", size="xs", variant="ghost", on_click=self.callback(self.toggle_axes))
-            with Tip(content="Save the view as a PNG at twice its size"):
-                Button("Screenshot", size="xs", variant="ghost", on_click=self.callback(self.screenshot))
+            with (
+                Tip(content="Orientation axes"),
+                Button(
+                    size=ICON_BUTTON,
+                    variant="ghost",
+                    aria_label="Orientation axes",
+                    aria_pressed=react.Bind(axes),
+                    on_click=self.optimistic(self.set_axes, axes, f"!{axes}", f"[trame.state.get({json.dumps(axes)})]"),
+                ),
+            ):
+                Icon("axis-3d", classes=TOOL_ICON)
+
+            with Tip(content="Download a screenshot"), Button(size=ICON_BUTTON, variant="ghost", aria_label="Download a screenshot", on_click=self.callback(self.screenshot)):
+                Icon("camera", classes=TOOL_ICON)
 
         self.host = html.Div(style=VIEW_STYLE, id=self.view_id)
         with self.host:
@@ -813,7 +857,6 @@ class ScenePanel(PanelComponent):
             megabytes=round(self.footprint.megabytes, 1),
             seconds=round(seconds, 3),
         ).info("Scene prepared for the mirror.")
-        self.status_line(f"{self.footprint.cells:,} cells, {self.footprint.megabytes:.1f} MB")
 
         return Drawn(keep, self.footprint)
 
@@ -998,7 +1041,6 @@ class ScenePanel(PanelComponent):
             megabytes=round(footprint.megabytes, 1),
             seconds=round(elapsed / 1000.0, 3),
         ).info("Scene synced.")
-        self.status_line(f"{footprint.cells:,} cells, {footprint.megabytes:.1f} MB, synced in {elapsed / 1000.0:.2f} s")
 
     def on_stats(self, payload: object) -> None:
         """Shows the stream's delivered frame rate and bandwidth."""
@@ -1008,7 +1050,7 @@ class ScenePanel(PanelComponent):
         stats = cast("Mapping[str, object]", payload)
         fps = cast("float", stats.get(StatsKey.FPS, 0))
         bps = cast("float", stats.get(StatsKey.BPS, 0))
-        self.status_line(f"{fps:.0f} fps, {bps / 1000.0:.0f} KB/s")
+        log.bind(panel=self.id, fps=round(fps), kilobytes=round(bps / 1000.0)).debug("Stream rate.")
 
     def status_line(self, text: str) -> None:
         """The toolbar's caption, flushed so it also lands from outside a handler."""
@@ -1022,7 +1064,14 @@ class ScenePanel(PanelComponent):
 
     def toggle_axes(self) -> None:
         """Shows or hides the orientation axes."""
-        self.axes_shown = not self.axes_shown
+        self.set_axes(not self.axes_shown)
+
+    def set_axes(self, shown: object) -> None:
+        """The Axes button's choice: shows or hides the orientation axes."""
+        self.axes_shown = shown is True
+        with self.state:
+            self.state[self.key(StateVar.AXES)] = self.axes_shown
+
         self.show_axes(self.axes_shown)
         self.push()
 
@@ -1041,18 +1090,20 @@ class ScenePanel(PanelComponent):
         return STILL_SCALE * self.stream_ratio if self.mode is ViewMode.SERVER else self.pixel_ratio
 
     def screenshot(self) -> None:
-        """Saves a PNG of SCREENSHOT_SCALE times the panel, whatever the window is already scaled by, under the user's pictures directory and names it in the status line."""
+        """Hands the browser a PNG of SCREENSHOT_SCALE times the panel, whatever the window is already scaled by, to save in its downloads, and says so in a toast."""
         self.adopt_camera()
         self.triad.align(self.plotter.renderer.GetActiveCamera())
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = Path(platformdirs.user_pictures_dir()) / APP_NAME / f"{self.id}-{stamp}.png"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        name = f"{APP_NAME}-{self.id}-{stamp}.png"
         scale = max(1, round(SCREENSHOT_SCALE / self.window_scale()))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / name
+            _ = self.plotter.screenshot(path, scale=scale)
+            data = path.read_bytes()
 
-        _ = self.plotter.screenshot(path, scale=scale)
-
-        log.bind(path=str(path)).info("Screenshot saved.")
-        self.status(f"screenshot {path}")
+        self.download(name, data, PNG)
+        log.bind(name=name, kilobytes=len(data) // 1024).info("Screenshot handed to the browser.")
+        self.toast(f"Screenshot downloaded: {name}")
 
     def on_visible(self, visible: bool) -> None:
         """Records that the panel has been on screen, which a successor inherits."""

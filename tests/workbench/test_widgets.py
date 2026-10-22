@@ -16,14 +16,21 @@ from trame_server import Server
 
 from femforge_workbench import widgets
 from femforge_workbench.widgets import module
-from femforge_workbench.widgets.dist_hash import source_hash
+from femforge_workbench.widgets.accordion import Accordion
 from femforge_workbench.widgets.button import Button
+from femforge_workbench.widgets.checkbox import Checkbox
+from femforge_workbench.widgets.dist_hash import source_hash
 from femforge_workbench.widgets.dock import Dock
 from femforge_workbench.widgets.element import MODEL, RESERVED, SHARED, Element, Shared, is_event, next_ref, react_name
 from femforge_workbench.widgets.icon import IconName
-from femforge_workbench.widgets.input import Input
+from femforge_workbench.widgets.input import ColorInput, Input, InputGroupInput, Textarea
 from femforge_workbench.widgets.select import Select
+from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.table import Table
+from femforge_workbench.widgets.tabs import Tabs
+from femforge_workbench.widgets.term import Term
+from femforge_workbench.widgets.toggle import Toggle, ToggleGroup
+from femforge_workbench.widgets.tree import Tree
 from tests.workbench.tree import find, prop, props
 
 
@@ -193,6 +200,88 @@ def test_the_model_sugar_binds_the_value_and_writes_it_back_client_side() -> Non
     assert prop(text_node, "onKeyDown") == {"callback": {"js": '$event.key === "Enter" && trame.state.set("wb_name", $event.target.value)'}}
     assert "value" not in props(text_node), "a controlled input would drop keystrokes on the round trip"
     assert prop(text_node, "name") == "wb_name", "Chrome reports an input with neither id nor name as unlabelled"
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "bound", "event"),
+    [
+        (Accordion, "value", "onValueChange"),
+        (Checkbox, "checked", "onCheckedChange"),
+        (Slider, "value", "onValueChange"),
+        (Tabs, "value", "onValueChange"),
+        (Toggle, "pressed", "onPressedChange"),
+        (ToggleGroup, "value", "onValueChange"),
+        (Tree, "value", "onValueChange"),
+    ],
+    ids=["accordion", "checkbox", "slider", "tabs", "toggle", "toggle-group", "tree"],
+)
+def test_every_controlled_wrapper_binds_its_model_and_sets_it_on_change(wrapper: Wrapper, bound: str, event: str) -> None:
+    factory = cast("Callable[..., Element]", wrapper)
+    with DivLayout(_server(f"model-{wrapper.__name__}")):
+        element = factory(model="wb_choice")
+
+    node = cast("dict[str, object]", element.html)
+    assert prop(node, bound) == {"js": "wb_choice"}
+    assert prop(node, event) == {"callback": {"js": 'trame.state.set("wb_choice", $event)'}}
+
+
+def test_the_text_wrappers_seed_from_the_model_and_commit_its_value() -> None:
+    with DivLayout(_server("text-models")):
+        area = Textarea(model="wb_notes")
+        grouped = InputGroupInput(model="wb_query")
+        colour = ColorInput(model="wb_colour")
+
+    commit = {"callback": {"js": 'trame.state.set("wb_notes", $event.target.value)'}}
+    area_node = cast("dict[str, object]", area.html)
+    assert prop(area_node, "defaultValue") == {"js": "wb_notes"} and prop(area_node, "name") == "wb_notes"
+    assert prop(area_node, "onBlur") == commit
+
+    grouped_node = cast("dict[str, object]", grouped.html)
+    assert prop(grouped_node, "defaultValue") == {"js": "wb_query"} and prop(grouped_node, "name") == "wb_query"
+    assert prop(grouped_node, "onKeyDown") == {"callback": {"js": '$event.key === "Enter" && trame.state.set("wb_query", $event.target.value)'}}
+
+    colour_node = cast("dict[str, object]", colour.html)
+    assert prop(colour_node, "value") == {"js": "wb_colour"} and prop(colour_node, "type") == "color"
+    assert prop(colour_node, "onChange") == {"callback": {"js": 'trame.state.set("wb_colour", $event.target.value)'}}
+
+
+def test_the_dock_and_terminal_methods_call_their_js_counterparts(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server("methods")
+    calls: list[tuple[str | None, str | None, tuple[object, ...]]] = []
+
+    def record(ref: str | None = None, method: str | None = None, *args: object) -> None:
+        calls.append((ref, method, args))
+
+    monkeypatch.setattr(server, "js_call", record)
+    with DivLayout(server):
+        dock = Dock()
+        term = Term()
+
+    dock.remove_panel("a")
+    dock.active_panel("b")
+    dock.restore_layout({"grid": {}})
+    dock.move_to("a", "b")
+    dock.set_panel_title("a", "Alpha")
+    dock.maximize("a")
+    dock.restore_maximized()
+    term.write("hi")
+    term.clear()
+    term.fit()
+    term.scroll_to_bottom()
+
+    assert calls == [
+        (dock.reference, "removePanel", ("a",)),
+        (dock.reference, "activePanel", ("b",)),
+        (dock.reference, "restoreLayout", ({"grid": {}},)),
+        (dock.reference, "moveTo", ("a", "b")),
+        (dock.reference, "setTitle", ("a", "Alpha")),
+        (dock.reference, "maximize", ("a",)),
+        (dock.reference, "restoreMaximized", ()),
+        (term.reference, "write", ("hi",)),
+        (term.reference, "clear", ()),
+        (term.reference, "fit", ()),
+        (term.reference, "scrollToBottom", ()),
+    ]
 
 
 def test_the_shared_typed_dict_names_only_trame_shared_props_and_events() -> None:

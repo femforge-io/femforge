@@ -8,9 +8,28 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pytest
 
-from femforge.frames import Axis, Axisymmetric
+from femforge.frames import Axis, Axisymmetric, Cartesian2D, Solid
 from femforge.common.vector import Direction, Vec3
-from femforge.viz.symmetry import Basis, Block, Expansion, Polygons, Surface, VtkCell, mirrored, swept, swept_lines
+from femforge.physical.units import quantity
+from femforge.viz.symmetry import (
+    EXTRUDING,
+    REVOLVING,
+    Basis,
+    Block,
+    Expansion,
+    Polygons,
+    Prism,
+    Surface,
+    VtkCell,
+    extruded,
+    extruded_lines,
+    mirrored,
+    offered,
+    prism_depth,
+    shown_as,
+    swept,
+    swept_lines,
+)
 
 
 if TYPE_CHECKING:
@@ -72,8 +91,30 @@ def _volume(surface: Surface) -> float:
 # --- Expansion / Basis ---------------------------------------------------------
 
 
-def test_only_the_revolve_is_three_dimensional() -> None:
-    assert [expansion.dim for expansion in Expansion] == [2, 2, 3]
+def test_only_the_revolve_and_the_extrusion_are_three_dimensional() -> None:
+    assert [expansion.dim for expansion in Expansion] == [2, 2, 3, 3]
+
+
+def test_each_frame_offers_its_own_forms_and_takes_a_missing_one_as_its_3d_form() -> None:
+    planar = Cartesian2D(thickness=quantity(10, "mm"))
+
+    assert offered(Axisymmetric()) == REVOLVING and offered(planar) == EXTRUDING and offered(Solid()) == ()
+    assert shown_as(planar, Expansion.REVOLVE) is Expansion.EXTRUDE and shown_as(planar, Expansion.MIRROR) is Expansion.EXTRUDE
+    assert shown_as(planar, Expansion.SECTION) is Expansion.SECTION and shown_as(Axisymmetric(), Expansion.EXTRUDE) is Expansion.REVOLVE
+    assert shown_as(Solid(), Expansion.REVOLVE) is Expansion.SECTION
+    assert prism_depth(planar) == pytest.approx(0.01) and prism_depth(Axisymmetric()) == 0.0 and prism_depth(Solid()) == 0.0
+
+
+def test_a_prism_folds_points_to_the_section_and_places_them_back_at_their_depth() -> None:
+    prism = Prism(0.01)
+    points = np.array([[1.0, 2.0, 0.003], [4.0, 5.0, -0.002]])
+
+    section, along = prism.fold(points)
+
+    assert np.allclose(section, [[1.0, 2.0, 0.0], [4.0, 5.0, 0.0]]) and np.allclose(along, [0.003, -0.002])
+    assert np.allclose(prism.place(section, along), points)
+    assert np.allclose(prism.place(section, 0.5)[:, 2], 0.5)
+    assert prism.carry(np.array([[1.0, 2.0, 3.0]]), along) .tolist() == [[1.0, 2.0, 3.0]], "an extrusion turns no vector"
 
 
 def test_the_default_frame_maps_radial_to_x_and_the_axis_to_z() -> None:
@@ -165,6 +206,21 @@ def test_polygons_read_triangles_quads_and_pixels_and_drop_lines() -> None:
     assert [VtkCell(kind).order for kind in (5, 9)] == [[0, 1, 2], [0, 1, 2, 3]]
 
 
+def test_polygons_read_quadratic_cells_by_their_corners() -> None:
+    celltypes = np.array([22, 21, 23, 28], dtype=np.uint8)
+    cells: dict[int, IntArray] = {
+        21: np.array([[0, 1, 2]]),
+        22: np.array([[0, 1, 2, 3, 4, 5]]),
+        23: np.array([[0, 1, 2, 3, 4, 5, 6, 7]]),
+        28: np.array([[8, 9, 10, 11, 4, 5, 6, 7, 12]]),
+    }
+
+    polygons = Polygons.of(cells, celltypes)
+
+    assert [block.corners.tolist() for block in polygons.blocks] == [[[0, 1, 2]], [[0, 1, 2, 3]], [[8, 9, 10, 11]]], "the mid-side nodes are dropped and the quadratic edge with them"
+    assert [block.cells.tolist() for block in polygons.blocks] == [[0], [2], [3]]
+
+
 def test_oriented_reverses_only_clockwise_cells() -> None:
     points = np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]])
     polygons = _polygons([[0, 1, 2], [0, 2, 1]], [[0, 3, 2, 1]])
@@ -204,6 +260,51 @@ def test_mirrored_and_swept_of_no_cells_are_empty() -> None:
 
     assert mirrored(SQUARE, nothing).points.shape == (0, 3)
     assert swept(SQUARE, nothing, Basis.DEFAULT).faces.size == 0
+
+
+# --- extruded ----------------------------------------------------------------------
+
+
+def test_an_extruded_square_is_a_closed_outward_box_centred_on_the_section() -> None:
+    surface = extruded(SQUARE, _polygons([[0, 1, 2, 3]]), 0.5)
+
+    assert len(surface.points) == 8 and np.allclose(surface.points[:, 2], [-0.25] * 4 + [0.25] * 4)
+    assert len(_cells(surface)) == 6 and _volume(surface) == pytest.approx(0.5)
+    assert np.allclose(np.sum(_area_vectors(surface), axis=0), 0.0), "the box closes"
+    assert surface.cell_source.tolist() == [0] * 6 and surface.point_source.tolist() == [0, 1, 2, 3] * 2
+
+
+def test_a_clockwise_cell_still_extrudes_outward_and_values_copy_through_the_depth() -> None:
+    surface = extruded(SQUARE, _polygons([[0, 3, 2, 1]]), 0.5)
+    vectors = np.tile([1.0, 2.0, 3.0], (4, 1))
+
+    assert _volume(surface) == pytest.approx(0.5)
+    assert np.allclose(surface.point_values(vectors), [1.0, 2.0, 3.0]) and np.allclose(surface.cell_values(np.array([[1.0, 2.0, 3.0]])), [1.0, 2.0, 3.0])
+
+
+def test_two_cells_extrude_without_their_shared_edge() -> None:
+    points = np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]])
+
+    surface = extruded(points, _polygons([[0, 1, 2], [0, 2, 3]]), 1.0)
+
+    assert len(_cells(surface)) == 4 + 2 + 2 and _volume(surface) == pytest.approx(1.0)
+
+
+def test_lines_extrude_into_uncapped_quads_and_nothing_extrudes_to_nothing() -> None:
+    surface = extruded_lines(SQUARE, np.array([[0, 1], [1, 2]]), 0.5)
+
+    assert _cells(surface) == [[0, 1, 4, 3], [1, 2, 5, 4]] and surface.cell_source.tolist() == [0, 1]
+    assert np.allclose(surface.points[:, 2], [-0.25] * 3 + [0.25] * 3)
+    assert extruded_lines(SQUARE, np.zeros((0, 2), dtype=np.int64), 0.5).faces.size == 0
+    assert extruded(SQUARE, Polygons(()), 0.5).faces.size == 0
+
+
+def test_an_extrusion_rejects_a_depth_that_is_not_positive() -> None:
+    with pytest.raises(ValueError, match="depth"):
+        _ = extruded(SQUARE, _polygons([[0, 1, 2, 3]]), 0.0)
+
+    with pytest.raises(ValueError, match="depth"):
+        _ = extruded_lines(SQUARE, np.array([[0, 1]]), -1.0)
 
 
 # --- swept -------------------------------------------------------------------------
@@ -412,3 +513,19 @@ def test_revolve_reads_image_data_pixels_as_quads() -> None:
     surface = revolve(image, Basis.DEFAULT, segments=72)
 
     assert surface.area == pytest.approx(12.0 * math.pi, rel=0.01)
+
+
+def test_extrude_keeps_the_body_ids_and_copies_every_array_through_the_depth() -> None:
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    from femforge.viz.symmetry import extrude
+
+    grid = _strip()
+
+    solid = extrude(grid, 0.2)
+
+    assert solid.n_points == 8 and solid.n_cells == 4 + 2 + 2, "the line cell is dropped"
+    assert solid.bounds[4] == pytest.approx(-0.1) and solid.bounds[5] == pytest.approx(0.1)
+    assert np.allclose(np.asarray(solid.point_data["B"]), [1.0, 2.0, 3.0]) and np.asarray(solid.cell_data["GeometryIds"]).tolist() == [1] * 2 + [2] * 2 + [1, 2, 1, 2]
+    assert extrude(pv.UnstructuredGrid([2, 0, 1], [pv.CellType.LINE], SQUARE[:2]), 0.2).n_points == 0

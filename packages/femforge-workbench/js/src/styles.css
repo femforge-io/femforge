@@ -66,6 +66,8 @@
   --status-warning: oklch(0.854 0.171 100.9);
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 10%);
+  --readonly: oklch(0.8 0 0 / 10%);
+  --readonly-foreground: oklch(0.8 0.008 255);
   --ring: var(--primary);
   --chart-1: oklch(0.5768 0.2788 301.56);
   --chart-2: oklch(0.3583 0.1904 285.1854);
@@ -129,6 +131,8 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-readonly: var(--readonly);
+  --color-readonly-foreground: var(--readonly-foreground);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);

@@ -185,7 +185,7 @@ class WorkbenchOutputsPanel(PanelComponent):
                 with ToggleGroupItem(value=react.Bind(f"{TAB}.{TabField.INDEX}")):
                     html.Span([react.Bind(f"{TAB}.{TabField.TITLE}")])
                     with react.If(f"!{TAB}.{TabField.EXISTS}"):
-                        with Tip(content=MISSING_MESSAGE):
+                        with Tip(content=MISSING_MESSAGE, definition=True):
                             html.Span(UNWRITTEN_MARK, classes=str(Cls.CAPTION))
 
             html.Span(classes=str(Cls.SPACER))
