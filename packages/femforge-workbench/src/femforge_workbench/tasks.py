@@ -1226,6 +1226,7 @@ class TaskBoard:
     async def stop(self, running: Running) -> None:
         """Breaks the running task until it exits, kills its tree when it is still there after the grace, then reaps the claim it left."""
         log.bind(**{str(LogKey.TASK): running.label}).info("Stopping the task.")
+        tree = tree_pids(running.process.pid)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + STOP_GRACE_S
         exited = False
@@ -1241,7 +1242,7 @@ class TaskBoard:
             running.process.kill()
             _ = await running.exited.wait()
 
-        await asyncio.to_thread(reap, running, gone=True)
+        await asyncio.to_thread(reap, running, gone=True, tree=tree)
 
     def shutdown(self, grace: float = STOP_GRACE_S) -> None:
         """Stops the board for good: empties the queue, breaks the running task until it exits or `grace` seconds pass, kills what is left, and reaps the claim it left."""
@@ -1261,10 +1262,11 @@ class TaskBoard:
             return
 
         running.stopping = True
+        tree = tree_pids(running.process.pid)
         exited = break_until_exit(running.process, grace)
         running.process.close()
         gone = exited or running.process.wait_for(KILL_WAIT_S)
-        reap(running, gone=gone)
+        reap(running, gone=gone, tree=tree)
         outcome = read_outcome(running.folder / OUTCOME_FILE)
         shutil.rmtree(running.folder, ignore_errors=True)
         if running.label in self.by_label:
@@ -1288,15 +1290,31 @@ def break_until_exit(process: TaskProcess, grace: float) -> bool:
     return False
 
 
-def reap(running: Running, *, gone: bool) -> None:
-    """Breaks the claims a stopped task left on its runs, its own process counted dead once `gone`, so the next run need not wait for them to go stale."""
+def tree_pids(pid: int) -> frozenset[int]:
+    """The ids of a process and every process it started, read before a stop ends them; on Windows a venv's ``python.exe`` is a launcher, and the interpreter holding the claims is its child."""
+    try:
+        children = psutil.Process(pid).children(recursive=True)
+    except psutil.Error:
+        return frozenset({pid})
+
+    return frozenset({pid, *(child.pid for child in children)})
+
+
+def reap(running: Running, *, gone: bool, tree: frozenset[int] = frozenset()) -> None:
+    """Breaks the claims a stopped task left on its runs, so the next run need not wait for them to go stale.
+
+    Args:
+        running: The stopped task.
+        gone: Whether its process tree has exited, so its own processes count as dead.
+        tree: The ids of the processes it started, read before the stop.
+    """
     if running.run_dir is None:
         return
 
     from femforge.run.reap import reap_runs
 
     def alive(pid: int) -> bool:
-        if gone and pid == running.process.pid:
+        if gone and (pid == running.process.pid or pid in tree):
             return False
 
         return psutil.pid_exists(pid)

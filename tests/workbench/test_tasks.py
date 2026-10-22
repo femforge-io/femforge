@@ -14,10 +14,12 @@ from typing import cast
 
 import pytest
 
+import psutil
 import femforge
 import femforge_workbench
 from femforge.common.log import RelayedRecord
 from femforge.run.stages import Stage
+from femforge.artifacts.lock import DirLock
 from femforge_workbench.registry import import_root, target_of
 from femforge_workbench.tasks import (
     OUTCOME_FILE,
@@ -45,6 +47,7 @@ EXPECTED_PHASES = {
     Stage.PREPARE_GEOMETRY: TaskPhase.GEOMETRY,
     Stage.PRE_MESH: TaskPhase.MESHING,
     Stage.MESH: TaskPhase.MESHING,
+    tree_pids,
     Stage.POST_MESH: TaskPhase.MESHING,
     Stage.BUILD_SIM: TaskPhase.SOLVING,
     Stage.CONFIGURE_SIM: TaskPhase.SOLVING,
@@ -677,7 +680,8 @@ def _stop_a_holder(tmp_path: Path, *, deaf: bool, grace: float) -> tuple[float, 
     async def scenario() -> tuple[float, TaskBoard]:
         board = TaskBoard(Host(), "holder:tasks", [Task("Hold", solve_all)], path=str(tmp_path), roots=[tmp_path])
         board.start()
-        await _until(lambda: lock.is_dir() and board.running is not None and board.running.run_dir is not None)
+        # The child writes its owner file just after the claim's mkdir, and only an owned claim can be proven silent.
+        await _until(lambda: DirLock(lock).owner() is not None and board.running is not None and board.running.run_dir is not None)
         started = time.monotonic()
         board.shutdown(grace)
 
@@ -695,6 +699,14 @@ def test_shutdown_lets_a_cooperative_child_release_its_claim(tmp_path: Path) -> 
     assert not lock.exists(), "the child's own cleanup released the claim"
     assert elapsed < 2.0
     assert board.by_label["Hold"].phase is TaskPhase.STOPPED
+
+def test_a_tree_holds_the_process_and_its_children_and_a_gone_process_alone() -> None:
+    gone = psutil.Popen([sys.executable, "-c", "pass"])
+    _ = gone.wait()
+
+    assert os.getpid() in tree_pids(os.getpid())
+    assert tree_pids(gone.pid) == frozenset({gone.pid})
+
 
 
 @pytest.mark.usefixtures("child_env")
