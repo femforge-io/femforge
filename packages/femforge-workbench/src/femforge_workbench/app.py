@@ -1379,7 +1379,7 @@ class Workbench(TrameApp):
     def install_break_handler(self) -> None:
         """Makes a break or termination signal a clean stop, so the exit hooks flush the persisted state; the --dev supervisor stops its child this way."""
         _ = signal.signal(signal.SIGTERM, self.on_break)
-        if sys.platform == "win32":
+        if sys.platform == "win32":  # pragma: no cover - Windows only; SIGBREAK exists on Windows alone
             _ = signal.signal(signal.SIGBREAK, self.on_break)
 
     def on_break(self, signum: int, frame: FrameType | None) -> None:

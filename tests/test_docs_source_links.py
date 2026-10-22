@@ -50,3 +50,9 @@ def test_ref_defaults_to_the_build_commit(monkeypatch: pytest.MonkeyPatch) -> No
     html = render('```python\n--8<-- "a.py"\n```\n', ref=None)
 
     assert f"{REPO}/blob/deadbeef/a.py" in html
+
+
+def test_a_block_after_a_paragraph_gets_a_caption() -> None:
+    html = render('Intro text.\n\n```python\n--8<-- "src/main.py"\n```\n')
+
+    assert f'<a class="ff-source-caption" href="{REPO}/blob/abc123/src/main.py">' in html

@@ -783,3 +783,66 @@ def test_a_save_resubmits_the_edited_plan_and_a_broken_one_keeps_the_rows(tmp_pa
 
     assert edited == ["Second"], "the save listed the edited plan"
     assert kept == ["Second"] and error is not None and error.startswith("SyntaxError"), "a broken save keeps the rows and says why"
+
+
+def _one() -> int:
+    return 1
+
+
+def _reloader(target: str, tmp_path: Path, marshal: Callable[[Callable[[], None]], None]) -> Reloader[Split]:
+    def apply(root: Split, seconds: float) -> None:
+        pass
+
+    return Reloader(target, [tmp_path], apply, kind=Split, marshal=marshal)
+
+
+def _inline(outcome: Callable[[], None]) -> None:
+    outcome()
+
+
+def test_a_namespace_package_has_no_directory_to_watch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "rl_namespace").mkdir()
+    monkeypatch.setattr(sys, "path", [str(tmp_path), *sys.path])
+    monkeypatch.delitem(sys.modules, "rl_namespace", raising=False)
+    try:
+        with pytest.raises(ValueError, match="no package directory"):
+            _ = package_root("rl_namespace.board")
+    finally:
+        _ = sys.modules.pop("rl_namespace", None)
+
+
+def test_a_request_during_a_rebuild_queues_exactly_one_more(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reloader = _reloader(f"{__name__}:_one", tmp_path, _inline)
+    builds: list[bool] = []
+
+    def rebuild() -> None:
+        builds.append(reloader.queued)
+
+    monkeypatch.setattr(reloader, "rebuild", rebuild)
+    reloader.running = True
+
+    reloader.request()
+    reloader.request()
+    reloader.work()
+
+    assert builds == [True, False] and not reloader.running and not reloader.queued
+
+
+def test_a_rebuild_with_no_server_loop_is_dropped(tmp_path: Path) -> None:
+    def gone(outcome: Callable[[], None]) -> None:
+        raise RuntimeError("no running event loop")
+
+    delivered: list[bool] = []
+    reloader = _reloader(f"{__name__}:_one", tmp_path, gone)
+
+    reloader.deliver(lambda: delivered.append(True))
+
+    assert delivered == []
+
+
+def test_a_target_that_is_not_callable_or_builds_the_wrong_kind_is_named(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="TIMEOUT is not callable"):
+        _ = _reloader(f"{__name__}:TIMEOUT", tmp_path, _inline).build()
+
+    with pytest.raises(TypeError, match="returned int, not a Split"):
+        _ = _reloader(f"{__name__}:_one", tmp_path, _inline).build()

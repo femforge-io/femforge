@@ -4,8 +4,11 @@ import asyncio
 import json
 import queue
 import subprocess
+import sys
 import threading
+import types
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
@@ -26,6 +29,7 @@ from femforge.telemetry.journal import JOURNAL_SUFFIX, json_default
 from femforge.telemetry.paths import TELEMETRY_ENV, Telemetry, TelemetryDir
 from femforge.telemetry.schemas import CONVERGENCE_SCHEMA, LOG_SCHEMA, RUN_INDEX_SCHEMA, SWEEP_EVENT_SCHEMA, LogColumn, SweepEventColumn, SweepState
 from femforge.telemetry.sweep import SweepJournal, SweepSummary
+from femforge.telemetry.tap import LiveLogTap
 
 
 pytest.importorskip("trame")
@@ -33,7 +37,7 @@ pytest.importorskip("pyvista")
 
 from trame.app import get_server  # noqa: E402
 
-from femforge_workbench.app import Workbench  # noqa: E402
+from femforge_workbench.app import StateVar as AppVar, Workbench  # noqa: E402
 from femforge_workbench.dock import Split, panels  # noqa: E402
 from femforge_workbench.grid import GROUP_COLUMN, Row  # noqa: E402
 from femforge_workbench.panels import ItemField, Shared  # noqa: E402
@@ -45,6 +49,7 @@ from femforge_workbench.panels.log_browser import (  # noqa: E402
     LogFilters,
     LogVar,
     detail_json,
+    journal_identity,
     journal_rows,
     last_line_time,
     line_time,
@@ -54,8 +59,27 @@ from femforge_workbench.panels.monitors import MonitorPanel, workbench  # noqa: 
 from femforge_workbench.panels.run_monitor import RunMonitorPanel, RunVar, convergence_figure, heartbeat_text, run_items  # noqa: E402
 from femforge_workbench.panels.sweep_monitor import STALLED, FailureField, PointRow, SweepMonitorPanel, SweepVar, default_sweep, failure_items, point_rows, progress, sweep_items, traceback_of  # noqa: E402
 from femforge_workbench.panels import terminal  # noqa: E402
-from femforge_workbench.panels.terminal import EXITED, LOCAL_LABEL, Mode, PtyBridge, Target, TerminalPanel, TerminalVar, attach_targets  # noqa: E402
+from femforge_workbench.panels.terminal import (  # noqa: E402
+    EXITED,
+    LOCAL_LABEL,
+    POSIX_SHELL,
+    SHELL_ENV,
+    WINDOWS_SHELLS,
+    LevelColor,
+    Mode,
+    PtyBridge,
+    Target,
+    TerminalPanel,
+    TerminalVar,
+    WinPty,
+    attach_targets,
+    colored,
+    local_shell,
+    pty_spawner,
+    run_command,
+)
 from femforge_workbench.persist import LocalJsonStore  # noqa: E402
+from femforge_workbench.process_tree import ProcessTree  # noqa: E402
 from femforge_workbench.registry import MONITORS, resolve  # noqa: E402
 from femforge.run.result import LifecycleStatus
 from tests.workbench.tree import find, prop  # noqa: E402
@@ -578,6 +602,199 @@ def test_a_host_without_a_pty_mirrors_the_log_and_locks_the_target_picker(tmp_pa
     assert str(app.state[panel.key(TerminalVar.STATUS)]).startswith("no pty available")
 
 
+class FakeProcess:
+    """A pywinpty process that records what the wrapper asks of it."""
+
+    pid: int | None = 7
+
+    def __init__(self, argv: list[str], dimensions: tuple[int, int]) -> None:
+        self.argv = argv
+        self.dimensions = dimensions
+        self.calls: list[str] = []
+
+    @classmethod
+    def spawn(cls, argv: list[str], dimensions: tuple[int, int]) -> "FakeProcess":
+        return cls(argv, dimensions)
+
+    def read(self, size: int) -> str:
+        return "x" * min(size, 3)
+
+    def write(self, s: str) -> int:
+        self.calls.append(s)
+
+        return len(s)
+
+    def setwinsize(self, rows: int, cols: int) -> None:
+        self.calls.append(f"{rows}x{cols}")
+
+    def isalive(self) -> bool:
+        return True
+
+    def close(self, force: bool = False) -> None:
+        self.calls.append(f"close force={force}")
+        raise OSError("already closed")
+
+
+class PidlessProcess(FakeProcess):
+    """A pywinpty process that reported no pid."""
+
+    pid: int | None = None
+
+
+@dataclass
+class FakeTree(ProcessTree):
+    """A process tree that records the kill and the close instead of signalling."""
+
+    calls: list[str] = field(default_factory=list)
+
+    def kill(self, grace: float = 0.0) -> int:
+        self.calls.append("kill")
+
+        return 2
+
+    def close(self) -> None:
+        self.calls.append("close")
+
+
+def test_win_pty_drives_the_pywinpty_process_and_terminating_kills_its_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = types.ModuleType("winpty")
+    monkeypatch.setattr(module, "PtyProcess", FakeProcess, raising=False)
+    monkeypatch.setitem(sys.modules, "winpty", module)
+    trees: list[FakeTree] = []
+
+    def adopt(pid: int) -> FakeTree:
+        trees.append(FakeTree(pid))
+
+        return trees[-1]
+
+    monkeypatch.setattr(ProcessTree, "adopt", adopt)
+
+    pty = WinPty.spawn(["shell.exe"], 24, 80)
+    process = cast("FakeProcess", pty.process)
+
+    assert (process.argv, process.dimensions) == (["shell.exe"], (24, 80))
+    assert pty.read(10) == "xxx" and pty.write("dir") == 3 and pty.isalive()
+
+    pty.setwinsize(30, 100)
+    pty.terminate()
+
+    assert process.calls == ["dir", "30x100", "close force=True"]
+    assert pty.tree is trees[0] and trees[0].pid == 7 and trees[0].calls == ["kill", "close"]
+
+    monkeypatch.setattr(module, "PtyProcess", PidlessProcess)
+    pidless = WinPty.spawn(["shell.exe"], 24, 80)
+    pidless.terminate()
+
+    assert pidless.tree is None and cast("FakeProcess", pidless.process).calls == ["close force=True"]
+
+
+def test_the_platform_picks_the_pty_spawner_and_the_local_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "platform", "win32")
+        patch.setitem(sys.modules, "winpty", types.ModuleType("winpty"))
+        found = pty_spawner()
+        patch.setitem(cast("dict[str, object]", sys.modules), "winpty", None)
+        missing = pty_spawner()
+        pwsh = local_shell(which=lambda name: f"C:/{name}" if name == WINDOWS_SHELLS[0] else None)
+        fallback = local_shell(which=lambda _: None)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "platform", "linux")
+        patch.setenv(SHELL_ENV, "/bin/zsh")
+        posix = pty_spawner()
+        zsh = local_shell()
+        patch.delenv(SHELL_ENV)
+        bash = local_shell()
+
+    assert found == WinPty.spawn and missing is None and posix is None
+    assert pwsh == (f"C:/{WINDOWS_SHELLS[0]}",) and fallback == (WINDOWS_SHELLS[-1],)
+    assert zsh == ("/bin/zsh",) and bash == (POSIX_SHELL,)
+
+
+def test_run_command_returns_the_stdout_of_a_command() -> None:
+    assert run_command([sys.executable, "-c", "print(42)"]).strip() == "42"
+
+
+def test_level_colors_paint_each_level_and_an_unknown_one_as_info() -> None:
+    assert LevelColor.of("warning") == "33" and LevelColor.of("debug") == "90" and LevelColor.of("custom") == LevelColor.INFO.value
+    assert colored("hot", "31") == "\x1b[31mhot\x1b[0m"
+
+
+def _js_calls(app: Workbench, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, tuple[object, ...]]]:
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def js_call(ref: str | None = None, method: str | None = None, *args: object) -> None:
+        calls.append((str(method), args))
+
+    monkeypatch.setattr(app.server, "js_call", js_call)
+
+    return calls
+
+
+def test_the_mirror_terminal_paints_the_tap_follows_visibility_and_lists_targets_on_first_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _shell("terminal-tap", tmp_path)
+    calls = _js_calls(app, monkeypatch)
+    monkeypatch.setattr(terminal, "pty_spawner", lambda: None)
+    docker = Target(f"docker {CONTAINER_PREFIX}abc", ("docker",))
+    panel = TerminalPanel(app, "terminal", "Terminal", targets=lambda: [Target(LOCAL_LABEL, ("shell.exe",)), docker], tap=LiveLogTap())
+    mirror = panel.mirror
+    assert mirror is not None
+
+    panel.deliver("dropped while the server is down")
+    panel.start()
+    panel.mirror_rows([{LogColumn.TIME: "12:00", LogColumn.LEVEL: "WARNING", LogColumn.MESSAGE: "hot"}, {LogColumn.TIME: "12:01", LogColumn.MESSAGE: "plain"}])
+
+    assert panel.bridge is None
+    assert calls == [
+        ("write", (colored("12:00 WARNING  hot", "33") + "\r\n",)),
+        ("write", (colored("12:01 INFO     plain", "37") + "\r\n",)),
+    ]
+
+    async def run() -> tuple[bool, bool, list[str]]:
+        panel.on_visible(True)
+        shown = mirror.running
+        panel.on_visible(False)
+        hidden = mirror.running
+        app.loop = asyncio.get_running_loop()
+        panel.on_opened()
+        panel.on_opened()
+        await _until(lambda: len(panel.targets) == 2)
+        app.loop = None
+
+        return shown, hidden, [target.label for target in panel.targets]
+
+    shown, hidden, labels = asyncio.run(run())
+
+    assert shown and not hidden and labels == [LOCAL_LABEL, docker.label]
+    assert [method for method, _ in calls[2:]] == ["fit", "fit", "fit"]
+
+    panel.on_layout_changed()
+    panel.dispose()
+
+    assert calls[-1][0] == "fit" and not mirror.running
+
+
+def test_a_started_terminal_ignores_a_second_start_and_a_malformed_resize(tmp_path: Path) -> None:
+    app = _shell("terminal-restart", tmp_path)
+    fake = FakePty()
+    spawned: list[tuple[str, ...]] = []
+
+    def spawn(argv: Sequence[str], rows: int, cols: int) -> FakePty:
+        spawned.append(tuple(argv))
+
+        return fake
+
+    panel = TerminalPanel(app, "terminal", "Terminal", spawn=spawn, targets=lambda: [Target(LOCAL_LABEL, ("shell.exe",))])
+    panel.start()
+    panel.start()
+    panel.on_resize({"cols": "wide", "rows": 30})
+    panel.on_visible(True)
+    panel.dispose()
+
+    assert spawned == [local_shell()] and panel.size == (80, 24)
+    assert fake.sizes == [] and not fake.alive and panel.bridge is None
+
+
 # --- The dock ------------------------------------------------------------------
 
 
@@ -802,3 +1019,54 @@ def test_the_log_browser_filters_the_store_and_follows_the_journals_and_the_tap_
     assert [message for message in messages if message.startswith("from another process")] == [f"from another process {index}" for index in range(4)]
     assert "from the workbench itself" in messages
     assert shown == len(messages)
+
+
+def test_journal_lines_and_names_that_are_not_records_read_as_none() -> None:
+    assert line_time(json.dumps([1, 2])) is None
+    assert journal_identity(Path("notes.jsonl")) is None
+    assert journal_identity(Path(f"{TelemetryDir.LOGS}-{HOST}-{DEAD_PID}{JOURNAL_SUFFIX}")) == (HOST, DEAD_PID)
+
+
+def test_the_monitors_without_a_selection_report_a_failed_query_show_a_pick_and_dispose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(TELEMETRY_ENV, str(tmp_path / "telemetry"))
+    app = _shell("monitors-edges", tmp_path)
+    app.add(workbench())
+    monitor = app.panel(MonitorPanel.RUN_MONITOR, RunMonitorPanel)
+    sweeps = app.panel(MonitorPanel.SWEEP_MONITOR, SweepMonitorPanel)
+    browser = app.panel(MonitorPanel.LOG_BROWSER, LogBrowserPanel)
+
+    assert monitor.poll().status == "" and monitor.watch is None
+    assert monitor.locate("") is None and monitor.locate(RUN_ID) is None
+
+    monitor.solver_lines.extend(["first", "second"])
+    monitor.on_tail()
+    monitor.on_layout_changed()
+
+    assert monitor.tail.text() == "first\nsecond"
+    assert sweeps.poll().sweep_id == ""
+
+    sweeps.latest = _latest()
+    sweeps.pick({PointRow.STATE: SweepState.FAILED.value, PointRow.KEY: "p5"})
+
+    assert app.state[sweeps.key(SweepVar.TRACEBACK)] == TRACE
+
+    sweeps.pick({PointRow.STATE: SweepState.DONE.value, PointRow.KEY: "p1"})
+
+    assert app.state[sweeps.key(SweepVar.TRACEBACK)] == ""
+
+    def locked() -> pl.DataFrame:
+        raise RuntimeError("store locked")
+
+    monkeypatch.setattr(browser, "query", locked)
+    asyncio.run(browser.reload())
+    row: Row = {LogColumn.EXTRA: json.dumps({"elements": 12})}
+    browser.pick(row)
+
+    assert app.state[AppVar.STATUS] == "RuntimeError: store locked"
+    assert app.state[browser.key(LogVar.DETAIL)] == detail_json(row)
+
+    monitor.dispose()
+    sweeps.dispose()
+    browser.dispose()
+
+    assert not monitor.feed.running and not sweeps.feed.running and not browser.feed.running

@@ -11,6 +11,7 @@ import pytest
 from femforge.elmer.physics import Physics
 from femforge.elmer.sections import SifSection
 from femforge.physical.conditions import Condition, CoilTerminal, FixedTemperature, Magnetization, shipped_conditions
+from femforge_docs import conditions
 from femforge_docs.conditions import (
     PHYSICS,
     FieldDoc,
@@ -245,3 +246,10 @@ def test_field_doc_keeps_a_plain_docstring_as_its_meaning(condition: type[Condit
     doc = condition.model_fields[name].description or ""
 
     assert field_doc(doc) == FieldDoc(None, None, doc)
+
+
+def test_a_condition_no_frame_solves_has_no_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(conditions, "_frames", tuple)
+
+    with pytest.raises(ValueError, match="No selectable physics solves"):
+        _ = home(FixedTemperature)
