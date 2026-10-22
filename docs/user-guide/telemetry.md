@@ -90,13 +90,7 @@ from femforge.telemetry import LogColumn
 
 telemetry = ff.Telemetry("telemetry")
 
-errors = (
-    telemetry.logs.scan()
-    .filter(pl.col(LogColumn.LEVEL) == "ERROR")
-    .group_by(LogColumn.PROCESS)
-    .len()
-    .collect()
-)
+errors = telemetry.logs.scan().filter(pl.col(LogColumn.LEVEL) == "ERROR").group_by(LogColumn.PROCESS).len().collect()
 print(errors)
 ```
 
