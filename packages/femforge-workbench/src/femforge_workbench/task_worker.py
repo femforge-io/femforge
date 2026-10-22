@@ -12,7 +12,7 @@ from femforge_workbench.registry import resolve
 from femforge_workbench.tasks import WORKER_MODULE, TaskDone, TaskExit, TaskFailed, TaskJob, plan_of
 
 
-if sys.platform == "win32":
+if sys.platform == "win32":  # pragma: no cover - Windows only; SIGBREAK exists on Windows alone
     BREAK_SIGNUM = signal.SIGBREAK
     """The signal the board's break arrives as: CTRL_BREAK_EVENT is SIGBREAK on Windows."""
 else:

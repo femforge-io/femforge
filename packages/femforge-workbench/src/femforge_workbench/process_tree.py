@@ -23,7 +23,7 @@ CREATION_FLAGS: Final = 0x00000004 if WINDOWS else 0
 NEW_SESSION: Final = not WINDOWS
 """start_new_session for Popen: on POSIX the child leads a process group of its own, whose id is its pid."""
 
-if sys.platform == "win32":
+if sys.platform == "win32":  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
     BREAK_SIGNAL = signal.CTRL_BREAK_EVENT
     NEW_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
     """The child gets its own console group, so the break reaches it and not its parent."""
@@ -89,23 +89,43 @@ class _BasicAccounting(ctypes.Structure):
 
 
 @cache
-def _kernel32() -> "ctypes.WinDLL":
+def _kernel32() -> "ctypes.WinDLL":  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
     """The kernel32 bindings, loaded on first use so the module imports on every platform."""
     return ctypes.WinDLL("kernel32", use_last_error=True)
 
 
-def _win32(name: str, *args: object) -> int:
+def _win32(name: str, *args: object) -> int:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
     """Calls a kernel32 function and returns its result."""
     return cast("int", getattr(_kernel32(), name)(*args))
 
 
-def _checked(name: str, *args: object) -> int:
+def _checked(name: str, *args: object) -> int:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
     """Calls a kernel32 function that reports failure with a zero result and raises the Win32 error for it."""
     result = _win32(name, *args)
     if not result:
         raise ctypes.WinError(ctypes.get_last_error(), name)
 
     return result
+
+
+def _job_of(pid: int) -> int:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
+    """Puts a suspended process into a new job that kills it with the job's last handle, lets it run, and returns the job."""
+    process = _checked("OpenProcess", _SET_QUOTA_AND_TERMINATE, False, pid)
+    try:
+        job = _checked("CreateJobObjectW", None, None)
+        limits = _ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
+        _ = _checked("SetInformationJobObject", job, _EXTENDED_LIMITS, ctypes.byref(limits), ctypes.sizeof(limits))
+        _ = _checked("AssignProcessToJobObject", job, process)
+    except OSError:
+        _ = _win32("TerminateProcess", process, 1)
+        raise
+    finally:
+        _ = _win32("CloseHandle", process)
+
+    psutil.Process(pid).resume()
+
+    return job
 
 
 @dataclass(slots=True)
@@ -121,32 +141,17 @@ class ProcessTree:
     @classmethod
     def adopt(cls, pid: int) -> "ProcessTree":
         """Takes a process spawned with `CREATION_FLAGS` and `NEW_SESSION`: into a new job and let run on Windows, checked to lead its own group elsewhere."""
-        if not WINDOWS:
-            if os.getpgid(pid) != pid:
-                raise ValueError(f"process {pid} does not lead its own group")
+        if WINDOWS:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
+            return cls(pid, _job_of(pid))
 
-            return cls(pid)
+        if os.getpgid(pid) != pid:
+            raise ValueError(f"process {pid} does not lead its own group")
 
-        process = _checked("OpenProcess", _SET_QUOTA_AND_TERMINATE, False, pid)
-        try:
-            job = _checked("CreateJobObjectW", None, None)
-            limits = _ExtendedLimits()
-            limits.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
-            _ = _checked("SetInformationJobObject", job, _EXTENDED_LIMITS, ctypes.byref(limits), ctypes.sizeof(limits))
-            _ = _checked("AssignProcessToJobObject", job, process)
-        except OSError:
-            _ = _win32("TerminateProcess", process, 1)
-            raise
-        finally:
-            _ = _win32("CloseHandle", process)
-
-        psutil.Process(pid).resume()
-
-        return cls(pid, job)
+        return cls(pid)
 
     def kill(self, grace: float = KILL_GRACE) -> int:
         """Ends every process in the tree and returns how many there were; POSIX asks first and kills what is left after `grace` seconds, Windows has no gentle signal."""
-        if WINDOWS:
+        if WINDOWS:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
             accounting = _BasicAccounting()
             _ = _checked("QueryInformationJobObject", self.job, _BASIC_ACCOUNTING, ctypes.byref(accounting), ctypes.sizeof(accounting), None)
             _ = _checked("TerminateJobObject", self.job, 1)
@@ -172,10 +177,11 @@ class ProcessTree:
     def interrupt(self) -> bool:
         """Sends `BREAK_SIGNAL` to the tree's process group, which a child spawned with `NEW_GROUP` leads; False when it cannot be sent, as without a console."""
         try:
-            if WINDOWS:
+            if WINDOWS:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
                 os.kill(self.pid, BREAK_SIGNAL)
-            else:
-                os.killpg(self.pid, BREAK_SIGNAL)
+                return True
+
+            os.killpg(self.pid, BREAK_SIGNAL)
         except OSError:
             return False
 
@@ -183,7 +189,7 @@ class ProcessTree:
 
     def close(self) -> None:
         """Ends anything still in the tree and releases it: a job dies with its handle, a group gets SIGKILL."""
-        if WINDOWS:
+        if WINDOWS:  # pragma: no cover - Windows only; the real-process task tests prove it on Windows
             _ = _win32("CloseHandle", self.job)
 
             return

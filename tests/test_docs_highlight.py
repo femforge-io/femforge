@@ -73,3 +73,9 @@ TAGS = last_tag_per_word()
 )
 def test_words_take_their_role(word: str, expected: _TokenType) -> None:
     assert TAGS[word] is expected
+
+
+def test_a_trailing_name_with_nothing_after_it_is_a_variable() -> None:
+    lexer = get_lexer_by_name("python", filters=[SemanticNames()])
+
+    assert [ttype for ttype, value in lexer.get_tokens("width") if value == "width"] == [Name.Variable]

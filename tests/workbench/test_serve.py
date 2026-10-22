@@ -1,16 +1,17 @@
 """Serving a workbench: a bare Split, a factory rebuilt on save, a card, the launcher, the window it opens in, and the command's hand-over."""
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from femforge.common.log import log
+from femforge.common.log import TELEMETRY_ENV, log
 from femforge_workbench.dock import Split
 from femforge_workbench.persist import LocalJsonStore
-from femforge_workbench.registry import DEMO, LAUNCHER, WorkbenchSpec, discover, panel, script
+from femforge_workbench.registry import DEMO, LAUNCHER, WorkbenchSpec, discover, panel, renderable, script
 from tests.workbench.tree import find, prop
 
 
@@ -278,3 +279,26 @@ def test_the_board_stops_when_the_server_fails(tmp_path: Path, monkeypatch: pyte
         show(bearing_seat, tasks=solves, persist=tmp_path)
 
     assert len(stopped) == 1
+
+
+def test_a_telemetry_root_is_exported_to_the_panels(served: Served, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(TELEMETRY_ENV, "elsewhere")
+
+    show(demo(), telemetry=tmp_path / "telemetry", persist=tmp_path)
+
+    assert os.environ[TELEMETRY_ENV] == str(tmp_path / "telemetry")
+
+
+def test_a_renderable_card_opens_in_a_scene_panel_that_stops_with_the_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped: list[SceneViewerPanel] = []
+
+    def stop(self: SceneViewerPanel) -> None:
+        stopped.append(self)
+
+    monkeypatch.setattr(SceneViewerPanel, "stop", stop)
+
+    app = build(renderable("stopping-sphere", "Sphere", target=sphere), catalogue=[], persist=LocalJsonStore(tmp_path))
+    _ = app.ctrl.on_server_exited()
+
+    assert [panel.id for panel in app.panels] == [VIEWER_PANEL]
+    assert stopped == [app.panels[0]]

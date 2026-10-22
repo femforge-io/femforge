@@ -11,7 +11,7 @@ import polars as pl
 import psutil
 import pytest
 
-from femforge_workbench.registry import DEMO, LAUNCHER, OutputKind, OutputSpec, WorkbenchKind, panel, script
+from femforge_workbench.registry import DEMO, LAUNCHER, OutputKind, OutputSpec, WorkbenchKind, WorkbenchSpec, panel, renderable, script
 from femforge_workbench.process_tree import CREATION_FLAGS, NEW_SESSION, ProcessTree
 from femforge_workbench.runner import ScriptRunner, ScriptRun, ScriptField, ScriptStatus
 from tests.workbench.tree import find, prop, texts
@@ -358,3 +358,117 @@ def test_the_launcher_cards_group_the_catalogue_without_itself_and_render_throug
     assert len(find(template, "ff-card")) == 1 and [prop(node, "name") for node in find(template, "ff-icon")] == ["refresh-cw"]
     assert select(None, None) is LAUNCHER
     assert {fn for fn in panel.bound} >= {panel.on_open, panel.on_close, panel.on_run, panel.on_stop, panel.on_outputs, panel.on_reload, panel.push}
+
+
+def _recording(app: Workbench, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+
+    def js_call(ref: str | None = None, method: str | None = None, *args: object) -> None:
+        calls.append(str(method))
+
+    monkeypatch.setattr(app.server, "js_call", js_call)
+
+    return calls
+
+
+def test_the_log_panel_scrolls_to_the_end_after_a_clear_and_replays_to_a_mounting_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _shell("log-follow", tmp_path)
+    calls = _recording(app, monkeypatch)
+    panel = LogPanel(app, "log", "Log")
+
+    panel.flush()
+
+    assert calls == [] and app.state[panel.key(LogVar.COUNT)] == 0
+
+    panel.write("one")
+    panel.clear()
+    panel.write("two")
+    panel.flush()
+
+    assert not panel.follow and app.state[panel.key(LogVar.COUNT)] == 1
+    assert calls == ["clear", "write", "scrollToBottom"]
+
+    calls.clear()
+    panel.scroll_bottom()
+    panel.on_opened()
+    panel.on_visible(False)
+    panel.on_visible(True)
+
+    assert calls == ["scrollToBottom", "write", "fit", "fit"]
+
+
+def test_the_launcher_cards_open_run_stop_reload_and_close_through_their_buttons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    note = tmp_path / "notes.md"
+    _ = note.write_text("# hi", encoding="utf-8")
+    platform = script("platform", "Platform", target="platform", outputs=[OutputSpec.at(note)])
+    broken = script("broken", "Broken", target="platform", cwd=tmp_path / "missing")
+    preview = renderable("preview", "Preview", target="lab.preview:build")
+    app = _shell("cards", tmp_path, server="launcher-cards")
+    app.catalogue.extend([platform, broken, preview])
+    app.add(launcher())
+    panel = app.panel(LauncherPanelId.LAUNCHER, LauncherPanel)
+    scene = panel.scene
+    shown: list[str] = []
+    reloaded: list[str] = []
+
+    def show(spec: WorkbenchSpec) -> None:
+        shown.append(spec.name)
+
+    monkeypatch.setattr(scene, "show", show)
+    monkeypatch.setattr(scene, "reload", lambda: reloaded.append(scene.id))
+
+    panel.on_open("nope")
+
+    assert str(app.state[AppVar.STATUS]).startswith("KeyError")
+
+    panel.open(preview)
+    panel.on_reload("preview")
+    scene.spec = preview
+    panel.on_reload("preview")
+
+    assert shown == ["preview", "preview"] and reloaded == [str(LauncherPanelId.SCENE)]
+
+    panel.on_open(DEMO.name)
+
+    assert app.state[AppVar.OPENED] == [DEMO.name]
+
+    panel.on_close(DEMO.name)
+
+    assert app.state[AppVar.OPENED] == [] and app.state[AppVar.STATUS] == "Demo closed"
+
+    panel.on_outputs("platform")
+
+    assert panel.outputs.spec == platform
+    with pytest.raises(ValueError, match="not a script"):
+        panel.run(preview)
+
+    async def run() -> str:
+        panel.on_run("platform")
+        _ = await asyncio.wait_for(panel.jobs["platform"], TIMEOUT)
+        panel.open(broken)
+        _ = await asyncio.wait([panel.jobs["broken"]], timeout=TIMEOUT)
+        await asyncio.sleep(0)
+        failure = str(app.state[AppVar.STATUS])
+
+        def busy(name: str) -> bool:
+            return name == "platform"
+
+        monkeypatch.setattr(panel.runner, "running", busy)
+        panel.on_run("platform")
+        running = str(app.state[AppVar.STATUS])
+        panel.on_stop("platform")
+        _ = await asyncio.gather(*list(panel.stops))
+
+        return f"{failure}|{running}|{app.state[AppVar.STATUS]}"
+
+    failure, running, stopping = asyncio.run(run()).split("|")
+    lines = panel.log.text().splitlines()
+
+    assert "Error" in failure and "broken" not in panel.runner.tasks
+    assert running == "Platform is running" and stopping == "stopping platform" and panel.stops == set()
+    assert lines[0].startswith("\x1b[1m>>> platform (pid ") and lines[-1] == "\x1b[1m<<< platform done (exit 0)\x1b[0m" and len(lines) > 2
+    assert app.state[panel.key(LauncherVar.TASKS)] == panel.runner.rows() and app.state[panel.key(LauncherVar.CAPTION)] == "8 workbenches"
+
+    panel.push()
+
+    assert app.state[panel.key(LauncherVar.CAPTION)] == "8 workbenches"

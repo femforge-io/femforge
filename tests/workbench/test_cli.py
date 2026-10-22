@@ -1,12 +1,17 @@
-"""The femforge-workbench parser reads every documented flag into Options."""
+"""The femforge-workbench parser reads every documented flag into Options, and the command picks the card and the dev supervisor."""
+
+from collections.abc import Sequence
 
 import pytest
 
 
 pytest.importorskip("trame")
 
+from femforge_workbench import cli  # noqa: E402
 from femforge_workbench.app import Window  # noqa: E402
-from femforge_workbench.cli import Options, build_parser  # noqa: E402
+from femforge_workbench.cli import CliError, Options, build_parser, select  # noqa: E402
+from femforge_workbench.dev import DEV_FLAG  # noqa: E402
+from femforge_workbench.registry import CLI_MODULE, discover, legacy  # noqa: E402
 from femforge_workbench.serve import DEFAULT_PORT  # noqa: E402
 
 
@@ -42,3 +47,31 @@ def test_options_without_window_flags_open_a_browser_tab() -> None:
     options, _ = build_parser().parse_known_args([], Options())
 
     assert options.window is Window.BROWSER
+
+
+def test_a_module_without_an_attribute_opens_its_main() -> None:
+    assert select(None, "lab.viewer") == legacy("lab.viewer")
+
+
+def test_an_unknown_name_lists_the_known_ones(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "discover", lambda: discover([]))
+
+    with pytest.raises(CliError, match="unknown workbench 'nope'; known: .*demo"):
+        _ = select("nope", None)
+
+
+def test_dev_hands_the_command_line_to_the_supervisor(monkeypatch: pytest.MonkeyPatch) -> None:
+    supervised: list[tuple[str, Sequence[str]]] = []
+
+    def supervise(module: str, argv: Sequence[str]) -> None:
+        supervised.append((module, argv))
+
+    def keep_logging(**_: object) -> None:
+        return None
+
+    monkeypatch.setattr(cli, "supervise", supervise)
+    monkeypatch.setattr(cli, "setup_logging", keep_logging)
+
+    cli.main(["demo", DEV_FLAG])
+
+    assert supervised == [(CLI_MODULE, ["demo", DEV_FLAG])]

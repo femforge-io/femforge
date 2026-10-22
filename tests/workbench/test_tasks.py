@@ -6,23 +6,30 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
+import psutil
 import pytest
 
-import psutil
 import femforge
 import femforge_workbench
-from femforge.common.log import RelayedRecord
-from femforge.run.stages import Stage
 from femforge.artifacts.lock import DirLock
+from femforge.common.log import RelayedRecord
+from femforge.run import reap as reap_module
+from femforge.run.stages import Stage
+from femforge_workbench import tasks as tasks_module
+from femforge_workbench.process_tree import ProcessTree
 from femforge_workbench.registry import import_root, target_of
 from femforge_workbench.tasks import (
     OUTCOME_FILE,
+    ChildTask,
+    Running,
     Task,
     TaskBoard,
     TaskDone,
@@ -38,7 +45,9 @@ from femforge_workbench.tasks import (
     observe,
     ordinal,
     plan_of,
+    reap,
     shown_label,
+    tree_pids,
 )
 
 
@@ -47,7 +56,6 @@ EXPECTED_PHASES = {
     Stage.PREPARE_GEOMETRY: TaskPhase.GEOMETRY,
     Stage.PRE_MESH: TaskPhase.MESHING,
     Stage.MESH: TaskPhase.MESHING,
-    tree_pids,
     Stage.POST_MESH: TaskPhase.MESHING,
     Stage.BUILD_SIM: TaskPhase.SOLVING,
     Stage.CONFIGURE_SIM: TaskPhase.SOLVING,
@@ -692,14 +700,6 @@ def _stop_a_holder(tmp_path: Path, *, deaf: bool, grace: float) -> tuple[float, 
     return elapsed, board, lock
 
 
-@pytest.mark.usefixtures("child_env")
-def test_shutdown_lets_a_cooperative_child_release_its_claim(tmp_path: Path) -> None:
-    elapsed, board, lock = _stop_a_holder(tmp_path, deaf=False, grace=10.0)
-
-    assert not lock.exists(), "the child's own cleanup released the claim"
-    assert elapsed < 2.0
-    assert board.by_label["Hold"].phase is TaskPhase.STOPPED
-
 def test_a_tree_holds_the_process_and_its_children_and_a_gone_process_alone() -> None:
     gone = psutil.Popen([sys.executable, "-c", "pass"])
     _ = gone.wait()
@@ -707,6 +707,14 @@ def test_a_tree_holds_the_process_and_its_children_and_a_gone_process_alone() ->
     assert os.getpid() in tree_pids(os.getpid())
     assert tree_pids(gone.pid) == frozenset({gone.pid})
 
+
+@pytest.mark.usefixtures("child_env")
+def test_shutdown_lets_a_cooperative_child_release_its_claim(tmp_path: Path) -> None:
+    elapsed, board, lock = _stop_a_holder(tmp_path, deaf=False, grace=10.0)
+
+    assert not lock.exists(), "the child's own cleanup released the claim"
+    assert elapsed < 2.0
+    assert board.by_label["Hold"].phase is TaskPhase.STOPPED
 
 
 @pytest.mark.usefixtures("child_env")
@@ -770,3 +778,168 @@ def test_a_plan_that_prepends_to_sys_path_still_imports_its_own_module_in_the_ch
     assert prepended == str(other), "the plan's import put another directory first"
     assert root == script.resolve(), "the child imports from the plan's own directory, not sys.path[0]"
     assert board.by_label["Use"].phase is TaskPhase.DONE, board.by_label["Use"].traceback
+
+
+def test_a_reused_row_has_its_own_icon_and_a_running_one_a_save_queued_again_says_so() -> None:
+    again = TaskRow(label="a", title="A", phase=TaskPhase.SOLVING, again=True)
+
+    assert TaskRow(label="a", title="A", phase=TaskPhase.REUSED).icon == "copy-check"
+    assert again.note == "Previous Version, Runs Again Next" and again.model_copy(update={"phase": TaskPhase.DONE}).note == ""
+
+
+@dataclass
+class _Tree:
+    """A process tree counting its kills and closes."""
+
+    kills: int = 0
+    closes: int = 0
+
+    def kill(self) -> None:
+        self.kills += 1
+
+    def close(self) -> None:
+        self.closes += 1
+
+
+def test_a_child_without_output_yields_no_line_a_vanished_one_has_exited_and_a_closed_one_is_never_killed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def vanished(pid: int) -> psutil.Process:
+        raise psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr(psutil, "Process", vanished)
+    tree = _Tree()
+    child = ChildTask(cast("asyncio.subprocess.Process", SimpleNamespace(stdout=None, pid=4242)), cast("ProcessTree", tree))
+
+    async def collect() -> list[str]:
+        return [line async for line in child.lines()]
+
+    assert asyncio.run(collect()) == [] and child.pid == 4242
+    assert child.wait_for(0.1)
+
+    child.kill()
+    child.close()
+    child.close()
+    child.kill()
+
+    assert (tree.kills, tree.closes) == (1, 1)
+
+
+def test_the_board_ignores_a_row_it_no_longer_has_and_publishes_nothing_once_closed(tmp_path: Path) -> None:
+    host = Host()
+    board = TaskBoard(host, "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=Spawner(lambda label, nth: Script()))
+    gone = Running("gone", FakeProcess(Script(), tmp_path), tmp_path, time.monotonic())
+    tail: deque[str] = deque()
+
+    with pytest.raises(RuntimeError, match="start"):
+        asyncio.run(board.drain())
+
+    board.relay(gone, "  \r\n", tail)
+    board.settle(gone, 0, TaskDone(), [])
+    board.end("gone", phase=TaskPhase.DONE)
+    board.cancel("gone")
+
+    assert not tail and list(board.by_label) == ["a"] and len(host.views) == 1
+
+    board.wake = asyncio.Event()
+    board.queue.clear()
+    board.by_label["a"] = board.by_label["a"].model_copy(update={"phase": TaskPhase.FAILED})
+    board.retry("a")
+
+    assert board.queue == ["a"] and board.wake.is_set() and len(host.views) == 2
+
+    board.shutdown()
+    board.shutdown()
+    board.publish(now=True)
+
+    assert board.closed and len(host.views) == 2
+
+
+def test_a_task_whose_process_fails_to_start_fails_its_row_and_the_queue_skips_a_label_it_lost(tmp_path: Path) -> None:
+    folders: list[Path] = []
+
+    async def refuse(job: TaskJob, folder: Path) -> TaskProcess:
+        folders.append(folder)
+        raise OSError("no interpreter")
+
+    async def scenario() -> TaskBoard:
+        board = TaskBoard(Host(), "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=refuse)
+        board.queue.insert(0, "ghost")
+        board.start()
+        await _until(lambda: board.by_label["a"].phase.ended)
+        board.shutdown()
+
+        return board
+
+    row = asyncio.run(scenario()).by_label["a"]
+
+    assert (row.phase, row.error) == (TaskPhase.FAILED, "OSError: no interpreter")
+    assert len(folders) == 1 and not folders[0].exists(), "the folder of a process that never started is removed"
+
+
+def test_the_tick_pushes_the_rows_a_record_marked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tasks_module, "PUBLISH_PERIOD_S", 0.01)
+    host = Host()
+
+    async def scenario() -> bool:
+        board = TaskBoard(host, "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=Spawner(lambda label, nth: Script()))
+        board.publish()
+        marked = board.dirty
+        board.background(board.tick())
+        await _until(lambda: not board.dirty)
+        board.shutdown()
+
+        return marked
+
+    assert asyncio.run(scenario()) and len(host.views) == 2
+
+
+@dataclass
+class _Stubborn:
+    """A process that takes every break and exits only when killed."""
+
+    exited: asyncio.Event
+    pid: int = 0
+    breaks: int = 0
+    kills: int = 0
+
+    def interrupt(self) -> bool:
+        self.breaks += 1
+
+        return True
+
+    def kill(self) -> None:
+        self.kills += 1
+        self.exited.set()
+
+
+def test_a_stop_breaks_again_until_the_grace_ends_then_kills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tasks_module, "STOP_GRACE_S", 0.2)
+    monkeypatch.setattr(tasks_module, "BREAK_REPEAT_S", 0.02)
+
+    async def scenario() -> _Stubborn:
+        board = TaskBoard(Host(), "main:tasks", _plan("a"), path=None, roots=[tmp_path], spawn=Spawner(lambda label, nth: Script()))
+        exited = asyncio.Event()
+        process = _Stubborn(exited)
+
+        await board.stop(Running("a", cast("TaskProcess", process), tmp_path, time.monotonic(), exited=exited))
+
+        return process
+
+    process = asyncio.run(scenario())
+
+    assert process.breaks > 1 and process.kills == 1
+
+
+def test_a_reap_counts_the_stopped_process_dead_once_it_is_gone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[tuple[int, bool]] = []
+
+    def reap_runs(parent: Path, *, alive: Callable[[int], bool]) -> list[object]:
+        asked.extend((pid, alive(pid)) for pid in (4242, os.getpid()))
+
+        return []
+
+    monkeypatch.setattr(reap_module, "reap_runs", reap_runs)
+    running = Running("a", FakeProcess(Script(), tmp_path, pid=4242), tmp_path, 0.0, run_dir=tmp_path / "runs" / "r1")
+
+    reap(running, gone=True)
+
+    assert asked == [(4242, False), (os.getpid(), True)]

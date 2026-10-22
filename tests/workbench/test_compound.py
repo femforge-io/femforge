@@ -1,7 +1,10 @@
 """CompoundRenderable: the instanced draw, the empty-compound placeholder and the opt-in OCP viewer push."""
 
+import importlib.abc
 import sys
 import types
+from collections.abc import Sequence
+from importlib.machinery import ModuleSpec
 
 import pytest
 
@@ -72,3 +75,23 @@ def test_the_ocp_viewer_push_without_ocp_vscode_names_the_extra(monkeypatch: pyt
 
     assert caught.value.name == "ocp_vscode"
     assert 'pip install "femforge-workbench[ocp]"' in str(caught.value)
+
+
+class _BrokenViewer(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Finds ocp_vscode but fails its import on a missing dependency of its own."""
+
+    def find_spec(self, fullname: str, path: Sequence[str] | None, target: types.ModuleType | None = None) -> ModuleSpec | None:
+        return ModuleSpec(fullname, self) if fullname == "ocp_vscode" else None
+
+    def exec_module(self, module: types.ModuleType) -> None:
+        raise ModuleNotFoundError("No module named 'ocp_tessellate'", name="ocp_tessellate")
+
+
+def test_a_missing_dependency_of_ocp_vscode_surfaces_as_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delitem(sys.modules, "ocp_vscode", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_BrokenViewer(), *sys.meta_path])
+
+    with pytest.raises(ModuleNotFoundError) as caught:
+        _ = CompoundRenderable(_box(), ocp_vscode=True)
+
+    assert caught.value.name == "ocp_tessellate"

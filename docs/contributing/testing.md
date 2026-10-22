@@ -25,7 +25,7 @@ ruff runs the `E`, `F` and `I` rule sets at a line length of 200 and sorts impor
 uv run pytest
 ```
 
-Every pytest run measures line coverage of `src` and fails below 100%. The workbench package sits outside the coverage source. `exclude_also` in `pyproject.toml` leaves out `if TYPE_CHECKING:` blocks, `raise NotImplementedError`, `def __repr__`, `def print_tree`, `if __name__ == "__main__":` and abstract methods. A line that runs only with gmsh or Elmer carries `# pragma: no cover` with a reason, and an integration test covers it on a machine that has both.
+Every pytest run measures line coverage of `src`, `packages/femforge-workbench/src` and `tools/docs/src`, and fails below 100%. `exclude_also` in `pyproject.toml` leaves out `if TYPE_CHECKING:` blocks, `raise NotImplementedError`, `def __repr__`, `def print_tree`, `if __name__ == "__main__":` and abstract methods. A line that runs only with gmsh or Elmer carries `# pragma: no cover` with a reason, and an integration test covers it on a machine that has both.
 
 The integration tests skip themselves when gmsh, build123d or a native Elmer is missing, so the suite passes on a bare machine.
 

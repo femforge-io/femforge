@@ -65,7 +65,7 @@ uv run pytest
 
 - The basedpyright gate checks every path in the `include` list of `[tool.basedpyright]` in `pyproject.toml`, the workbench package included. It requires 0 errors and 0 warnings. The `--warnings` flag turns any warning into a failure.
 - [docs/contributing/tooling.md](docs/contributing/tooling.md) records the reason behind each tool setting.
-- The pytest gate measures line coverage of `src` and fails below 100%. To run a subset without the coverage gate, add `--no-cov`, for example `uv run pytest tests/meshing --no-cov`.
+- The pytest gate measures line coverage of `src`, the workbench package and the docs tools, and fails below 100%. To run a subset without the coverage gate, add `--no-cov`, for example `uv run pytest tests/meshing --no-cov`.
 - `uv run ruff format src packages scripts examples` fixes formatting in place.
 
 Run the client gates whenever you change a file under `packages/femforge-workbench/js` or any Python file in the workbench package:
