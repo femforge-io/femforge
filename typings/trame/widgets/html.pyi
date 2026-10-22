@@ -1,14 +1,14 @@
 """HTML elements re-exported from trame_client."""
 
 from trame_client.widgets.html import (
+    H1 as H1,
+    H2 as H2,
+    H3 as H3,
     A as A,
     Button as Button,
     Code as Code,
     Div as Div,
     Footer as Footer,
-    H1 as H1,
-    H2 as H2,
-    H3 as H3,
     Header as Header,
     Iframe as Iframe,
     Img as Img,
