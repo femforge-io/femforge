@@ -844,6 +844,8 @@ class ScenePanel(PanelComponent):
         else:
             self.plotter.renderer.ResetCamera()
 
+        # VTK.wasm draws without the window's multisamples, so the mirror smooths its edges with FXAA instead.
+        self.plotter.renderer.SetUseFXAA(self.mode is ViewMode.CLIENT)
         if self.mode is not ViewMode.CLIENT:
             self.footprint = None
             return Drawn(keep, None)

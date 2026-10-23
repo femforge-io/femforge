@@ -484,7 +484,8 @@ def test_the_tab_builds_its_switches_legend_sections_and_grids(tmp_path: Path, m
     assert [_bound(node, "rows") for node in grids] == [str(SetupVar.TAG_ROWS), str(SetupVar.BODY_ROWS), str(SetupVar.BOUNDARY_ROWS)]
     assert all(_bound(node, "selected") == str(FieldVar.SELECTED_ENTITY) for node in grids)
     assert all(prop(node, "onHover") == {"callback": {"js": f'trame.state.set("{FieldVar.HOVERED}", $event)'}} for node in grids), "a hovered row outlines its group in the view"
-    assert [prop(node, "htmlFor") for node in find(template, "ff-field-label")] == [prop(node, "id") for node in [*switches, *checkboxes]]
+    assert [prop(node, "htmlFor") for node in find(template, "ff-field-label")] == [prop(node, "id") for node in switches]
+    assert [len(find(row, "ff-checkbox")) for row in find(template, "label")] == [1] * len(checkboxes), "a click anywhere on a Glyphs row toggles its checkbox"
     assert find(template, "ff-input") == [], "the tab has no search"
     assert len(checkboxes) == 1 + len(ConditionGlyph) and prop(checkboxes[0], "id") == "ff-setup-kind-all", "an All Glyphs row leads one checkbox per glyph kind"
     assert "'indeterminate'" in str(_bound(checkboxes[0], "checked")), "All Glyphs reads mixed while only some kinds are off"

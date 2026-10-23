@@ -188,6 +188,7 @@ A click always gets an answer in the same frame, even when its result takes seco
 ### Checkbox and switch
 
 - A checkbox controls visibility. It is a row action, so it sits in the last column. A parent checkbox in the first row, such as All Glyphs, controls the rows below it and shows the mixed state when they differ.
+- A row whose only control is its checkbox is a label around it. A click anywhere on the row toggles the checkbox, and the row takes the hover wash and the pointer cursor.
 - A switch turns a setting on or off, in a settings row: the label on the left, the switch in the right-hand column.
 
 ### Read-only field
@@ -227,7 +228,8 @@ A click always gets an answer in the same frame, even when its result takes seco
 
 - The header sits on the `card` plane: title at weight 600, count right-aligned in `--muted-foreground`, and a chevron that turns over `--duration-micro`.
 - The body expands and collapses over `--duration-panel`.
-- A section with nothing to show is hidden, never shown empty. A run with nothing to expand has no Symmetry section.
+- A section with nothing to show is hidden, never shown empty. A run with nothing to expand has no Symmetry section, and a run with no displacement has no Deformation section.
+- A section that comes or goes with the run expands or collapses like a `Reveal`, and the sections below glide to their new places in the same motion.
 - A section shows only what its tab is about. The Setup tab shows the run's inputs: no computed results such as the geometry check, and no display choices such as Show As.
 
 ### Frame section
@@ -271,9 +273,10 @@ A click always gets an answer in the same frame, even when its result takes seco
 ## 3D view
 
 - The camera's near and far planes enclose every visible actor, glyphs included. The view recomputes them after every scene change and every camera move. The near plane may come as close as 0.001 of the far plane's distance (`NEAR_TOLERANCE` in `panels/scene.py`), so a model zoomed in close keeps its glyphs.
+- Edges are antialiased in both renderers. Server mode renders with 8× MSAA. VTK.wasm ignores the window's multisamples, so Client mode uses FXAA.
 - The orientation axes sit in the corner, colored X red, Y green and Z blue, without labels. The scene holds no other axes.
 - Hover outlines an entity's feature edges at 2 px in `--primary` mixed 60 % into `--background`. The outline is a hidden actor the browser shows, so it follows the pointer without a server round trip; in Server mode no outline shows. Selection outlines them at 2 px in `--primary`. The hovered or selected entity's glyph arrows and pins draw in the same color as its outline.
-- A tint, fill or accent copy keeps its points on the geometry it covers. A depth offset draws it over that geometry instead of lifting it off, in layers: face tint, then selection, then hover (`Layer` and `FORWARD_STEP` in `viz/glyphs.py`). The offset holds at any zoom. A body drawn in a plain color also takes a 30 % `--primary` tint when selected. A field plot takes no tint, because its colormap can contain green.
+- A tint, fill or accent copy keeps its points on the geometry it covers. A depth offset draws it over that geometry instead of lifting it off, in layers: feature edges, then face tint, then selection, then hover (`Layer` and `FORWARD_STEP` in `viz/field_display.py`). The offset holds at any zoom. A body drawn in a plain color also takes a 30 % `--primary` tint when selected. A field plot takes no tint, because its colormap can contain green.
 - A body with no field to show draws shaded in its body color, with its feature edges outlined. Body colors keep neighbouring bodies apart without looking like a field. Body `i`, counted from 0 in the run's body order, has the color `oklch(0.72 0.06 h)` with hue h = (255 + 137.5·i) mod 360.
 - A run solved on a 2D section offers its own forms under Show As: Section, Mirrored and Revolved for an axisymmetric section; Section and Extruded for a Cartesian one. Each opens in its 3D form.
 - Extruded draws the section through its thickness, with the section plane at mid-depth like the Setup ghost. Condition glyphs sit on the front face, a boundary's tint, hover and selection fill its face through the depth, and field lines run at the depth of their seeds.

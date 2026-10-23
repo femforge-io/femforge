@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from enum import IntEnum, StrEnum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import numpy as np
@@ -34,7 +34,7 @@ from femforge.physical.conditions import (
 )
 from femforge.physical.readout import readout
 from femforge.physical.units import Quantity, U, Unit, quantity
-from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, SceneActor, feature_outline, run_manifest, warped
+from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, Layer, SceneActor, feature_outline, forward, run_manifest, warped
 from femforge.viz.field_lines import Bounds
 from femforge.viz.symmetry import Basis, Expansion, Surface, extruded_lines, prism_depth, swept_lines
 
@@ -114,12 +114,6 @@ TINT_LIFT: float = 1e-3
 
 TINT_OPACITY: float = 0.6
 """`[-]`: The opacity of a face tint."""
-
-FORWARD_STEP: tuple[float, float] = (-1.0, -20.0)
-"""`[-]`: The depth offset factor and units between one layer and the next, as OpenGL's polygon offset reads them.
-
-VTK.wasm scales the factor by the depth slope per pixel, which zooming in shrinks, so the units alone must keep a layer in front.
-"""
 
 SELECTION_OPACITY: float = 0.7
 """`[-]`: The opacity of a selected boundary's accent cells."""
@@ -867,22 +861,6 @@ class GlyphHost(Protocol):
     def group_cells(self, ref: EntityRef) -> pv.DataSet | None: ...
 
 
-class Layer(IntEnum):
-    """How far forward a glyph draws over coincident geometry: each layer over every lower one."""
-
-    BASE = 0
-    """The bodies, the glyphs and lines that coincide with nothing."""
-
-    TINT = 1
-    """A held face's tint, over its face."""
-
-    SELECTION = 2
-    """The selection's fill and accent glyphs, over the tints and the glyphs they copy."""
-
-    HOVER = 3
-    """The hover outline and accent glyphs, over a selection of the same entity."""
-
-
 @dataclass(frozen=True)
 class GlyphDraw:
     """One merged glyph actor: its name, its geometry and how it is styled."""
@@ -916,19 +894,6 @@ class GlyphDraw:
 
     layer: Layer = Layer.BASE
     """Which coincident geometry it draws over by a depth offset, its points left where they are."""
-
-
-def _forward(actor: pv.Actor, layer: Layer) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-    """Draws ``actor`` over the coincident geometry of every lower layer by a depth offset."""
-    if layer is Layer.BASE:
-        return
-
-    factor, units = (step * layer for step in FORWARD_STEP)
-    mapper = actor.GetMapper()
-    # The resolve mode is global to VTK and travels to the mirror in every mapper's state.
-    mapper.SetResolveCoincidentTopologyToPolygonOffset()
-    mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)
-    mapper.SetRelativeCoincidentTopologyLineOffsetParameters(factor, units)
 
 
 def _segments(dataset: pv.DataSet) -> FloatArray:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
@@ -1430,7 +1395,7 @@ class GlyphLayer:
                 render=False,
                 name=str(draw.actor),
             )
-            _forward(added, draw.layer)
+            forward(added, draw.layer)
 
         for ref in self.refs(host):
             hover: GlyphDraw | None = self.hover_draw(ref, host, view)
@@ -1452,7 +1417,7 @@ class GlyphLayer:
                 name=hover.actor,
             )
             actor.SetVisibility(False)
-            _forward(actor, hover.layer)
+            forward(actor, hover.layer)
 
             self.hover_actors[ref.id] = actor
 
@@ -1784,7 +1749,8 @@ class GroupScene:
         edges: pv.PolyData | None = feature_outline(self.blocks) if self.frame.model_dim == 3 else None
 
         if edges is not None:
-            _ = plotter.add_mesh(edges, color="black", line_width=OUTLINE_LINE_PX, reset_camera=False, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
+            outline = plotter.add_mesh(edges, color="black", line_width=OUTLINE_LINE_PX, reset_camera=False, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
+            forward(outline, Layer.EDGE)
 
         if self.glyphs is not None:
             self.glyphs.update(plotter, self, self.glyph_view)

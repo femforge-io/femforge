@@ -51,7 +51,7 @@ from femforge_workbench.widgets.busy import Busy
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.checkbox import Checkbox
 from femforge_workbench.widgets.combobox import Combobox, ComboboxItem
-from femforge_workbench.widgets.element import EVENT, setter
+from femforge_workbench.widgets.element import EVENT, Prop, setter
 from femforge_workbench.widgets.field import Field, FieldLabel
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.input import ColorInput, Input
@@ -177,7 +177,11 @@ WARP_STEPS = 100
 """Deformation slider resolution over its range."""
 
 TIMES = "×"
-NO_DISPLACEMENT = title("no displacement")
+REVEALED_SECTION = "border-y border-border"
+"""A section inside its reveal, where `first:` would always match; the sections' own rule drops the top border of the first one shown."""
+
+REVEALED_SECTIONS = f"{Cls.SECTIONS} [&>:nth-child(1_of_:not([inert]))_[data-slot=accordion-item]]:border-t-0"
+"""The sections, each in a reveal that collapses it away while the run has nothing for it, the first shown without a top border."""
 
 
 class SymmetryState(StrEnum):
@@ -2305,8 +2309,8 @@ class FieldControlsPanel(PanelComponent):
                 self.slider(FieldVar.SWEEP, "Sweep angle", SWEEP_RANGE, SWEEP_STEP)
 
     def build_deformation(self) -> None:
-        """The deformation section: for a run with a displacement, the Deformed Shape switch and, while it is on, the scale the displacement is exaggerated by."""
-        with react.If(str(FieldVar.HAS_DISPLACEMENT)), html.Div(classes=str(Cls.SECTION_BODY_STACK)):
+        """The deformation section: the Deformed Shape switch and, while it is on, the scale the displacement is exaggerated by."""
+        with html.Div(classes=str(Cls.SECTION_BODY_STACK)):
             setting(FieldVar.WARP, "Deformed shape")
             with Reveal(open_=react.Bind(str(FieldVar.WARP)), classes=STACK):
                 readouts("Scale", react.Bind(f"{json.dumps(TIMES)} + {FieldVar.WARP_SCALE}[0].toPrecision({PRECISION})"))
@@ -2316,9 +2320,6 @@ class FieldControlsPanel(PanelComponent):
                     (0.0, react.Bind(str(FieldVar.WARP_SCALE_MAX))),
                     react.Bind(f"{FieldVar.WARP_SCALE_MAX} / {WARP_STEPS}"),
                 )
-
-        with react.If(f"!{FieldVar.HAS_DISPLACEMENT}"):
-            html.Span(NO_DISPLACEMENT, classes=str(Cls.CAPTION))
 
     def build_field(self) -> None:
         """The field section: what is shown and how it is colored, from the field select to the opacity mapping."""
@@ -2448,8 +2449,8 @@ class FieldControlsPanel(PanelComponent):
     def build(self) -> None:
         """Builds the busy bar over the symmetry, deformation, field, field-line and body sections."""
 
-        def section(value: str, heading: str, body: Callable[[], None]) -> None:
-            with AccordionItem(value=value, id=f"{TOUR_PREFIX}{value}", classes=str(Cls.SECTION_ITEM)):
+        def section(value: str, heading: str, body: Callable[[], None], shown: Prop[bool] = True) -> None:
+            with Reveal(open_=shown), AccordionItem(value=value, id=f"{TOUR_PREFIX}{value}", classes=REVEALED_SECTION):
                 AccordionTrigger(heading, classes=str(Cls.SECTION_TRIGGER))
                 with AccordionContent(classes=str(Cls.SECTION_BODY)):
                     body()
@@ -2457,11 +2458,9 @@ class FieldControlsPanel(PanelComponent):
         with html.Div(classes=str(Cls.CONTROLS)):
             Busy(active=react.Bind(str(FieldVar.BUSY)))
 
-            with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=str(Cls.SECTIONS)):
-                with react.If(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.OPEN))}"):
-                    section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry)
-
-                section(DEFORMATION_SECTION, "Deformation", self.build_deformation)
+            with Accordion(type_="multiple", default_value=OPEN_SECTIONS, classes=REVEALED_SECTIONS):
+                section(SYMMETRY_SECTION, "Symmetry", self.build_symmetry, react.Bind(f"{FieldVar.SYMMETRY} === {json.dumps(str(SymmetryState.OPEN))}"))
+                section(DEFORMATION_SECTION, "Deformation", self.build_deformation, react.Bind(str(FieldVar.HAS_DISPLACEMENT)))
                 section(FIELD_SECTION, "Field", self.build_field)
                 section(LINES_SECTION, "Field Lines", self.build_lines)
                 section(BODIES_SECTION, "Bodies", self.build_bodies)

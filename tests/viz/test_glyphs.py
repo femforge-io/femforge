@@ -36,9 +36,8 @@ from femforge.physical.units import U, quantity
 from femforge.run.conditions import ConditionRecord, ConditionsFile, GroupConditions, SifKeyword, SolveComponent
 from femforge.run.entities import Body, Boundary, BoundaryKind
 from femforge.run.fields import BC_ID_OFFSET
-from femforge.viz.field_display import DisplaySpec, BodyPaint, BodyStyle
+from femforge.viz.field_display import FORWARD_STEP, BodyPaint, BodyStyle, DisplaySpec, Layer
 from femforge.viz.glyphs import (
-    FORWARD_STEP,
     ARROW_FLOOR,
     ARROW_SHARE,
     CIRCLE_SIDES,
@@ -783,12 +782,12 @@ def test_a_3d_held_face_tint_stays_on_the_face_drawn_forward_by_a_depth_offset_a
     assert _bounds(plotter, GlyphActor.FACES)[0] == pytest.approx(2.0) and fill.GetBounds()[0] == pytest.approx(2.0), "tints keep their points on the face"
     factor, units = reference(0.0), reference(0.0)
     faces.GetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)  # pyright: ignore[reportArgumentType]  # the VTK stubs type the by-reference outputs as plain floats
-    assert faces.GetResolveCoincidentTopology() == 1 and (factor, units) == FORWARD_STEP, "the tint draws one layer over the face it lies on"
+    assert faces.GetResolveCoincidentTopology() == 1 and (factor, units) == tuple(Layer.TINT * step for step in FORWARD_STEP), "the tint draws over the face it lies on"
     fill.GetMapper().GetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)  # pyright: ignore[reportArgumentType]  # the VTK stubs type the by-reference outputs as plain floats
-    assert (factor, units) == tuple(2 * step for step in FORWARD_STEP), "the selection draws over the tint"
+    assert (factor, units) == tuple(Layer.SELECTION * step for step in FORWARD_STEP), "the selection draws over the tint"
     hover = _actor(plotter, f"{GlyphActor.HOVER}boundary:TIP").GetMapper()
     hover.GetRelativeCoincidentTopologyLineOffsetParameters(factor, units)  # pyright: ignore[reportArgumentType]  # the VTK stubs type the by-reference outputs as plain floats
-    assert (factor, units) == tuple(3 * step for step in FORWARD_STEP), "the hover, with the face's accent glyphs, draws over the selection"
+    assert (factor, units) == tuple(Layer.HOVER * step for step in FORWARD_STEP), "the hover, with the face's accent glyphs, draws over the selection"
     assert {"glyph-marks", "glyph-arrows", "glyph-selection-fill"} <= set(_glyph_names(plotter)), "pins, with roller balls for the free axis"
     assert "glyph-outline" not in plotter.renderer.actors, "a solid run has no section to outline"
     assert scene.glyphs.bounds_of(EntityRef(EntityKind.BOUNDARY, "TIP")) == pytest.approx((2.0, 2.0, 0.0, 1.0, 0.0, 1.0))

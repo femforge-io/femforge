@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Annotated, Callable, Iterable, Mapping, Sequence, cast
 
 import numpy as np
@@ -62,6 +62,12 @@ FIELD_RENAMES: dict[str, str] = {"Jfix": "Fixed Current Density"}
 
 FEATURE_ANGLE = 30.0
 """Dihedral angle (degrees) above which a surface edge counts as a feature edge in the black wireframe."""
+
+FORWARD_STEP: tuple[float, float] = (-1.0, -20.0)
+"""`[-]`: The depth offset factor and units between one layer and the next, as OpenGL's polygon offset reads them.
+
+VTK.wasm scales the factor by the depth slope per pixel, which zooming in shrinks, so the units alone must keep a layer in front.
+"""
 
 LINES_SUFFIX = " Lines"
 """Follows the field name in the field lines' scalar bar title, so it never takes a field bar's title (no ``|B|``: VTK's off-screen text renderer crashes on a pipe glyph)."""
@@ -740,6 +746,38 @@ def split_by_body(grid: pv.UnstructuredGrid, bodies: Bodies) -> pv.MultiBlock:  
     return blocks
 
 
+class Layer(IntEnum):
+    """How far forward an actor draws over coincident geometry: each layer over every lower one."""
+
+    BASE = 0
+    """The bodies, the glyphs and lines that coincide with nothing."""
+
+    EDGE = 1
+    """The feature-edge outline, over the faces it traces."""
+
+    TINT = 2
+    """A held face's tint, over its face and its edges."""
+
+    SELECTION = 3
+    """The selection's fill and accent glyphs, over the tints and the glyphs they copy."""
+
+    HOVER = 4
+    """The hover outline and accent glyphs, over a selection of the same entity."""
+
+
+def forward(actor: pv.Actor, layer: Layer) -> None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+    """Draws ``actor`` over the coincident geometry of every lower layer by a depth offset."""
+    if layer is Layer.BASE:
+        return
+
+    factor, units = (step * layer for step in FORWARD_STEP)
+    mapper = actor.GetMapper()
+    # The resolve mode is global to VTK and travels to the mirror in every mapper's state.
+    mapper.SetResolveCoincidentTopologyToPolygonOffset()
+    mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(factor, units)
+    mapper.SetRelativeCoincidentTopologyLineOffsetParameters(factor, units)
+
+
 def feature_outline(blocks: pv.MultiBlock) -> pv.PolyData | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
     """The feature and boundary edges of a multiblock's outer surface — the black wireframe drawn over the field, the body outlines on a 2D slice — or None when the surface has none."""
     import pyvista as pv
@@ -1350,7 +1388,8 @@ class FieldScene:
             _ = plotter.remove_actor(str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
             return
 
-        _ = plotter.add_mesh(edges, color="black", line_width=2.0, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
+        outline = plotter.add_mesh(edges, color="black", line_width=2.0, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
+        forward(outline, Layer.EDGE)
 
     def _update_streamlines(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Draw the field-line overlay when it or the display it is styled by changed, integrating only new lines, or remove it when the spec turns it off or the grid has no field to follow."""
