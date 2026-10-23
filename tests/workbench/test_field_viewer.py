@@ -459,7 +459,7 @@ def test_a_run_without_displacement_has_nothing_to_deform(tmp_path: Path, monkey
         assert app.state[FieldVar.HAS_DISPLACEMENT] is False and app.state[FieldVar.WARP] is True, "the switch keeps its place for the next run"
         assert app.state[FieldVar.WARP_SCALE_MAX] == 1.0
         assert controller.scene is not None and controller.scene.warped is None and controller.scene.spec.warp is None
-        assert any(texts(node) == ["No Displacement"] for node in find(template, "span"))
+        assert str(FieldVar.HAS_DISPLACEMENT) in [_bound(node, "open") for node in find(template, "ff-reveal")], "the Deformation section collapses away"
 
         controller.clear("gone")
 

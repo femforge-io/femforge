@@ -39,7 +39,6 @@ from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.checkbox import Checkbox
 from femforge_workbench.widgets.element import EVENT
 from femforge_workbench.widgets.entity_grid import BodyChip, ConditionLine, EntityGrid, EntityRow, LinePart
-from femforge_workbench.widgets.field import FieldLabel
 from femforge_workbench.widgets.fields import ConditionCard, Fields, FieldView
 from femforge_workbench.widgets.icon import Icon, IconName
 from femforge_workbench.widgets.reveal import Reveal
@@ -98,7 +97,11 @@ GEOMETRY_CHECK = "Geometry Check: "
 
 NOTICE_ROW = "flex items-start gap-1.5 px-2 text-label text-muted-foreground"
 FILTER_GROUP = "grid w-full grid-cols-2"
-LEGEND_ROW = "grid h-6 grid-cols-[1rem_minmax(0,1fr)_2rem_1rem] items-center gap-x-2"
+LEGEND_ROW = (
+    "-mx-2 grid h-6 cursor-pointer grid-cols-[1rem_minmax(0,1fr)_2rem_1rem] items-center gap-x-2 rounded-sm px-2 select-none"
+    " transition-colors duration-micro hover:bg-wash-hover has-[:disabled]:cursor-default has-[:disabled]:hover:bg-transparent"
+)
+"""A Glyphs row: a label around its checkbox, so a click anywhere on it toggles the checkbox."""
 SR_ONLY = "sr-only"
 EMPTY_STACK = "flex min-w-0 flex-col gap-1 px-4 text-center"
 EMPTY_DETAIL = "break-all text-muted-foreground"
@@ -1129,9 +1132,9 @@ class SetupPanel(PanelComponent):
         rows = str(SetupVar.LEGEND_ROWS)
         off = str(FieldVar.GLYPH_KINDS_OFF)
         kinds = f"{rows}.map(row => row.kind)"
-        with react.If(f"{rows}.length"), html.Div(classes=LEGEND_ROW):
+        with react.If(f"{rows}.length"), html.Label(classes=LEGEND_ROW):
             html.Span()
-            FieldLabel("All Glyphs", html_for="ff-setup-kind-all", classes="truncate font-medium")
+            html.Span("All Glyphs", classes="truncate font-medium")
             html.Span()
             Checkbox(
                 checked=react.Bind(f"{off}.length === 0 ? true : {kinds}.every(kind => {off}.includes(kind)) ? false : 'indeterminate'"),
@@ -1142,9 +1145,9 @@ class SetupPanel(PanelComponent):
 
         for glyph in ConditionGlyph:
             kind = json.dumps(str(glyph))
-            with react.If(f"{rows}.some(row => row.kind === {kind})"), html.Div(classes=LEGEND_ROW):
+            with react.If(f"{rows}.some(row => row.kind === {kind})"), html.Label(classes=LEGEND_ROW):
                 Icon(icon_of(glyph), size=14)
-                FieldLabel(legend_label(glyph), html_for=f"ff-setup-kind-{glyph}", classes="truncate font-normal")
+                html.Span(legend_label(glyph), classes="truncate")
                 html.Span([react.Bind(f"{rows}.find(row => row.kind === {kind}).count")], classes="text-right text-muted-foreground tabular-nums")
                 Checkbox(
                     checked=react.Bind(f"!{off}.includes({kind})"),
