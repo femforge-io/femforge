@@ -83,17 +83,18 @@ class LocalJsonStore:
 
     def load(self, scope: Scope, key: str) -> Data | None:
         """The document: a pending save first, else the file's, None when neither exists."""
+        # The lock spans the file read, so a load never falls between a flush taking the pending save and writing it.
         with self.lock:
             pending = self.pending.get((scope, key))
+            if pending is not None:
+                return dict(pending)
 
-        if pending is not None:
-            return dict(pending)
+            path = self.path(scope, key)
+            if not path.exists():
+                return None
 
-        path = self.path(scope, key)
-        if not path.exists():
-            return None
+            loaded = cast("object", json.loads(path.read_text(encoding="utf-8")))
 
-        loaded = cast("object", json.loads(path.read_text(encoding="utf-8")))
         if not isinstance(loaded, dict):
             return None
 
@@ -123,10 +124,9 @@ class LocalJsonStore:
                 self.timer.cancel()
                 self.timer = None
 
-            pending = self.pending
-            self.pending = {}
+            for (scope, key), data in self.pending.items():
+                path = self.path(scope, key)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                write_atomic(path, json.dumps(data, indent=1))
 
-        for (scope, key), data in pending.items():
-            path = self.path(scope, key)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            write_atomic(path, json.dumps(data, indent=1))
+            self.pending = {}
