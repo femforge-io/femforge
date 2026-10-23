@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Iterable, Mapping, Protocol, cast
 
 from femforge.elmer import sif
+from femforge.elmer.combine import Merged, Source, merge
 from femforge.elmer.config import MagnetoDynamicsCalcFieldsSolver, PhysicsConfig, SaveScalarsSolver, SifValue, solved_stack
 from femforge.elmer.physics import Physics, condition_physics, runtime_variables
 from femforge.elmer.sections import SifSection
@@ -17,6 +18,7 @@ from femforge.frames import Frame, Solid
 from femforge.materials.properties import MATERIAL_KEY_EQUIVALENTS, ElmerMaterialKeyword, MaterialProperties
 from femforge.physical.conditions import BoundarySite, CalculateMagneticForce, Condition, ConditionTarget, FixedDisplacement
 from femforge.physical.domain import EntityTag, conditions_for
+from femforge.physical.readout import along
 from femforge.physical.units import Quantity
 
 
@@ -163,6 +165,9 @@ class Sim:
         self.landings: list[SifLanding] = []
         """Every emission ``generate`` made into a body, body force, material, component or boundary block, in emission order."""
 
+        self.clashes: list[str] = []
+        """Every clash ``generate`` found between conditions merged into one block, which ``validate`` raises."""
+
     # -- generation ----------------------------------------------------------
 
     def generate(self, validate: bool = True) -> "Sim":
@@ -173,6 +178,7 @@ class Sim:
         """
         sim: sif.Simulation = sif.Simulation()
         self.landings = []
+        self.clashes = []
         sim.settings = self.config.simulation.to_elmer()
         # Each typed model reflects its sif keyword block on demand; the constants block carries only the physics' activated constants.
         sim.constants.update(self.config.constants.to_elmer())
@@ -286,6 +292,8 @@ class Sim:
                     SolverConfigWarning,
                     stacklevel=2,
                 )
+
+        problems.extend(self.clashes)
 
         if problems:
             raise ValueError("Solver configuration invalid:\n  - " + "\n  - ".join(problems))
@@ -426,17 +434,13 @@ class Sim:
                 physics=condition_physics(self.physics),
                 target=ConditionTarget.BODY,
             )
-            data: dict[str, SifValue] = {}
-            forcing: list[tuple[Condition, dict[str, float | str]]] = []
+            forcing: list[tuple[Condition, dict[str, float | str]]] = [(cond, cond.to_elmer()) for cond in body_conditions if cond.section is SifSection.BODY_FORCE]
+            sources: list[Source] = [self._source(cond, self._tag_of(group.tags, cond), emitted) for cond, emitted in forcing]
+            merged: Merged = merge(group.name, sources)
+            self.clashes.extend(merged.clashes)
 
-            for cond in body_conditions:
-                if cond.section is SifSection.BODY_FORCE:
-                    emitted: dict[str, float | str] = cond.to_elmer()
-                    data.update(emitted)
-                    forcing.append((cond, emitted))
-
-            if data:
-                body.body_force = sif.BodyForce(sim, f"{group.name}_body_force", data)
+            if merged.keywords:
+                body.body_force = sif.BodyForce(sim, f"{group.name}_body_force", merged.keywords)
 
                 for cond, emitted in forcing:
                     self._land(
@@ -524,6 +528,13 @@ class Sim:
         self.landings.append(landing)
 
     @staticmethod
+    def _source(condition: Condition, tag: EntityTag | None, keywords: Mapping[str, SifValue]) -> Source:
+        """``condition``'s emission as a merge source, named by its authoring tag."""
+        origin: str = f"tag {tag.name}" if tag is not None else "automatic"
+
+        return Source(cast("_DiscriminatedCondition", condition).kind, condition, origin, keywords)
+
+    @staticmethod
     def _tag_of(tags: Iterable[EntityTag], condition: Condition) -> EntityTag:
         """The EntityTag that authored ``condition``; its name is the stable, human-readable Component name stem."""
         for tag in tags:
@@ -547,17 +558,19 @@ class Sim:
             if not emissions:
                 continue
 
-            merged: dict[str, SifValue] = {}
-
-            for emission in emissions:
-                merged.update(emission.keywords)
+            sources: list[Source] = [
+                self._source(emission.condition, emission.tag, emission.keywords) if emission.condition is not None else Source(emission.kind, None, "automatic", emission.keywords)
+                for emission in emissions
+            ]
+            merged: Merged = merge(bg.name, sources)
+            self.clashes.extend(merged.clashes)
 
             name = f"{bg.name}_{'_'.join(emission.kind for emission in emissions)}"
             block: sif.Boundary = sif.Boundary(
                 sim,
                 name,
                 [bg.id],
-                data=merged,
+                data=merged.keywords,
             )
 
             for emission in emissions:
@@ -605,9 +618,8 @@ class Sim:
 
     def _boundary_emissions(self, bg: "BoundaryGroup", tags_by_body: Mapping[str, list[EntityTag]]) -> list[_Emission]:
         """
-        The emissions one surface group resolves: its conditions in ``_boundary_conditions`` order, so a face tag's keyword
-        wins a clash with a body's, then the auto-emitted magnetic blocks. Kept free of sif objects so the projection rule
-        is unit-testable.
+        The emissions one surface group resolves: its conditions in ``_boundary_conditions`` order, then the auto-emitted
+        magnetic blocks. Kept free of sif objects so the projection rule is unit-testable.
         """
         specs: list[_Emission] = []
         site: BoundarySite = BoundarySite(name=bg.name, measure=bg.measure, frame=self.frame)
@@ -677,6 +689,14 @@ class Sim:
 
         conditions: list[Condition] = self._material_conditions(group.tags)
         magnetization: Condition | None = conditions[0] if conditions else None
+        directions: list[Vec3 | None] = [cast("_Oriented", condition).direction for condition in conditions]
+
+        if any(direction != directions[0] for direction in directions):
+            authored: list[str] = [
+                f"{along(direction) if direction is not None else 'no direction'} from tag {self._tag_of(group.tags, condition).name}"
+                for condition, direction in zip(conditions, directions, strict=True)
+            ]
+            self.clashes.append(f"{group.name}: Magnetization directions disagree: {' and '.join(authored)}; make them agree or remove one")
         emitted: dict[str, SifValue] = {}
 
         if magnitude is None:

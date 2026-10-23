@@ -44,12 +44,10 @@ def test_a_clamp_reads_as_one_vector_with_a_free_axis_and_the_dropped_axis_muted
     }
 
 
-def test_a_force_mutes_its_dropped_direction_component_and_an_overridden_card_reads_muted() -> None:
-    card = condition_card(SurfaceForce(force=quantity(Vec3(0, 120, 0), "N")), icon=None, dropped=("z",), dropped_tip=lambda axis: f"No {axis}", muted_tip="Overridden")
+def test_a_force_mutes_its_dropped_direction_component() -> None:
+    card = condition_card(SurfaceForce(force=quantity(Vec3(0, 120, 0), "N")), icon=None, dropped=("z",), dropped_tip=lambda axis: f"No {axis}")
 
     assert "icon" not in card
-    assert card.get("muted") is True
-    assert card.get("tip") == "Overridden"
     direction = next(field for field in card["fields"] if field["label"] == "Direction")
     assert direction.get("dropped") == [2]
     assert direction.get("tip") == "No z"

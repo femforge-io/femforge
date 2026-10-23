@@ -50,12 +50,6 @@ class ConditionCard(TypedDict):
     fields: list[FieldView]
     """The condition's fields in authoring order."""
 
-    muted: NotRequired[bool]
-    """Whether the condition never reached the solver."""
-
-    tip: NotRequired[str]
-    """Why a muted condition never reached the solver."""
-
 
 class Fields(Element):
     """Labelled read-only fields in two aligned columns."""

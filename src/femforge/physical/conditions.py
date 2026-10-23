@@ -39,11 +39,13 @@ from femforge.physical.units import (
 
 
 if TYPE_CHECKING:
+    from femforge.elmer.config import SifValue
     from femforge.frames import Frame
     from femforge.frames.base import SolvePlane
 
 
 __all__ = [
+    "Combine",
     "ConditionTarget",
     "ConditionGlyph",
     "BoundarySite",
@@ -77,6 +79,19 @@ class ConditionTarget(StrEnum):
 
     BOUNDARY = "boundary"
     """Attach to a boundary surface."""
+
+
+class Combine(StrEnum):
+    """How a condition's keywords combine with another condition's in the same sif block."""
+
+    SUM = "sum"
+    """A load: values of the same keyword add."""
+
+    MATCH = "match"
+    """A fixed value or a flag: values of the same keyword must agree."""
+
+    ALONE = "alone"
+    """At most one condition of the kind per block."""
 
 
 class ConditionGlyph(StrEnum):
@@ -233,6 +248,9 @@ class Condition(BaseModel):
     glyph: ClassVar[ConditionGlyph | None]
     """The scene glyph this condition draws as; None for an output that draws nothing."""
 
+    combine: ClassVar[Combine] = Combine.MATCH
+    """How its keywords combine with another condition's in the same sif block."""
+
     physics: Physics
     """The physics whose solve this condition feeds."""
 
@@ -259,6 +277,10 @@ class Condition(BaseModel):
     def on_boundary(self, site: BoundarySite) -> dict[str, float | str]:
         """This condition's keywords on the boundary group ``site``; the default ignores the site."""
         return self.to_elmer()
+
+    def yields_to(self, emitted: Mapping[str, SifValue]) -> tuple[tuple[str, str], ...]:
+        """Each load keyword in ``emitted`` paired with the fixed-value keyword that makes Elmer ignore it in the same block; the default yields to none."""
+        return ()
 
     def check_frame(self, frame: Frame) -> None:
         """Raise when this condition cannot drive a ``frame`` solve."""
@@ -389,6 +411,8 @@ class CurrentDensity(Condition):
 
     glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.CURRENT_DENSITY
 
+    combine: ClassVar[Combine] = Combine.SUM
+
     value: Annotated[CurrentDensityQuantity, ElmerKeyword("Current Density", U.A / U.m**2)]
     """`J` `[A/m²]`: Signed out-of-plane current density imposed uniformly over the body: azimuthal under Axisymmetric, along +normal under Cartesian2D."""
 
@@ -434,8 +458,14 @@ class HeatFlux(Condition):
 
     glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
 
+    combine: ClassVar[Combine] = Combine.SUM
+
     value: Annotated[HeatFluxQuantity, ElmerKeyword("Heat Flux", U.W / U.m**2)]
     """`q_s` `[W/m²]`: Heat flux through the boundary."""
+
+    def yields_to(self, emitted: Mapping[str, SifValue]) -> tuple[tuple[str, str], ...]:
+        """The heat flux, which a fixed temperature on the same boundary overrides."""
+        return tuple((key, str(ElmerVariable.TEMPERATURE)) for key in emitted)
 
 
 class Convection(Condition):
@@ -459,11 +489,17 @@ class Convection(Condition):
 
     external_only: ClassVar[bool] = True
 
+    combine: ClassVar[Combine] = Combine.ALONE
+
     coefficient: Annotated[HeatTransferCoefficient, ElmerKeyword("Heat Transfer Coefficient", U.W / (U.m**2 * U.K))]
     """`h` `[W/(m²·K)]`: Convective heat-transfer coefficient."""
 
     ext_temperature: Annotated[Temperature, ElmerKeyword("External Temperature", U.K)]
     """`T_amb` `[K]`: External (ambient) temperature the boundary exchanges with."""
+
+    def yields_to(self, emitted: Mapping[str, SifValue]) -> tuple[tuple[str, str], ...]:
+        """The film exchange, which a fixed temperature on the same boundary overrides."""
+        return tuple((key, str(ElmerVariable.TEMPERATURE)) for key in emitted)
 
 
 class HeatSource(Condition):
@@ -484,6 +520,8 @@ class HeatSource(Condition):
     section: ClassVar[SifSection] = SifSection.BODY_FORCE
 
     glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.THERMAL
+
+    combine: ClassVar[Combine] = Combine.SUM
 
     power_density: Annotated[PowerDensity, ElmerKeyword("Volumetric Heat Source", U.W / U.m**3)]
     """`q` `[W/m³]`: Heat generation density at ``reference_temperature`` when a coefficient is set, else the constant source."""
@@ -858,8 +896,14 @@ class SurfaceForce(Condition):
 
     glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.SURFACE_FORCE
 
+    combine: ClassVar[Combine] = Combine.SUM
+
     force: Force
     """`F⃗` `[N]`: Total force spread uniformly over the face, in the authored frame."""
+
+    def yields_to(self, emitted: Mapping[str, SifValue]) -> tuple[tuple[str, str], ...]:
+        """Each nonzero ``Force i``, which a fixed ``Displacement i`` on the same boundary overrides."""
+        return tuple((key, f"{ElmerVariable.DISPLACEMENT} {key.removeprefix('Force ')}") for key, value in emitted.items() if key.startswith("Force ") and value != 0.0)
 
     def _solve_force(self, frame: Frame) -> tuple[float, ...]:
         """The solve components of the solve domain's share of the force."""

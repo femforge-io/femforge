@@ -104,7 +104,7 @@ def per_axis(condition: Condition, label: str, dropped: Sequence[str], tip: str)
     return view
 
 
-def condition_card(condition: Condition, *, icon: IconName | None, dropped: Sequence[str] = (), dropped_tip: Callable[[str], str] = lambda _: "", muted_tip: str = "") -> ConditionCard:
+def condition_card(condition: Condition, *, icon: IconName | None, dropped: Sequence[str] = (), dropped_tip: Callable[[str], str] = lambda _: "") -> ConditionCard:
     """One condition as its read-only editor: its type, then each authored field in order.
 
     Args:
@@ -112,7 +112,6 @@ def condition_card(condition: Condition, *, icon: IconName | None, dropped: Sequ
         icon: The condition's glyph icon, None for one the scene draws no glyph for.
         dropped: The authored components the solve frame drops, such as ``z`` in a 2D frame.
         dropped_tip: Why the frame drops a component, by its name.
-        muted_tip: Why the condition never reached the solver; empty when it did.
     """
     fields: list[FieldView] = []
     names = [name for name in type(condition).model_fields if name not in SKIPPED]
@@ -135,10 +134,6 @@ def condition_card(condition: Condition, *, icon: IconName | None, dropped: Sequ
     card: ConditionCard = {"title": title(kind), "fields": fields}
     if icon is not None:
         card["icon"] = icon
-
-    if muted_tip:
-        card["muted"] = True
-        card["tip"] = muted_tip
 
     return card
 

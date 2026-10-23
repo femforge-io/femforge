@@ -17,7 +17,7 @@ from femforge.materials.neodymium import N52
 from femforge.materials.pcb import FR4
 from femforge.materials.steel import Steel_316
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import FixedDisplacement, FixedTemperature, HeatSource, Magnetization, SurfaceForce
+from femforge.physical.conditions import FixedDisplacement, FixedTemperature, HeatFlux, HeatSource, Magnetization, SurfaceForce
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import U, quantity
 from femforge.run.conditions import ConditionRecord, ConditionsFile, GroupConditions, SifKeyword, SolveComponent
@@ -91,18 +91,17 @@ def test_the_sidecar_round_trips(tmp_path: Path) -> None:
     assert isinstance(_only(ConditionsFile.load(tmp_path).boundary("RIGHTFACE")).condition, SurfaceForce)
 
 
-def test_a_face_value_shadows_the_body_value_it_overrides(tmp_path: Path) -> None:
-    body = EntityTag(selector={TagKey.NAME: "Box"}, conditions=[FixedTemperature(value=300 * U.K)])
-    tip = EntityTag(selector={TagKey.NAME: "Tip"}, conditions=[FixedTemperature(value=350 * U.K)])
+def test_each_of_two_summed_loads_records_its_own_share(tmp_path: Path) -> None:
+    body = EntityTag(selector={TagKey.NAME: "Box"}, conditions=[HeatFlux(value=100 * U.W / U.m**2)])
+    tip = EntityTag(selector={TagKey.NAME: "Tip"}, conditions=[HeatFlux(value=50 * U.W / U.m**2)])
     boundaries = [FakeBoundaryGroup(11, "BOX__EXT", ("BOX",), [101]), FakeBoundaryGroup(12, "TIP", ("BOX",), [102], tags=[tip], measure=1e-4, named=True)]
     captured = _capture(tmp_path, Physics.THERMAL, [FakePhysicalGroup(1, "BOX", FR4(), [body])], boundaries, [body, tip])
     group = captured.boundary("TIP")
 
     assert group is not None
-    assert [(record.tag, record.block_name) for record in group.conditions] == [(0, "TIP_fixed_temperature_fixed_temperature"), (1, "TIP_fixed_temperature_fixed_temperature")]
-    assert group.conditions[0].keywords == [SifKeyword(name="Temperature", value=300.0, shadowed=True)]
-    assert group.conditions[1].keywords == [SifKeyword(name="Temperature", value=350.0, shadowed=False)]
-    assert _only(captured.boundary("BOX__EXT")).keywords == [SifKeyword(name="Temperature", value=300.0)]
+    assert [(record.tag, record.block_name) for record in group.conditions] == [(0, "TIP_heat_flux_heat_flux"), (1, "TIP_heat_flux_heat_flux")]
+    assert [record.keywords for record in group.conditions] == [[SifKeyword(name="Heat Flux", value=100.0)], [SifKeyword(name="Heat Flux", value=50.0)]]
+    assert (tmp_path / "case.sif").read_text(encoding="utf-8").count("Heat Flux = 150.0") == 1, "the sif holds the sum"
 
 
 def test_a_component_shared_by_several_bodies_shadows_nothing(tmp_path: Path) -> None:
@@ -120,7 +119,6 @@ def test_a_component_shared_by_several_bodies_shadows_nothing(tmp_path: Path) ->
 
     assert len(drives) == 3
     assert {(record.block, record.block_name) for record in drives} == {(1, "Phase0_coil")}
-    assert all(not keyword.shadowed for record in drives for keyword in record.keywords)
     assert [keyword.name for keyword in drives[0].keywords] == ["Desired Coil Current", "Coil Type"]
 
 

@@ -94,9 +94,21 @@ cold_root = ff.EntityTag(selector={ff.TagKey.NAME: "Root"}, conditions=[ff.Fixed
 Take the face from the body's own `faces()`, so it coincides with the body face exactly, and sort by position: build123d does not order `faces()` along an axis.
 
 - An `EntityTag` whose selector matches the face puts its boundary conditions on the face's group.
-- The bordering body's boundary conditions still reach the face, `Convection` included when the face lies on the outer shell. Where the face and the body set the same keyword, the face's value wins.
+- The bordering body's boundary conditions still reach the face, `Convection` included when the face lies on the outer shell. They combine with the face's own conditions as [Several conditions on one group](#several-conditions-on-one-group) sets out.
 - A face that lies on no body boundary stops the mesh with an error.
 - `SurfaceForce` spreads its total force over the face's area, so it needs a named face; on a body's tag it raises. See [Linear elasticity](linear-elasticity.md).
+
+### Several conditions on one group
+
+**Loads add up; fixed values must agree.** When several conditions reach one body or boundary group, from the body's tag, the face's tag or both, they merge into one sif block:
+
+| Conditions | On one group |
+| --- | --- |
+| `SurfaceForce`, `HeatFlux`, `HeatSource`, `CurrentDensity` | Values of one kind add, component by component. |
+| `FixedTemperature`, `FixedVoltage`, `FixedDisplacement`, `Magnetization` | Equal values merge. Different values stop the run. `FixedDisplacement` merges axis by axis, so X from one and Y from another hold both. |
+| `Convection` | One per group. A second stops the run. |
+
+A load on a quantity a fixed value holds, such as `HeatFlux` or `Convection` beside `FixedTemperature`, or a force along a held displacement axis, also stops the run, because the solver would ignore the load. The error names the group, both conditions and their tags. A body-wide condition never gives way to a face's own: to treat one face differently, put the body's condition on the tags of the other faces instead.
 
 Some conditions need no authoring:
 

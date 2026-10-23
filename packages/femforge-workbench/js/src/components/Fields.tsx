@@ -20,8 +20,6 @@ export interface ConditionCard {
   title: string;
   icon?: IconName;
   fields: FieldView[];
-  muted?: boolean;
-  tip?: string;
 }
 
 const BOX =
@@ -103,19 +101,12 @@ export function Fields({ fields = [], className }: FieldsProps) {
 /** A condition card: its type as a read-only select led by its glyph icon, then its fields. */
 export function ConditionCardView({ card }: { card: ConditionCard }) {
   return (
-    <Tip content={card.tip} definition>
-      <div
-        className={cn(
-          "flex flex-col gap-1 rounded-md border border-border bg-background p-1.5",
-          card.muted && "opacity-50",
-        )}
-      >
-        <span className={cn(BOX, "gap-1.5 font-medium")}>
-          {card.icon ? <Icon name={card.icon} size={14} className="shrink-0" /> : null}
-          <span className="truncate">{card.title}</span>
-        </span>
-        {card.fields.length ? <Fields fields={card.fields} /> : null}
-      </div>
-    </Tip>
+    <div className="flex flex-col gap-1 rounded-md border border-border bg-background p-1.5">
+      <span className={cn(BOX, "gap-1.5 font-medium")}>
+        {card.icon ? <Icon name={card.icon} size={14} className="shrink-0" /> : null}
+        <span className="truncate">{card.title}</span>
+      </span>
+      {card.fields.length ? <Fields fields={card.fields} /> : null}
+    </div>
   );
 }
