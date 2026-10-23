@@ -30,10 +30,7 @@ class SifKeyword(BaseModel):
     """The sif keyword, such as ``Force 1``."""
 
     value: SifValue
-    """`[?]`: The emitted value, in the SI unit Elmer reads the keyword in."""
-
-    shadowed: bool = False
-    """Whether a later emission into the same block for the same group set the same keyword, so this value never reached the solver."""
+    """`[?]`: The emitted value, in the SI unit Elmer reads the keyword in; loads of one kind in one block add up to the value the sif holds."""
 
 
 class SolveComponent(BaseModel):
@@ -93,7 +90,7 @@ class GroupConditions(BaseModel):
     """The group name, shared by the mesh and the sif."""
 
     conditions: list[ConditionRecord] = Field(default_factory=list)
-    """The emissions in sif order, the later winning a keyword clash."""
+    """The emissions in sif order."""
 
 
 class ConditionsFile(BaseModel):
@@ -117,9 +114,8 @@ class ConditionsFile(BaseModel):
         """
         landings: list[SifLanding] = sim.landings
 
-        def record(position: int, landing: SifLanding) -> ConditionRecord:
-            later: list[SifLanding] = [other for other in landings[position + 1 :] if other.block is landing.block and other.group == landing.group]
-            keywords: list[SifKeyword] = [SifKeyword(name=name, value=value, shadowed=any(name in other.keywords for other in later)) for name, value in landing.keywords.items()]
+        def record(landing: SifLanding) -> ConditionRecord:
+            keywords: list[SifKeyword] = [SifKeyword(name=name, value=value) for name, value in landing.keywords.items()]
             index: int | None = next((number for number, tag in enumerate(tags) if tag is landing.tag), None)
             condition = cast("ConditionUnion | None", landing.condition)
             components: tuple[tuple[int, float], ...] = () if condition is None else condition.solve_components(sim.frame)
@@ -138,7 +134,7 @@ class ConditionsFile(BaseModel):
                 dropped=list(dropped),
             )
 
-        records: list[tuple[SifLanding, ConditionRecord]] = [(landing, record(position, landing)) for position, landing in enumerate(landings)]
+        records: list[tuple[SifLanding, ConditionRecord]] = [(landing, record(landing)) for landing in landings]
 
         def of(target: ConditionTarget, names: Sequence[str]) -> list[GroupConditions]:
             return [GroupConditions(group=name, conditions=[entry for landing, entry in records if landing.target is target and landing.group == name]) for name in names]

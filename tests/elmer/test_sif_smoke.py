@@ -301,19 +301,18 @@ def test_convection_lands_only_on_external_air_surfaces() -> None:
 
 
 def test_one_boundary_block_per_group_with_conditions_merged() -> None:
-    # ONE Boundary per surface group (Elmer honors a single BC section per boundary element): the board's
-    # fixed_temperature + heat_flux merge into the interface's single block.
-    fr4_tag = EntityTag(selector={"Region": "Board"}, conditions=[FixedTemperature(value=350 * U.K), HeatFlux(value=500 * U.W / U.m**2)])
-    air_tag = EntityTag(selector={"Region": "Ambient"}, conditions=[Convection(coefficient=12 * U.W / (U.m**2 * U.K), ext_temperature=300 * U.K)])
+    # ONE Boundary per surface group (Elmer honors a single BC section per boundary element): both regions' heat fluxes add on the interface's single block.
+    fr4_tag = EntityTag(selector={"Region": "Board"}, conditions=[HeatFlux(value=500 * U.W / U.m**2)])
+    air_tag = EntityTag(selector={"Region": "Ambient"}, conditions=[Convection(coefficient=12 * U.W / (U.m**2 * U.K), ext_temperature=300 * U.K), HeatFlux(value=200 * U.W / U.m**2)])
     groups: list[PhysicalGroup] = [
         FakePhysicalGroup(1, "FR4", FR4(), [fr4_tag]),
         FakePhysicalGroup(2, "AIR", Air(), [air_tag]),
     ]
     sif = _write_sif(physics=Physics.THERMAL, groups=groups, boundary_groups=_thermal_boundary_groups())
     blocks = _boundary_blocks(sif)
-    assert set(blocks) == {"AIR__EXT_convection", "AIR__FR4_fixed_temperature_heat_flux"}
-    merged = blocks["AIR__FR4_fixed_temperature_heat_flux"]
-    assert "Heat Flux" in merged and re.search(r"^\s*Temperature = ", merged, re.MULTILINE)
+    assert set(blocks) == {"AIR__EXT_convection_heat_flux", "AIR__FR4_heat_flux_heat_flux"}
+    assert re.search(r"^\s*Heat Flux = 700\.0$", blocks["AIR__FR4_heat_flux_heat_flux"], re.MULTILINE)
+    assert "Heat Transfer Coefficient" in blocks["AIR__EXT_convection_heat_flux"]
 
 
 # --- body-force sources (CurrentDensity / HeatSource) ------------------------

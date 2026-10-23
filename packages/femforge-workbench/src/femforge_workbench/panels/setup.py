@@ -71,8 +71,6 @@ NBSP = "\u00a0"
 SEPARATOR = " · "
 AUTOMATIC = "(Set by femforge)"
 AUTOMATIC_SOURCE = "Set by femforge"
-OVERRIDDEN = "(Overridden)"
-OVERRIDDEN_TIP = "A later condition on this group set the same keywords, so these never reached the solver."
 LEGACY_NAMES = "Names recovered from mesh.names."
 SOLVING_MESH = "Solving · glyphs drawn on the mesh."
 NO_FIELDS_MESH = "No fields · glyphs drawn on the mesh."
@@ -431,14 +429,13 @@ def line_of(lead: str, parts: Sequence[tuple[str, bool, str]]) -> ConditionLine:
 
 
 def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[ConditionLine]:
-    """The lines one emission reads as: its kind and the solver-side summary in ``frame``, each authored field the frame dropped muted with the reason, and whether a later emission overrode it."""
+    """The lines one emission reads as: its kind and the solver-side summary in ``frame``, and each authored field the frame dropped muted with the reason."""
     kind = title(record.kind)
     condition = record.condition
     if condition is None:
         return [line_of(kind, [(AUTOMATIC, True, "")])]
 
     emitted = {keyword.name: keyword.value for keyword in record.keywords}
-    overridden = bool(record.keywords) and all(keyword.shadowed for keyword in record.keywords)
 
     def read(part: SummaryPart) -> tuple[str, bool, str]:
         text = f"{part.label} {part.value}" if part.label else part.value
@@ -450,9 +447,6 @@ def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[Condit
     lines: list[ConditionLine] = []
     for number, summary in enumerate(condition.summary(emitted, frame=frame)):
         parts = [read(part) for part in summary]
-        if number == 0 and overridden:
-            parts.append((OVERRIDDEN, True, OVERRIDDEN_TIP))
-
         lines.append(line_of(kind if number == 0 else "", parts))
 
     return lines
@@ -504,9 +498,8 @@ def cards_of(records: Sequence[ConditionRecord], frame: Frame | None) -> list[Co
 
         numbers = [keyword.value for keyword in record.keywords if isinstance(keyword.value, int | float) and not isinstance(keyword.value, bool)]
         icon = icon_of(condition.glyph, negative=any(number < 0 for number in numbers)) if condition.glyph is not None else None
-        overridden = bool(record.keywords) and all(keyword.shadowed for keyword in record.keywords)
         dropped = list(dict.fromkeys([*record.dropped, *inactive]))
-        cards.append(condition_card(condition, icon=icon, dropped=dropped, dropped_tip=partial(dropped_tip, frame=frame), muted_tip=OVERRIDDEN_TIP if overridden else ""))
+        cards.append(condition_card(condition, icon=icon, dropped=dropped, dropped_tip=partial(dropped_tip, frame=frame)))
 
     return cards
 

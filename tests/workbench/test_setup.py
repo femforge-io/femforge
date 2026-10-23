@@ -80,7 +80,7 @@ FLEXURE_FRAME = Cartesian2D(normal=Axis(origin=Vec3(0, 0, 5), direction=Directio
 STEEL = Steel_1080()
 
 
-def _record(kind: str, condition: object, block: int, keywords: dict[str, float], *, dropped: tuple[str, ...] = (), shadowed: bool = False) -> ConditionRecord:
+def _record(kind: str, condition: object, block: int, keywords: dict[str, float], *, dropped: tuple[str, ...] = ()) -> ConditionRecord:
     return ConditionRecord(
         kind=kind,
         condition=cast("FixedDisplacement", condition),
@@ -89,7 +89,7 @@ def _record(kind: str, condition: object, block: int, keywords: dict[str, float]
         section=SifSection.BOUNDARY_CONDITION,
         block=block,
         block_name=f"{kind}_{block}",
-        keywords=[SifKeyword(name=name, value=value, shadowed=shadowed) for name, value in keywords.items()],
+        keywords=[SifKeyword(name=name, value=value) for name, value in keywords.items()],
         solve_components=[SolveComponent(index=index, value=value) for index, value in enumerate(keywords.values(), start=1)],
         dropped=list(dropped),
     )
@@ -358,12 +358,10 @@ def test_the_caption_claims_glyphs_only_for_a_run_that_draws_them(tmp_path: Path
     assert caption_of(replace(bare, has_mesh=False, legacy_names=True)) == "Names recovered from mesh.names."
 
 
-def test_a_femforge_block_or_an_overridden_one_reads_muted() -> None:
+def test_a_femforge_block_reads_muted() -> None:
     automatic = ConditionRecord(kind="far_field", section=SifSection.BOUNDARY_CONDITION, block=3, block_name="AIR__EXT_far_field")
-    shadowed = _record("fixed_displacement", FixedDisplacement(), 1, {"Displacement 1": 0.0}, shadowed=True)
 
     assert condition_lines(automatic, None) == [{"parts": [{"text": "Far Field "}, {"text": "(Set by femforge)", "muted": True}]}]
-    assert condition_lines(shadowed, FLEXURE_FRAME)[0]["parts"][-1].get("text") == "(Overridden)"
 
 
 def test_the_notices_name_a_run_without_conditions_one_that_sets_none_and_one_that_failed_before_meshing(tmp_path: Path) -> None:

@@ -14,7 +14,7 @@ from femforge.frames import Axisymmetric, Solid
 from femforge.materials.pcb import FR4
 from femforge.meshing.boundary import BoundaryGroup
 from femforge.meshing.groups import PhysicalGroup
-from femforge.physical.conditions import BoundarySite, ConditionUnion, Convection, FixedTemperature, Magnetization
+from femforge.physical.conditions import BoundarySite, ConditionUnion, Convection, FixedTemperature, HeatFlux, Magnetization
 from femforge.physical.domain import EntityTag
 from femforge.physical.units import U
 from tests.elmer.test_sif_smoke import FakeBoundaryGroup, FakePhysicalGroup, _boundary_blocks, _write_sif
@@ -57,20 +57,30 @@ def test_a_face_condition_lands_only_on_its_named_group() -> None:
 
 
 def test_an_external_only_body_condition_also_reaches_the_named_group() -> None:
-    sif = _write_sif(physics=Physics.THERMAL, groups=_box(_convection()), boundary_groups=_shell_and_tip(_tip_tag(FixedTemperature(value=350 * U.K))))
+    sif = _write_sif(physics=Physics.THERMAL, groups=_box(_convection()), boundary_groups=_shell_and_tip(_tip_tag(HeatFlux(value=40 * U.W / U.m**2))))
     blocks = _boundary_blocks(sif)
 
-    assert set(blocks) == {"BOX__EXT_convection", "TIP_convection_fixed_temperature"}
-    assert "Heat Transfer Coefficient" in blocks["TIP_convection_fixed_temperature"]
+    assert set(blocks) == {"BOX__EXT_convection", "TIP_convection_heat_flux"}
+    assert "Heat Transfer Coefficient" in blocks["TIP_convection_heat_flux"]
 
 
-def test_the_face_value_wins_a_clash_with_the_body_value() -> None:
+def test_a_body_value_and_a_different_face_value_on_one_face_fail_naming_both_tags() -> None:
     groups = _box(FixedTemperature(value=300 * U.K))
     boundary_groups = _shell_and_tip(_tip_tag(FixedTemperature(value=350 * U.K)))
-    blocks = _boundary_blocks(_write_sif(physics=Physics.THERMAL, groups=groups, boundary_groups=boundary_groups))
 
-    assert _temperature(blocks["BOX__EXT_fixed_temperature"]) == pytest.approx(300.0)
-    assert _temperature(blocks["TIP_fixed_temperature_fixed_temperature"]) == pytest.approx(350.0)
+    with pytest.raises(ValueError, match=r"TIP: Temperature is 300 from Fixed Temperature \(tag BOX\) but 350 from Fixed Temperature \(tag TIP\)"):
+        _ = _write_sif(physics=Physics.THERMAL, groups=groups, boundary_groups=boundary_groups)
+
+
+def test_a_body_value_the_face_repeats_merges() -> None:
+    blocks = _boundary_blocks(_write_sif(physics=Physics.THERMAL, groups=_box(FixedTemperature(value=300 * U.K)), boundary_groups=_shell_and_tip(_tip_tag(FixedTemperature(value=300 * U.K)))))
+
+    assert _temperature(blocks["TIP_fixed_temperature_fixed_temperature"]) == pytest.approx(300.0)
+
+
+def test_a_film_on_a_face_held_at_a_fixed_temperature_fails() -> None:
+    with pytest.raises(ValueError, match=r"TIP: Convection \(tag BOX\) has no effect under the fixed Temperature of Fixed Temperature \(tag TIP\); remove one$"):
+        _ = _write_sif(physics=Physics.THERMAL, groups=_box(_convection()), boundary_groups=_shell_and_tip(_tip_tag(FixedTemperature(value=350 * U.K))))
 
 
 def test_a_tag_matching_the_body_and_the_face_lands_once() -> None:
