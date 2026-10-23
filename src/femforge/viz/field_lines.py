@@ -165,6 +165,9 @@ class FieldLineOptions(BaseModel):
     tube_radius: float | None = Field(default=None, gt=0.0)
     """`r_tube` `[m]`: Streamline tube radius; None draws the streamlines as plain poly-lines."""
 
+    line_width: float = Field(default=1.0, gt=0.0)
+    """`[px]`: The width of a plain poly-line in window pixels."""
+
     initial_step_length: float = Field(default=0.5, gt=0.0)
     """`[-]`: The integrator's initial step, in cell lengths; smaller values follow tight curves."""
 
@@ -181,7 +184,7 @@ class FieldLineOptions(BaseModel):
     """The 3-component array the lines follow; None picks the magnetic flux density."""
 
 
-DRAW_ONLY: frozenset[str] = frozenset({"colormap", "invert", "log_scale", "clim", "opacity", "opacity_map"})
+DRAW_ONLY: frozenset[str] = frozenset({"colormap", "invert", "log_scale", "clim", "opacity", "opacity_map", "line_width"})
 """The [`FieldLineOptions`][] fields that only restyle integrated lines, never change them."""
 
 
@@ -554,6 +557,7 @@ def draw_streamlines(
         clim=options.clim,
         log_scale=options.log_scale,
         opacity=options.opacity,  # pyright: ignore[reportArgumentType]
+        line_width=options.line_width,
         lighting=False,
         show_scalar_bar=False,
         scalar_bar_args={"title": "B (T)"},

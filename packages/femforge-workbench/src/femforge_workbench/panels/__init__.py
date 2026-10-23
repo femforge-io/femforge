@@ -158,13 +158,26 @@ def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callab
         values: The values offered, in order.
         read: Makes the text each value reads as; Title Case by default.
     """
+    with captioned(label):
+        segments(model, label, values, read=read)
+
+
+def segments(model: StrEnum, label: str, values: Sequence[str], *, read: Callable[[str], str] = title, disabled: react.Bind | None = None) -> None:
+    """A single choice among `values` as one row of equal segments, under a heading that names it; pressing the chosen segment again changes nothing.
+
+    Args:
+        model: The state variable the choice is bound to.
+        label: The choice's accessible name.
+        values: The values offered, in order.
+        read: Makes the text each value reads as; Title Case by default.
+        disabled: A client expression that disables every segment; None keeps them enabled.
+    """
     keep = react.Callback(f"{EVENT} && trame.state.set({json.dumps(str(model))}, {EVENT})")
     columns = {2: TWO_SEGMENTS, 4: FOUR_SEGMENTS}.get(len(values), "")
     track = f"{Cls.SEGMENTED} {columns}".strip()
-    with captioned(label):
-        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, classes=track, aria_label=title(label)):
-            for value in values:
-                ToggleGroupItem(read(value), value=value, classes=str(Cls.SEGMENT))
+    with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, disabled=disabled, classes=track, aria_label=title(label)):
+        for value in values:
+            ToggleGroupItem(read(value), value=value, classes=str(Cls.SEGMENT))
 
 
 def readouts(left: str | react.Bind, right: str | react.Bind) -> None:

@@ -1639,6 +1639,7 @@ class FieldViewerController(TrameComponent):
             hidden_bodies=hidden,
             outline=bool(state[FieldVar.OUTLINE]),
             edges=self.app.render.edges(),
+            shading=self.app.render.shading(),
             scale=self.viewer.window_scale() if self.viewer is not None else 1.0,
             opacity=only(state[FieldVar.OPACITY], DEFAULTS.opacity),
             opacity_map=opacity_map,
@@ -1729,7 +1730,14 @@ class FieldViewerController(TrameComponent):
         palette = self.app.palette
         hover = mix(palette.accent, palette.paper, HOVER_SHARE)
 
-        update: dict[str, object] = {"scale": self.viewer.window_scale(), "accent": hex_color(palette.accent), "hover": hover, "ink": hex_color(palette.text), "edges": self.app.render.edges()}
+        update: dict[str, object] = {
+            "scale": self.viewer.window_scale(),
+            "accent": hex_color(palette.accent),
+            "hover": hover,
+            "ink": hex_color(palette.text),
+            "edges": self.app.render.edges(),
+            "shading": self.app.render.shading(),
+        }
 
         return view.model_copy(update=update)
 
