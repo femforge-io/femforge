@@ -34,7 +34,7 @@ from femforge.physical.conditions import (
 )
 from femforge.physical.readout import readout
 from femforge.physical.units import Quantity, U, Unit, quantity
-from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, Layer, SceneActor, feature_outline, forward, run_manifest, warped
+from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, EdgeStyle, Layer, SceneActor, feature_outline, forward, run_manifest, warped
 from femforge.viz.field_lines import Bounds
 from femforge.viz.symmetry import Basis, Expansion, Surface, extruded_lines, prism_depth, swept_lines
 
@@ -158,20 +158,14 @@ TINT_LINE_PX: float = 4.0
 MARK_LINE_PX: float = 2.0
 """`[px]`: The width of a tick, pin, roller, marker or leader in CSS pixels."""
 
-SELECTION_LINE_PX: float = 4.0
-"""`[px]`: The width of a selected 2D boundary in CSS pixels."""
+SELECTION_LINE_SHARE: float = 2.0
+"""`[-]`: The width of a selected 2D boundary as a multiple of the highlight width."""
 
-SILHOUETTE_LINE_PX: float = 3.0
-"""`[px]`: The width of a selected body's silhouette in CSS pixels."""
-
-HOVER_LINE_PX: float = 2.0
-"""`[px]`: The width of a hovered entity's outline in CSS pixels."""
+SILHOUETTE_LINE_SHARE: float = 1.5
+"""`[-]`: The width of a selected body's silhouette as a multiple of the highlight width."""
 
 HOVER_OPACITY: float = 0.4
 """`[-]`: The opacity of a hovered boundary of a revolved section, which shows as a swept surface."""
-
-OUTLINE_LINE_PX: float = 2.0
-"""`[px]`: The width of the section outline in CSS pixels."""
 
 LABEL_OPACITY: float = 0.8
 """`[-]`: The opacity of a label chip's dark box."""
@@ -731,6 +725,9 @@ class GlyphView(BaseModel):
 
     ink: str = GLYPH_HALO
     """The color of lines drawn against the background: marks, leaders, the outline and the hull."""
+
+    edges: EdgeStyle = EdgeStyle()
+    """How the outlines draw, in CSS pixels that `scale` multiplies."""
 
 
 @dataclass(frozen=True)
@@ -1444,13 +1441,13 @@ class GlyphLayer:
         placement: GlyphPlacement = self.placement(host)
         lift: float = 2.0 * TINT_LIFT * placement.diagonal
         name: str = f"{GlyphActor.HOVER}{ref.id}"
-        width: float = HOVER_LINE_PX * view.scale
+        width: float = view.edges.highlight_width * view.scale
 
         if ref.kind is EntityKind.BODY:
             if ref.name not in host.blocks.keys():
                 return None
 
-            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([cast("pv.DataSet", host.blocks[ref.name])]))
+            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([cast("pv.DataSet", host.blocks[ref.name])]), view.edges.feature_angle)
             if edges is None:
                 return None
 
@@ -1546,12 +1543,12 @@ class GlyphLayer:
 
         if ref is not None and ref.kind is EntityKind.BODY and ref.name in host.blocks.keys():
             block = cast("pv.DataSet", host.blocks[ref.name])
-            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([block]))
+            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([block]), view.edges.feature_angle)
             raise_by: FloatArray = 2.0 * lift if placement.flat and not placement.revolved and not placement.extruded else np.zeros(3)
 
             if edges is not None:
                 edges.points = np.asarray(edges.points, dtype=np.float64) + raise_by
-                draws.append(GlyphDraw(GlyphActor.SELECTION, edges, color=view.accent, line_width=SILHOUETTE_LINE_PX * view.scale))
+                draws.append(GlyphDraw(GlyphActor.SELECTION, edges, color=view.accent, line_width=SILHOUETTE_LINE_SHARE * view.edges.highlight_width * view.scale))
 
             if ref.name not in host.spec.hidden_bodies:
                 fill: pv.PolyData = cast("pv.PolyData", block.extract_surface(algorithm=None))
@@ -1569,7 +1566,8 @@ class GlyphLayer:
             if swept is not None:
                 draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, _surface(swept), color=view.accent, opacity=SELECTION_OPACITY, layer=Layer.SELECTION))
             elif cells is not None and placement.flat:
-                draws.append(GlyphDraw(GlyphActor.SELECTION, segments_mesh(_segments(cells) + 2.0 * lift), color=view.accent, line_width=SELECTION_LINE_PX * view.scale))
+                width: float = SELECTION_LINE_SHARE * view.edges.highlight_width * view.scale
+                draws.append(GlyphDraw(GlyphActor.SELECTION, segments_mesh(_segments(cells) + 2.0 * lift), color=view.accent, line_width=width))
             elif cells is not None:
                 surface: pv.PolyData = cast("pv.PolyData", cells.extract_surface(algorithm=None))
                 surface.clear_data()
@@ -1580,7 +1578,7 @@ class GlyphLayer:
 
             # VTK.wasm lets a revolved display's translucent bodies hide or stipple the lines behind and along them, so there the outline draws on top in both renderers.
             def stroked(actor: GlyphActor, lines: pv.PolyData) -> GlyphDraw:
-                return GlyphDraw(actor, lines, color=view.ink, line_width=OUTLINE_LINE_PX * view.scale, overlay=placement.revolved)
+                return GlyphDraw(actor, lines, color=view.ink, line_width=view.edges.width * view.scale, overlay=placement.revolved)
 
             if loops is not None:
                 draws.append(stroked(GlyphActor.OUTLINE, segments_mesh(_segments(loops) + lift)))
@@ -1746,10 +1744,11 @@ class GroupScene:
                 name=SceneActor.STYLED.of(name),
             )
 
-        edges: pv.PolyData | None = feature_outline(self.blocks) if self.frame.model_dim == 3 else None
+        view: GlyphView = self.glyph_view or GlyphView()
+        edges: pv.PolyData | None = feature_outline(self.blocks, view.edges.feature_angle) if self.frame.model_dim == 3 else None
 
         if edges is not None:
-            outline = plotter.add_mesh(edges, color="black", line_width=OUTLINE_LINE_PX, reset_camera=False, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
+            outline = plotter.add_mesh(edges, color="black", line_width=view.edges.width * view.scale, reset_camera=False, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
             forward(outline, Layer.EDGE)
 
         if self.glyphs is not None:

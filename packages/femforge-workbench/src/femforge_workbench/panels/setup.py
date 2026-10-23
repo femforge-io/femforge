@@ -30,8 +30,8 @@ from femforge.run.entities import Body, Boundary, BoundaryKind, Entities
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.viz.glyphs import EntityKind, EntityRef, body_color
-from femforge_workbench.panels import Cls, PanelComponent
-from femforge_workbench.panels.field_viewer import STACK, TIMES, FieldVar, names_of, only, setting
+from femforge_workbench.panels import Cls, PanelComponent, setting
+from femforge_workbench.panels.field_viewer import STACK, TIMES, FieldVar, names_of, only
 from femforge_workbench.panels.fields import automatic_card, condition_card, fact_field
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.busy import Busy

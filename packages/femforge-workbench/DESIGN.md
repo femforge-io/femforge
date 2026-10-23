@@ -273,7 +273,7 @@ A click always gets an answer in the same frame, even when its result takes seco
 ## 3D view
 
 - The camera's near and far planes enclose every visible actor, glyphs included. The view recomputes them after every scene change and every camera move. The near plane may come as close as 0.001 of the far plane's distance (`NEAR_TOLERANCE` in `panels/scene.py`), so a model zoomed in close keeps its glyphs.
-- Edges are antialiased in both renderers. Server mode renders with 8× MSAA. VTK.wasm ignores the window's multisamples, so Client mode uses FXAA.
+- Each renderer smooths edges as Render Settings asks: FXAA in Client mode and 8× MSAA in Server mode by default.
 - The orientation axes sit in the corner, colored X red, Y green and Z blue, without labels. The scene holds no other axes.
 - Hover outlines an entity's feature edges at 2 px in `--primary` mixed 60 % into `--background`. The outline is a hidden actor the browser shows, so it follows the pointer without a server round trip; in Server mode no outline shows. Selection outlines them at 2 px in `--primary`. The hovered or selected entity's glyph arrows and pins draw in the same color as its outline.
 - A tint, fill or accent copy keeps its points on the geometry it covers. A depth offset draws it over that geometry instead of lifting it off, in layers: feature edges, then face tint, then selection, then hover (`Layer` and `FORWARD_STEP` in `viz/field_display.py`). The offset holds at any zoom. A body drawn in a plain color also takes a 30 % `--primary` tint when selected. A field plot takes no tint, because its colormap can contain green.
@@ -296,6 +296,32 @@ A click always gets an answer in the same frame, even when its result takes seco
 | Isometric, from (−0.6, −0.8, 0.5) with Z up | Lucide `box` | |
 | Axes | Lucide `axis-3d`, as a toggle button | |
 | Screenshot, downloaded by the browser at twice the panel's size | Lucide `camera` | |
+
+### View menu
+
+- A right click that stays put opens the view's menu at the pointer. A right press that moves more than 4 px drags, so right-drag zoom opens nothing.
+- Show Axes is a checkbox item on the same state as the toolbar's Axes button.
+- Render Settings… opens the Render Settings dialog.
+
+### Render Settings
+
+- The dialog docks at the bottom right above the status bar with no scrim, so the views it changes stay in sight. A choice applies at once; a slider applies on its release.
+- The dialog stays open while you work in the page. Only its close buttons, or Escape pressed inside it, close it.
+- Renderer chooses Client or Server for the view the menu was opened on, on the same state as the toolbar toggle. Everything else applies to every 3D view of the user, in every workbench.
+
+| Group | Setting | Values | Default |
+|---|---|---|---|
+| Antialiasing | Client | Off, FXAA, SSAA | FXAA |
+| Antialiasing | Server | Off, FXAA, MSAA, SSAA | MSAA |
+| Edges | Outline Width | 0.5 to 6 px | 2 px |
+| Edges | Feature Angle | 5° to 90° | 30° |
+| Edges | Highlight Width | 0.5 to 6 px; a selected silhouette draws 1.5× and a selected 2D boundary 2× | 2 px |
+
+- Client mode has no MSAA, because VTK.wasm ignores the window's multisamples.
+- Client SSAA renders the canvas 2× each side and the browser averages it down. VTK.wasm maps the pointer by the device pixel ratio alone, so the view scales each pointer offset by 2 before VTK.wasm reads it.
+- Server SSAA renders each side √5 times larger. Lines and text scale by √5 to keep their width, and its translucent stage peels depth like the renderer's own.
+- The server keeps the settings per user under the user config directory, not in browser storage: browser storage is separate per port, and the server needs the settings before its first frame.
+- Reset to Defaults puts every setting back.
 
 ## Voice
 

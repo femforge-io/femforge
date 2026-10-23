@@ -40,7 +40,7 @@ from femforge_workbench import dock
 from femforge_workbench.app import Hook, Workbench
 from femforge_workbench.colormaps import COLORMAPS, FAVORITES, ColormapType
 from femforge_workbench.feeds import Feed
-from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, labelled, picker
+from femforge_workbench.panels import ITEM, Cls, ItemField, PanelComponent, Shared, captioned, labelled, picker, readouts, segmented, setting
 from femforge_workbench.panels.artifacts import open_folder
 from femforge_workbench.panels.scene import ScenePanel, View, ViewMode, toolbar_id, view_id
 from femforge_workbench.registry import FIELD_VIEWER
@@ -52,14 +52,11 @@ from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.checkbox import Checkbox
 from femforge_workbench.widgets.combobox import Combobox, ComboboxItem
 from femforge_workbench.widgets.element import EVENT, Prop, setter
-from femforge_workbench.widgets.field import Field, FieldLabel
 from femforge_workbench.widgets.icon import Icon
 from femforge_workbench.widgets.input import ColorInput, Input
 from femforge_workbench.widgets.reveal import Reveal
 from femforge_workbench.widgets.slider import Slider
-from femforge_workbench.widgets.switch import Switch
 from femforge_workbench.widgets.tip import Tip
-from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 from femforge_workbench.widgets.tour import TourStep
 
 
@@ -142,9 +139,6 @@ FIT_SHARE = 0.15
 
 LABEL_EM = 0.6
 """`[-]`: The width of a label character, as a share of the font size, for fitting the labels the scene draws."""
-SETTING = "flex h-6 w-full shrink-0 items-center justify-between gap-2"
-READOUTS = "flex items-center justify-between"
-SWITCH_ID = "ff-switch-"
 BODY_TABLE = "flex w-full shrink-0 flex-col gap-1"
 BODY_ROW = "grid h-6 grid-cols-[1rem_minmax(0,1fr)_5.5rem_4.5rem] items-center gap-x-2"
 BODY_NAME = "truncate"
@@ -800,58 +794,6 @@ def solving_notice(entry: RunEntry, *, tasks: bool) -> str:
     where = "the task strip below" if tasks else "the solver's terminal"
 
     return f"{entry.name} is still solving. Its fields appear here when it finishes; {where} shows its progress."
-
-
-def captioned(label: str) -> Field:
-    """A caption over the control built inside the returned field: the controls column is too narrow for one beside it."""
-    field = Field(orientation="vertical", classes=str(Cls.CONTROL))
-    with field:
-        FieldLabel(title(label), classes=str(Cls.CAPTION))
-
-    return field
-
-
-def setting(model: StrEnum, label: str, *, disabled: react.Bind | None = None) -> None:
-    """A switch over `model` at the right of its label, every switch of the controls in one column.
-
-    Args:
-        model: The state variable the switch is bound to.
-        label: The caption at the left.
-        disabled: A client expression that disables the switch; None keeps it enabled.
-    """
-    caption = str(Cls.CAPTION)
-    dimmed = react.Bind(f"({disabled.js_expression}) ? {json.dumps(f'{caption} opacity-50')} : {json.dumps(caption)}") if disabled is not None else caption
-    with Field(orientation="horizontal", classes=SETTING):
-        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=dimmed)
-        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled, aria_disabled=disabled)
-
-
-TWO_SEGMENTS = "grid-cols-2"
-"""The track of a two-way choice, which overrides the three columns `Cls.SEGMENTED` lays out."""
-
-
-def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
-    """A captioned single choice among `values` as one row of equal segments; pressing the chosen segment again changes nothing.
-
-    Args:
-        model: The state variable the choice is bound to.
-        label: The caption over the segments.
-        values: The values offered, in order.
-        read: Makes the text each value reads as; Title Case by default.
-    """
-    keep = react.Callback(f"{EVENT} && trame.state.set({json.dumps(str(model))}, {EVENT})")
-    track = f"{Cls.SEGMENTED} {TWO_SEGMENTS}" if len(values) == 2 else str(Cls.SEGMENTED)
-    with captioned(label):
-        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, classes=track, aria_label=title(label)):
-            for value in values:
-                ToggleGroupItem(read(value), value=value, classes=str(Cls.SEGMENT))
-
-
-def readouts(left: str | react.Bind, right: str | react.Bind) -> None:
-    """The row over a slider: a caption or its low end at the left, its high end at the right."""
-    with html.Div(classes=READOUTS):
-        html.Span([title(left) if isinstance(left, str) else left], classes=str(Cls.CAPTION))
-        html.Span([right], classes=str(Cls.CAPTION))
 
 
 def seed_count() -> str:
@@ -1696,6 +1638,8 @@ class FieldViewerController(TrameComponent):
             warp_scale=only(state[FieldVar.WARP_SCALE], 1.0),
             hidden_bodies=hidden,
             outline=bool(state[FieldVar.OUTLINE]),
+            edges=self.app.render.edges(),
+            scale=self.viewer.window_scale() if self.viewer is not None else 1.0,
             opacity=only(state[FieldVar.OPACITY], DEFAULTS.opacity),
             opacity_map=opacity_map,
             body_styles=tuple(look for look in (self.look(name) for name in self.bodies) if look.paint is not BodyPaint.FIELD or look.opacity != 1.0),
@@ -1785,7 +1729,9 @@ class FieldViewerController(TrameComponent):
         palette = self.app.palette
         hover = mix(palette.accent, palette.paper, HOVER_SHARE)
 
-        return view.model_copy(update={"scale": self.viewer.window_scale(), "accent": hex_color(palette.accent), "hover": hover, "ink": hex_color(palette.text)})
+        update: dict[str, object] = {"scale": self.viewer.window_scale(), "accent": hex_color(palette.accent), "hover": hover, "ink": hex_color(palette.text), "edges": self.app.render.edges()}
+
+        return view.model_copy(update=update)
 
     def glyph_view_from_state(self) -> GlyphView | None:
         """The glyph view the Setup tab state describes; None while the tab is off screen."""
