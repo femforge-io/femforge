@@ -7,14 +7,16 @@ from typing import TYPE_CHECKING
 
 from trame.app import TrameComponent
 from trame.ui.html import DivLayout
-from trame.widgets import react
+from trame.widgets import html, react
 from trame_server.state import State
 
 from femforge.common.utils import title
 from femforge_workbench.dock import template_name
-from femforge_workbench.widgets.element import Shared as SharedProps
+from femforge_workbench.widgets.element import EVENT, Shared as SharedProps
 from femforge_workbench.widgets.field import Field, FieldLabel
 from femforge_workbench.widgets.select import Select, SelectContent, SelectItem, SelectTrigger, SelectValue
+from femforge_workbench.widgets.switch import Switch
+from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 from femforge_workbench.widgets.tooltip import TooltipProvider
 
 
@@ -37,6 +39,10 @@ TRIGGER_WIDTH = "w-36"
 
 ITEM = "item"
 """The loop variable a picker's items are named by."""
+
+SETTING = "flex h-6 w-full shrink-0 items-center justify-between gap-2"
+READOUTS = "flex items-center justify-between"
+SWITCH_ID = "ff-switch-"
 
 
 class Cls(StrEnum):
@@ -110,6 +116,62 @@ class Carry(StrEnum):
     CAMERA = "camera"
     SHOWN = "shown"
     MODE = "mode"
+
+
+def captioned(label: str) -> Field:
+    """A caption over the control built inside the returned field: the controls column is too narrow for one beside it."""
+    field = Field(orientation="vertical", classes=str(Cls.CONTROL))
+    with field:
+        FieldLabel(title(label), classes=str(Cls.CAPTION))
+
+    return field
+
+
+def setting(model: StrEnum, label: str, *, disabled: react.Bind | None = None) -> None:
+    """A switch over `model` at the right of its label, every switch of the controls in one column.
+
+    Args:
+        model: The state variable the switch is bound to.
+        label: The caption at the left.
+        disabled: A client expression that disables the switch; None keeps it enabled.
+    """
+    caption = str(Cls.CAPTION)
+    dimmed = react.Bind(f"({disabled.js_expression}) ? {json.dumps(f'{caption} opacity-50')} : {json.dumps(caption)}") if disabled is not None else caption
+    with Field(orientation="horizontal", classes=SETTING):
+        FieldLabel(title(label), html_for=f"{SWITCH_ID}{model}", classes=dimmed)
+        Switch(model=str(model), id=f"{SWITCH_ID}{model}", disabled=disabled, aria_disabled=disabled)
+
+
+TWO_SEGMENTS = "grid-cols-2"
+"""The track of a two-way choice, which overrides the three columns `Cls.SEGMENTED` lays out."""
+
+FOUR_SEGMENTS = "grid-cols-4"
+"""The track of a four-way choice."""
+
+
+def segmented(model: StrEnum, label: str, values: Sequence[str], *, read: Callable[[str], str] = title) -> None:
+    """A captioned single choice among `values` as one row of equal segments; pressing the chosen segment again changes nothing.
+
+    Args:
+        model: The state variable the choice is bound to.
+        label: The caption over the segments.
+        values: The values offered, in order.
+        read: Makes the text each value reads as; Title Case by default.
+    """
+    keep = react.Callback(f"{EVENT} && trame.state.set({json.dumps(str(model))}, {EVENT})")
+    columns = {2: TWO_SEGMENTS, 4: FOUR_SEGMENTS}.get(len(values), "")
+    track = f"{Cls.SEGMENTED} {columns}".strip()
+    with captioned(label):
+        with ToggleGroup(type_="single", variant="outline", size="sm", value=react.Bind(str(model)), on_value_change=keep, classes=track, aria_label=title(label)):
+            for value in values:
+                ToggleGroupItem(read(value), value=value, classes=str(Cls.SEGMENT))
+
+
+def readouts(left: str | react.Bind, right: str | react.Bind) -> None:
+    """The row over a slider: a caption or its low end at the left, its high end at the right."""
+    with html.Div(classes=READOUTS):
+        html.Span([title(left) if isinstance(left, str) else left], classes=str(Cls.CAPTION))
+        html.Span([right], classes=str(Cls.CAPTION))
 
 
 def labelled(label: str) -> Field:
@@ -295,6 +357,9 @@ class PanelComponent(TrameComponent):
 
     def on_visible(self, visible: bool) -> None:
         """Called when dockview shows or hides the panel."""
+
+    def restyle(self) -> None:
+        """Called after the render settings changed, for a panel that draws with them to redraw."""
 
     def on_layout_changed(self) -> None:
         """Called after the dock re-laid out its groups."""

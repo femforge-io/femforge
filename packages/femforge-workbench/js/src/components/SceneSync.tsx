@@ -20,8 +20,10 @@ export interface SceneSyncProps {
   highlights?: Record<string, number> | null;
   /** The entity id whose outline shows; empty shows none. */
   highlighted?: string | null;
-  /** Called with `{width, height, ratio}` of the mirror's canvas in device pixels, whenever it changes. */
+  /** Called with `{width, height, ratio}` of the mirror's canvas in render pixels, whenever it changes. */
   onResize?: (size: CanvasSize) => void;
+  /** Render pixels per device pixel along each side; above one the mirror draws a larger canvas the browser averages down. */
+  supersample?: number;
 }
 
 export interface CameraMove {
@@ -59,17 +61,20 @@ interface RemoteSession {
   renderWindowIdsWithRunningEventLoops: Set<number>;
   native: NativeSession;
   getState(id: number): unknown;
+  setSizeAsync(id: number, width: number, height: number): Promise<unknown>;
 }
 
 interface LocalViewHandle {
   getRemoteSession(): RemoteSession | undefined;
   render(): void;
+  resize(): void;
 }
 
 const RETRY_MS = 100;
 const SETTLE_MS = 150;
 const OUTLINE_CHECK_MS = 200;
 const MODIFIED = "ModifiedEvent";
+const POINTED = ["mousedown", "mousemove", "mouseup", "dblclick", "wheel"] as const;
 
 function normalized([x, y, z]: Vector): Vector {
   const length = Math.hypot(x, y, z) || 1;
@@ -132,6 +137,7 @@ export function SceneSync({
   highlights,
   highlighted,
   onResize,
+  supersample = 1,
 }: SceneSyncProps) {
   const anchor = useRef<HTMLSpanElement>(null);
   const reduced = useReducedMotion();
@@ -268,6 +274,52 @@ export function SceneSync({
     };
   }, [viewRef, cameraId, matrixId]);
 
+  // The mirror sizes its canvas and maps the pointer by the device pixel ratio alone, so a supersampled canvas is sized here and
+  // the pointer's offset into it scaled to match; VTK.wasm listens on the canvas itself, so the view's host sees each event first.
+  useEffect(() => {
+    if (supersample === 1) return undefined;
+
+    let timer = 0;
+    let restore: (() => void) | undefined;
+    const host = anchor.current?.parentElement;
+    const scale = (event: Event): void => {
+      const canvas = host?.querySelector("canvas");
+      if (!canvas || !(event instanceof MouseEvent) || event.target !== canvas) return;
+
+      const { left, top } = canvas.getBoundingClientRect();
+      Object.defineProperty(event, "clientX", { value: left + (event.clientX - left) * supersample });
+      Object.defineProperty(event, "clientY", { value: top + (event.clientY - top) * supersample });
+    };
+
+    const attach = (): void => {
+      const handle = window.trame?.refs[viewRef] as LocalViewHandle | undefined;
+      const session = handle?.getRemoteSession?.();
+      if (!handle || !session) {
+        timer = window.setTimeout(attach, RETRY_MS);
+
+        return;
+      }
+
+      const sized = session.setSizeAsync;
+      session.setSizeAsync = (id, width, height) =>
+        sized.call(session, id, Math.round(width * supersample), Math.round(height * supersample));
+      restore = () => {
+        session.setSizeAsync = sized;
+        handle.resize();
+      };
+      handle.resize();
+    };
+
+    attach();
+    for (const type of POINTED) host?.addEventListener(type, scale, true);
+
+    return () => {
+      window.clearTimeout(timer);
+      for (const type of POINTED) host?.removeEventListener(type, scale, true);
+      restore?.();
+    };
+  }, [viewRef, supersample]);
+
   useEffect(() => {
     if (!onResize) return undefined;
 
@@ -277,11 +329,12 @@ export function SceneSync({
 
     // The box, never canvas.width: the LocalView sets the backing store afterwards and that assignment is not itself a resize.
     const measure = (entry: ResizeObserverEntry): CanvasSize => {
-      const ratio = window.devicePixelRatio || 1;
+      const device = window.devicePixelRatio || 1;
+      const ratio = device * supersample;
       const box = entry.devicePixelContentBoxSize?.[0];
 
       return box
-        ? { width: box.inlineSize, height: box.blockSize, ratio }
+        ? { width: Math.round(box.inlineSize * supersample), height: Math.round(box.blockSize * supersample), ratio }
         : {
             width: Math.round(entry.contentRect.width * ratio),
             height: Math.round(entry.contentRect.height * ratio),
@@ -321,7 +374,7 @@ export function SceneSync({
       window.clearTimeout(timer);
       observer?.disconnect();
     };
-  }, [viewRef, onResize]);
+  }, [viewRef, onResize, supersample]);
 
   return <span ref={anchor} hidden />;
 }

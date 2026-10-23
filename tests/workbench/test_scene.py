@@ -29,6 +29,7 @@ from trame_vtklocal.module.protocol import ObjectManagerAPI  # noqa: E402
 from vtkmodules.vtkCommonCore import vtkDataArray, vtkIdTypeArray  # noqa: E402
 from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkMultiBlockDataSet, vtkPolyData, vtkUnstructuredGrid  # noqa: E402
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCompositePolyDataMapper, vtkDataSetMapper, vtkPolyDataMapper  # noqa: E402
+from vtkmodules.vtkRenderingOpenGL2 import vtkDualDepthPeelingPass, vtkRenderStepsPass, vtkSSAAPass  # noqa: E402
 from vtkmodules.vtkSerializationManager import vtkObjectManager  # noqa: E402
 
 from femforge.viz.scene import Renderable  # noqa: E402
@@ -39,9 +40,13 @@ from femforge_workbench.panels import scene as scene_module  # noqa: E402
 from femforge_workbench.panels.scene import (  # noqa: E402
     IMAGE_STYLE,
     INTERACTIVE_PIXELS,
+    DRAG_TOLERANCE,
     INTERACTIVE_QUALITY,
+    MULTI_SAMPLES,
     NEAR_TOLERANCE,
     SCREENSHOT_SCALE,
+    SSAA_SCALE,
+    MIRROR_SSAA_SCALE,
     STILL_QUALITY,
     STILL_SCALE,
     STORE_PREFIX,
@@ -59,6 +64,7 @@ from femforge_workbench.panels.scene import (  # noqa: E402
     view_rotation,
 )
 from femforge_workbench.registry import renderable  # noqa: E402
+from femforge_workbench.render import SLIDERS, Antialias, RenderSettings, RenderVar  # noqa: E402
 
 
 LIFT = 0.05
@@ -143,9 +149,10 @@ def test_the_mode_defaults_to_the_mirror_and_a_persisted_choice_wins(tmp_path: P
     assert mirrored.view is not None and len(sync) == 1
     assert prop(sync[0], "viewRef") == mirrored.view.ref_name
     assert prop(sync[0], "cameraId") == mirrored.camera_id > 0 and cast("int", prop(sync[0], "matrixId")) > 0
-    toggle = find(tree, "ff-toggle-group")
+    toolbar = next(node for node in find(tree, "div") if prop(node, "id") == mirrored.toolbar_id)
+    toggle = find(toolbar, "ff-toggle-group")
     assert len(toggle) == 1 and prop(toggle[0], "value") == {"js": mirrored.key(StateVar.MODE)} and prop(toggle[0], "type") == "single"
-    assert [texts(item) for item in find(tree, "ff-toggle-group-item")] == [["Client"], ["Server"]]
+    assert [texts(item) for item in find(toolbar, "ff-toggle-group-item")] == [["Client"], ["Server"]]
     assert len(find(_template(app, streamed), "remote-controlled-area")) == 1 and find(_template(app, streamed), "vtk-local") == []
 
 
@@ -860,3 +867,67 @@ def test_a_viewer_panel_renders_its_card_names_its_tab_after_it_and_reports_a_br
     panel.dispose()
 
     assert calls == [] and not reloader.running and panel.reloader is None
+
+
+def test_each_mode_smooths_its_edges_as_the_render_settings_ask_and_ssaa_sorts_translucency_and_scales_its_lines(tmp_path: Path) -> None:
+    app = _shell("antialias", tmp_path)
+    panel = ScenePanel(app, "scene", "Scene", renderable=Volume())
+    renderer = panel.plotter.renderer
+    window = panel.window()
+
+    assert renderer.GetUseFXAA() and window.GetMultiSamples() == 0, "VTK.wasm ignores multisamples, so the mirror smooths with FXAA"
+
+    app.render = RenderSettings(server_antialias=Antialias.SSAA)
+    panel.set_mode("server")
+    supersampling = renderer.GetPass()
+
+    assert isinstance(supersampling, vtkSSAAPass) and not renderer.GetUseFXAA()
+    steps = supersampling.GetDelegatePass()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]  # the VTK stubs leave the pass untyped
+    assert isinstance(steps, vtkRenderStepsPass) and isinstance(steps.GetTranslucentPass(), vtkDualDepthPeelingPass), "the supersampled steps still peel translucent bodies"  # pyright: ignore[reportUnknownMemberType]
+    assert panel.window_scale() == pytest.approx(STILL_SCALE * SSAA_SCALE), "the pass renders lines and text SSAA_SCALE times thinner"
+
+    app.render = RenderSettings(server_antialias=Antialias.MSAA)
+    panel.restyle()
+
+    assert renderer.GetPass() is None and window.GetMultiSamples() == MULTI_SAMPLES and panel.window_scale() == STILL_SCALE
+
+    app.render = RenderSettings(client_antialias=Antialias.OFF, server_antialias=Antialias.OFF)
+    panel.restyle()
+
+    assert window.GetMultiSamples() == 0 and not renderer.GetUseFXAA()
+
+    panel.set_mode("client")
+
+    assert renderer.GetPass() is None and not renderer.GetUseFXAA()
+
+    app.render = RenderSettings(client_antialias=Antialias.SSAA)
+    panel.restyle()
+
+    assert renderer.GetPass() is None and not renderer.GetUseFXAA() and not panel.supersampled, "the mirror supersamples its own canvas"
+
+
+def test_a_still_right_click_opens_the_view_menu_whose_settings_dialog_binds_the_renderer_and_the_shared_settings(tmp_path: Path) -> None:
+    app = _shell("menu", tmp_path)
+    panel = ScenePanel(app, "scene", "Scene", renderable=Volume())
+    template = _template(app, panel)
+    axes = panel.key(StateVar.AXES)
+    dialog = panel.key(StateVar.SETTINGS)
+    triggers = find(template, "ff-context-menu-trigger")
+    checks = find(template, "ff-context-menu-checkbox-item")
+    items = find(template, "ff-context-menu-item")
+    groups = find(find(template, "ff-dialog")[0], "ff-toggle-group")
+    sliders = find(template, "ff-slider")
+    resets = [node for node in find(template, "ff-button") if texts(node) == ["Reset to Defaults"]]
+
+    assert len(triggers) == 1 and prop(triggers[0], "asChild") is True and prop(triggers[0], "dragTolerance") == DRAG_TOLERANCE, "a right-drag zooms instead"
+    assert [texts(node) for node in checks] == [["Show Axes"]] and prop(checks[0], "checked") == {"js": axes}
+    assert [texts(node) for node in items] == [["Render Settings…"]] and dialog in str(prop(items[0], "onSelect"))
+    assert prop(find(template, "ff-dialog")[0], "open") == {"js": dialog} and app.state[dialog] is False
+    assert [prop(group, "aria-label") for group in groups] == ["Renderer", "Client", "Server"]
+    assert [prop(group, "value") for group in groups] == [{"js": panel.key(StateVar.MODE)}, {"js": str(RenderVar.CLIENT_ANTIALIAS)}, {"js": str(RenderVar.SERVER_ANTIALIAS)}]
+    assert [len(find(group, "ff-toggle-group-item")) for group in groups] == [2, 3, 4], "the mirror offers only what VTK.wasm draws"
+    assert prop(find(template, "ff-dialog")[0], "modal") is False and prop(find(template, "ff-dialog-content")[0], "persistent") is True, "the page stays in use"
+    assert prop(find(template, "ff-scene-sync")[0], "supersample") == {"js": f"{RenderVar.CLIENT_ANTIALIAS} === \"ssaa\" ? {MIRROR_SSAA_SCALE} : 1"}
+    assert [prop(slider, "value") for slider in sliders] == [{"js": str(var)} for var in SLIDERS]
+    assert all(app.server.trigger_name(app.apply_render) in str(prop(slider, "onValueCommit")) for slider in sliders), "a slider applies on its release"
+    assert len(resets) == 1 and app.server.trigger_name(app.reset_render) in str(prop(resets[0], "onClick"))

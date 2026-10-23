@@ -33,6 +33,7 @@ from femforge_workbench.panels import PanelComponent
 from femforge_workbench.persist import APP_NAME, LocalJsonStore, StateKey, UiStateStore, default_user
 from femforge_workbench.registry import WorkbenchKind, WorkbenchSpec, discover, resolve
 from femforge_workbench.reload import Reloader, default_roots, persistent
+from femforge_workbench.render import RenderSettings, RenderVar, load_render, render_state, save_render, settings_from_state
 from femforge_workbench.tasks import TaskBoard, TaskField, TaskPhase, TaskView
 from femforge_workbench.theme import Palette
 from femforge_workbench.widgets.button import Button
@@ -361,6 +362,8 @@ class Workbench(TrameApp):
         self.palette.install()
         self.persist: UiStateStore = persist if persist is not None else LocalJsonStore()
         self.scope = (user if user is not None else default_user(), name)
+        self.render = load_render(self.persist, self.scope[0])
+        """The render settings every 3D view of the user draws with, in every workbench."""
         self.loop: asyncio.AbstractEventLoop | None = None
         self.window = Window.BROWSER
         self.authored: Opened | None = None
@@ -419,6 +422,7 @@ class Workbench(TrameApp):
                 StateVar.TOAST: None,
                 TITLE_VAR: title,
                 FAVICON_VAR: asset_url(FAVICON),
+                **render_state(self.render),
             }
         )
 
@@ -683,6 +687,38 @@ class Workbench(TrameApp):
         """Opens or closes the task sheet."""
         with self.state:
             self.state[StateVar.TASK_SHEET] = not bool(self.state[StateVar.TASK_SHEET])
+
+    @change(RenderVar.CLIENT_ANTIALIAS, RenderVar.SERVER_ANTIALIAS)
+    def on_antialias(self, **_: object) -> None:
+        """Applies an antialiasing the settings chose; a slider applies on its release instead."""
+        self.apply_render()
+
+    @guard
+    def apply_render(self) -> None:
+        """Takes the render settings the state shows, saves them for every workbench and has each panel redraw with them; settings that do not validate are put back."""
+        settings = settings_from_state({str(var): self.state[var] for var in RenderVar})
+        if settings is None:
+            with self.state:
+                self.state.update(render_state(self.render))
+
+            return
+
+        if settings == self.render:
+            return
+
+        self.render = settings
+        save_render(self.persist, self.scope[0], settings)
+        log.bind(**settings.model_dump(mode="json")).info("Render settings applied.")
+        for panel in list(self.panels):
+            panel.restyle()
+
+    @guard
+    def reset_render(self) -> None:
+        """Puts every render setting back to its default."""
+        with self.state:
+            self.state.update(render_state(RenderSettings()))
+
+        self.apply_render()
 
     @change(StateVar.TASK_SHEET)
     def on_task_sheet(self, **_: object) -> None:

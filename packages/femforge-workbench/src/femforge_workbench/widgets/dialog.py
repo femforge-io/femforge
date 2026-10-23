@@ -49,13 +49,24 @@ class DialogTrigger(Element):
 class DialogContent(Element):
     """The dialog's box."""
 
-    def __init__(self, children: object = None, *, show_close_button: Prop[bool] = None, force_mount: Prop[bool] = None, **kwargs: Unpack[Shared]) -> None:
+    def __init__(
+        self,
+        children: object = None,
+        *,
+        show_close_button: Prop[bool] = None,
+        force_mount: Prop[bool] = None,
+        scrim: Prop[bool] = None,
+        persistent: Prop[bool] = None,
+        **kwargs: Unpack[Shared],
+    ) -> None:
         """Creates the box; a prop left None keeps the component's default.
 
         Args:
             children: The dialog's header, body and footer.
             show_close_button: Shows the close button in the corner.
             force_mount: Keeps the content mounted while the dialog is closed.
+            scrim: Dims the page behind; a dialog whose changes show in the page leaves it clear.
+            persistent: Stays open through clicks and focus outside it, and through Escape pressed outside it.
             kwargs: Shared trame props and events, such as `classes`, `style` and `on_click`.
         """
         super().__init__("ff-dialog-content", locals(), children, **kwargs)

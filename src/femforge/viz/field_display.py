@@ -419,6 +419,21 @@ class BodyStyle(BaseModel):
     """`[-]`: The body's own opacity, multiplied by the display's."""
 
 
+class EdgeStyle(BaseModel):
+    """How the feature-edge outline and the hover and selection outlines draw."""
+
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
+
+    width: float = Field(default=2.0, gt=0.0)
+    """`[px]`: The width of the feature-edge outline in CSS pixels."""
+
+    feature_angle: float = Field(default=FEATURE_ANGLE, gt=0.0, lt=180.0)
+    """`[deg]`: The dihedral angle above which a surface edge counts as a feature edge."""
+
+    highlight_width: float = Field(default=2.0, gt=0.0)
+    """`[px]`: The width of a hover outline in CSS pixels; a selection draws wider in proportion."""
+
+
 class DisplaySpec(BaseModel):
     """The complete, serializable state of one field display: which array is colored, how it reduces, and how the colors map."""
 
@@ -465,6 +480,12 @@ class DisplaySpec(BaseModel):
 
     outline: bool = False
     """Draw the black feature-edge wireframe over the visible bodies."""
+
+    edges: EdgeStyle = EdgeStyle()
+    """How the wireframe draws."""
+
+    scale: float = Field(default=1.0, gt=0.0)
+    """`[-]`: Window pixels per CSS pixel, which the wireframe's width scales by."""
 
     opacity: float = Field(default=1.0, ge=0.0, le=1.0)
     """`[-]`: Multiplies every body's own opacity."""
@@ -778,7 +799,7 @@ def forward(actor: pv.Actor, layer: Layer) -> None:  # pragma: no cover - needs 
     mapper.SetRelativeCoincidentTopologyLineOffsetParameters(factor, units)
 
 
-def feature_outline(blocks: pv.MultiBlock) -> pv.PolyData | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+def feature_outline(blocks: pv.MultiBlock, feature_angle: float = FEATURE_ANGLE) -> pv.PolyData | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
     """The feature and boundary edges of a multiblock's outer surface — the black wireframe drawn over the field, the body outlines on a 2D slice — or None when the surface has none."""
     import pyvista as pv
 
@@ -794,7 +815,7 @@ def feature_outline(blocks: pv.MultiBlock) -> pv.PolyData | None:  # pragma: no 
         feature_edges=True,
         manifold_edges=False,
         non_manifold_edges=False,
-        feature_angle=FEATURE_ANGLE,
+        feature_angle=feature_angle,
         clear_data=True,
     )
     if edges.n_points == 0:
@@ -1383,12 +1404,12 @@ class FieldScene:
 
     def _update_outline(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Add or remove the black feature-edge wireframe of the visible bodies, by its own actor name."""
-        edges: pv.PolyData | None = feature_outline(self.shown_blocks(spec.hidden_bodies)) if spec.outline else None
+        edges: pv.PolyData | None = feature_outline(self.shown_blocks(spec.hidden_bodies), spec.edges.feature_angle) if spec.outline else None
         if edges is None:
             _ = plotter.remove_actor(str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
             return
 
-        outline = plotter.add_mesh(edges, color="black", line_width=2.0, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
+        outline = plotter.add_mesh(edges, color="black", line_width=spec.edges.width * spec.scale, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
         forward(outline, Layer.EDGE)
 
     def _update_streamlines(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context

@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import StrEnum
 from functools import partial, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pyvista as pv
 from trame.widgets import html, rca, react, vtklocal
@@ -27,19 +27,25 @@ from vtkmodules.vtkFiltersGeometry import vtkDataSetSurfaceFilter
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingAnnotation import vtkAxesActor
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCamera, vtkCompositePolyDataMapper, vtkDataSetMapper, vtkRenderer, vtkRenderWindow, vtkRenderWindowInteractor
+from vtkmodules.vtkRenderingOpenGL2 import vtkDualDepthPeelingPass, vtkRenderStepsPass, vtkSSAAPass, vtkTranslucentPass
 
 from femforge.common.log import log
 from femforge.common.utils import title
 from femforge.viz.field_display import camera_needs_reset
 from femforge.viz.scene import Renderable
-from femforge_workbench.panels import Carry, Cls, PanelComponent
+from femforge_workbench.panels import TWO_SEGMENTS, Carry, Cls, PanelComponent, readouts, segmented
 from femforge_workbench.persist import APP_NAME
 from femforge_workbench.registry import WorkbenchSpec
 from femforge_workbench.reload import Reloader, default_roots
+from femforge_workbench.render import CLIENT_ANTIALIAS, SERVER_ANTIALIAS, Antialias, RenderVar
 from femforge_workbench.theme import hex_color
 from femforge_workbench.widgets.button import Button
+from femforge_workbench.widgets.context_menu import ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger
+from femforge_workbench.widgets.dialog import Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
+from femforge_workbench.widgets.element import EVENT, setter
 from femforge_workbench.widgets.icon import Icon, IconName
 from femforge_workbench.widgets.scene import SceneSync
+from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.tip import Tip
 from femforge_workbench.widgets.toggle import ToggleGroup, ToggleGroupItem
 
@@ -59,6 +65,24 @@ INTERACTIVE_PIXELS = 2_000_000
 """The encoded pixel count while a button is held; the 2x still returns LIFT_DELAY after the release."""
 LIFT_DELAY = 0.4
 MULTI_SAMPLES = 8
+SSAA_SCALE = math.sqrt(5.0)
+"""How many times each side VTK's SSAA pass renders at, which draws lines and text that much thinner."""
+MIRROR_SSAA_SCALE = 2
+"""How many times each side the mirror's canvas renders at under SSAA; a whole number, so the browser averages it down evenly."""
+
+DRAG_TOLERANCE = 4
+"""`[px]`: How far a right press may move and still open the view's menu rather than zoom."""
+
+ANTIALIAS_NAMES = {Antialias.OFF: "Off", Antialias.FXAA: "FXAA", Antialias.MSAA: "MSAA", Antialias.SSAA: "SSAA"}
+"""How each antialiasing reads in the settings."""
+
+SETTINGS_DIALOG = "top-auto bottom-12 right-4 left-auto translate-x-0 translate-y-0 sm:max-w-sm"
+"""The settings dialog docks at the bottom right with no scrim, so the views it changes stay in sight."""
+
+SETTINGS_BODY = "flex flex-col gap-4"
+SETTINGS_GROUP = "flex flex-col gap-3"
+SETTINGS_HEADING = "text-label font-semibold text-foreground"
+SLIDER_STACK = "flex flex-col gap-1.5"
 SCREENSHOT_SCALE = 2
 PNG = "image/png"
 AXES_LINE_WIDTH = 3
@@ -70,7 +94,8 @@ NEAR_TOLERANCE = 0.001
 """The smallest share of the far plane's distance the near plane may sit at."""
 KILOBYTE = 1024
 WASM_CONFIG = {"rendering": "webgl", "exec": "sync", "mode": "wasm32"}
-VIEW_STYLE = {"flex": "1", "minHeight": "0", "position": "relative"}
+VIEW = "relative min-h-0 flex-1"
+"""The view's host, in classes: the menu trigger merged onto it would drop an inline style."""
 NOTICE = "pointer-events-none absolute inset-0 flex items-center justify-center whitespace-pre-line px-4 text-center text-body text-muted-foreground"
 FILL_STYLE = {"width": "100%", "height": "100%"}
 IMAGE_STYLE = {"width": "100%", "height": "100%", "objectFit": "contain"}
@@ -125,6 +150,7 @@ class StateVar(StrEnum):
     HIGHLIGHTS = "highlights"
     HOVERED = "hovered"
     AXES = "axes"
+    SETTINGS = "settings"
 
 
 class StoreKey(StrEnum):
@@ -527,7 +553,6 @@ class ScenePanel(PanelComponent):
         self.plotter.parallel_projection = True
         # VTK's default lets the near plane sit at 1 % of the far one, which cuts glyphs off a model zoomed in close.
         self.plotter.renderer.SetNearClippingPlaneTolerance(NEAR_TOLERANCE)
-        self.plotter.enable_anti_aliasing("msaa", multi_samples=MULTI_SAMPLES)
         self.base_font = copy.deepcopy(self.plotter.theme.font)
         # pyvista's document theme writes black text, which a dark palette's background swallows.
         self.base_font.color = hex_color(app.palette.text)
@@ -541,6 +566,8 @@ class ScenePanel(PanelComponent):
         self.stream_ratio = 1.0
         """The device pixel ratio of the browser showing the stream."""
         self.mode = self.saved_mode(app, id) or mode
+        self.supersampled = self.mode is ViewMode.SERVER and app.render.server_antialias is Antialias.SSAA
+        """Whether the stream renders through VTK's SSAA pass, which thins lines and text by SSAA_SCALE."""
         if self.mode is ViewMode.CLIENT:
             self.claim_mirror(app)
 
@@ -617,6 +644,7 @@ class ScenePanel(PanelComponent):
         self.state[self.key(StateVar.HIGHLIGHTS)] = {}
         self.state[self.key(StateVar.HOVERED)] = ""
         self.state[self.key(StateVar.AXES)] = self.axes_shown
+        self.state[self.key(StateVar.SETTINGS)] = False
         axes = self.key(StateVar.AXES)
         with html.Div(classes=str(Cls.TOOLBAR), id=self.toolbar_id):
             for index, group in enumerate(VIEW_GROUPS):
@@ -630,18 +658,8 @@ class ScenePanel(PanelComponent):
 
             html.Span(classes=str(Cls.SPACER))
             html.Span([react.Bind(self.key(StateVar.STATUS))], classes=str(Cls.CAPTION))
-            with (
-                Tip(content="Where the frames are rendered"),
-                ToggleGroup(
-                    type_="single",
-                    variant="outline",
-                    size="sm",
-                    value=react.Bind(self.key(StateVar.MODE)),
-                    on_value_change=self.optimistic(self.set_mode, self.key(StateVar.MODE), f"$event || {self.key(StateVar.MODE)}", "[$event]"),
-                ),
-            ):
-                for mode in ViewMode:
-                    ToggleGroupItem(title(str(mode)), value=str(mode), classes=str(Cls.TOGGLE))
+            with Tip(content="Where the frames are rendered"):
+                self.build_mode_toggle()
 
             with (
                 Tip(content="Orientation axes"),
@@ -658,10 +676,85 @@ class ScenePanel(PanelComponent):
             with Tip(content="Download a screenshot"), Button(size=ICON_BUTTON, variant="ghost", aria_label="Download a screenshot", on_click=self.callback(self.screenshot)):
                 Icon("camera", classes=TOOL_ICON)
 
-        self.host = html.Div(style=VIEW_STYLE, id=self.view_id)
+        with ContextMenu():
+            with ContextMenuTrigger(as_child=True, drag_tolerance=DRAG_TOLERANCE):
+                self.host = html.Div(classes=VIEW, id=self.view_id)
+
+            with ContextMenuContent():
+                ContextMenuCheckboxItem(
+                    "Show Axes",
+                    checked=react.Bind(axes),
+                    on_checked_change=self.optimistic(self.set_axes, axes, EVENT, f"[{EVENT}]"),
+                )
+                ContextMenuSeparator()
+                ContextMenuItem("Render Settings…", on_select=react.Callback(f"trame.state.set({json.dumps(self.key(StateVar.SETTINGS))}, true)"))
+
         with self.host:
             self.build_view()
             self.build_notice()
+
+        self.build_settings()
+
+    def build_mode_toggle(self, *, track: str = "", segment: str = str(Cls.TOGGLE)) -> None:
+        """The Client and Server choice of where the frames render.
+
+        Args:
+            track: The group's classes, a full-width track in the settings.
+            segment: Each choice's classes.
+        """
+        mode = self.key(StateVar.MODE)
+        with ToggleGroup(
+            type_="single",
+            variant="outline",
+            size="sm",
+            value=react.Bind(mode),
+            on_value_change=self.optimistic(self.set_mode, mode, f"$event || {mode}", "[$event]"),
+            classes=track,
+            aria_label="Renderer",
+        ):
+            for choice in ViewMode:
+                ToggleGroupItem(title(str(choice)), value=str(choice), classes=segment)
+
+    def build_settings(self) -> None:
+        """The Render Settings dialog the view's menu opens: this view's renderer, then the antialiasing and outlines every 3D view draws with."""
+        dialog = self.key(StateVar.SETTINGS)
+
+        def slider(var: RenderVar, label: str, unit: str, bounds: tuple[float, float], step: float) -> None:
+            with html.Div(classes=SLIDER_STACK):
+                readouts(label, react.Bind(f"{var}[0].toFixed({1 if step < 1 else 0}) + {json.dumps(unit)}"))
+                Slider(
+                    value=react.Bind(str(var)),
+                    on_value_change=setter(str(var)),
+                    on_value_commit=self.callback(self.app.apply_render),
+                    min_=bounds[0],
+                    max_=bounds[1],
+                    step=step,
+                    aria_label=title(label),
+                )
+
+        with Dialog(open_=react.Bind(dialog), on_open_change=setter(dialog), modal=False), DialogContent(classes=SETTINGS_DIALOG, scrim=False, persistent=True):
+            with DialogHeader():
+                DialogTitle("Render Settings")
+                DialogDescription("The renderer is this view's; the rest applies to every 3D view.")
+
+            with html.Div(classes=SETTINGS_BODY):
+                with html.Div(classes=SETTINGS_GROUP):
+                    html.Span("Renderer", classes=SETTINGS_HEADING)
+                    self.build_mode_toggle(track=f"{Cls.SEGMENTED} {TWO_SEGMENTS}", segment=str(Cls.SEGMENT))
+
+                with html.Div(classes=SETTINGS_GROUP):
+                    html.Span("Antialiasing", classes=SETTINGS_HEADING)
+                    segmented(RenderVar.CLIENT_ANTIALIAS, "Client", [str(value) for value in CLIENT_ANTIALIAS], read=lambda value: ANTIALIAS_NAMES[Antialias(value)])
+                    segmented(RenderVar.SERVER_ANTIALIAS, "Server", [str(value) for value in SERVER_ANTIALIAS], read=lambda value: ANTIALIAS_NAMES[Antialias(value)])
+
+                with html.Div(classes=SETTINGS_GROUP):
+                    html.Span("Edges", classes=SETTINGS_HEADING)
+                    slider(RenderVar.OUTLINE_WIDTH, "Outline Width", " px", (0.5, 6.0), 0.5)
+                    slider(RenderVar.FEATURE_ANGLE, "Feature Angle", "°", (5.0, 90.0), 1.0)
+                    slider(RenderVar.HIGHLIGHT_WIDTH, "Highlight Width", " px", (0.5, 6.0), 0.5)
+
+            with DialogFooter(show_close_button=True):
+                Button("Reset to Defaults", size="sm", variant="ghost", on_click=self.callback(self.app.reset_render))
 
     @property
     def toolbar_id(self) -> str:
@@ -761,6 +854,7 @@ class ScenePanel(PanelComponent):
             move=react.Bind(self.key(StateVar.MOVE)),
             highlights=react.Bind(self.key(StateVar.HIGHLIGHTS)),
             highlighted=react.Bind(self.hover_key()),
+            supersample=react.Bind(f"{RenderVar.CLIENT_ANTIALIAS} === {json.dumps(str(Antialias.SSAA))} ? {MIRROR_SSAA_SCALE} : 1"),
             on_resize=self.callback(self.on_client_size, args="[$event]"),
         )
 
@@ -844,8 +938,7 @@ class ScenePanel(PanelComponent):
         else:
             self.plotter.renderer.ResetCamera()
 
-        # VTK.wasm draws without the window's multisamples, so the mirror smooths its edges with FXAA instead.
-        self.plotter.renderer.SetUseFXAA(self.mode is ViewMode.CLIENT)
+        self.antialias()
         if self.mode is not ViewMode.CLIENT:
             self.footprint = None
             return Drawn(keep, None)
@@ -1064,6 +1157,31 @@ class ScenePanel(PanelComponent):
         with self.state:
             self.state[self.key(StateVar.NOTICE)] = text
 
+    def antialias(self) -> None:
+        """Smooths the edges as the render settings ask for the current mode; the mirror supersamples its own canvas."""
+        render = self.app.render
+        chosen = render.client_antialias if self.mode is ViewMode.CLIENT else render.server_antialias
+        self.supersampled = self.mode is ViewMode.SERVER and chosen is Antialias.SSAA
+        renderer = self.plotter.renderer
+        self.plotter.disable_anti_aliasing()
+        renderer.SetPass(None)  # pyright: ignore[reportArgumentType]  # VTK takes None to drop the pass; its stub omits it
+        if self.supersampled:
+            # pyvista's SSAA pass draws translucent bodies unsorted, so its steps peel them as the renderer itself would.
+            peeling = vtkDualDepthPeelingPass()
+            peeling.SetTranslucentPass(vtkTranslucentPass())  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+            steps = vtkRenderStepsPass()
+            steps.SetTranslucentPass(peeling)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+            supersampling = vtkSSAAPass()
+            supersampling.SetDelegatePass(steps)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+            renderer.SetPass(supersampling)
+        elif chosen in (Antialias.FXAA, Antialias.MSAA):
+            self.plotter.enable_anti_aliasing(cast("Literal['msaa', 'fxaa']", str(chosen)), multi_samples=MULTI_SAMPLES)
+
+    def restyle(self) -> None:
+        """Redraws the scene with the new render settings at the window scale they give, the camera kept."""
+        self.antialias()
+        self.rescale()
+
     def toggle_axes(self) -> None:
         """Shows or hides the orientation axes."""
         self.set_axes(not self.axes_shown)
@@ -1088,8 +1206,11 @@ class ScenePanel(PanelComponent):
             renderer.hide_axes()
 
     def window_scale(self) -> float:
-        """How many window pixels the panel already has per CSS pixel: the stream renders at STILL_SCALE times the device ratio, the mirror at the device ratio."""
-        return STILL_SCALE * self.stream_ratio if self.mode is ViewMode.SERVER else self.pixel_ratio
+        """Window pixels per CSS pixel: the stream renders at STILL_SCALE times the device ratio, SSAA_SCALE times more under SSAA; the mirror at the device ratio."""
+        if self.mode is ViewMode.CLIENT:
+            return self.pixel_ratio
+
+        return STILL_SCALE * self.stream_ratio * (SSAA_SCALE if self.supersampled else 1.0)
 
     def screenshot(self) -> None:
         """Hands the browser a PNG of SCREENSHOT_SCALE times the panel, whatever the window is already scaled by, to save in its downloads, and says so in a toast."""
