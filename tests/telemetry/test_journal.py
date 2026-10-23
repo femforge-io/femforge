@@ -11,7 +11,7 @@ import pytest
 
 from femforge.common.log import log
 from femforge.telemetry.hive import HOST, HiveStore
-from femforge.telemetry.journal import JOURNAL_SUFFIX, Journal, journal_glob, journal_lines, json_default, recover_journals, scan_journals
+from femforge.telemetry.journal import CLAIM_SUFFIX, JOURNAL_SUFFIX, Journal, journal_glob, journal_lines, json_default, recover_journals, scan_journals
 from femforge.telemetry.paths import Telemetry, TelemetryDir
 from femforge.telemetry.schemas import LOG_SCHEMA, LogColumn
 
@@ -19,6 +19,10 @@ from femforge.telemetry.schemas import LOG_SCHEMA, LogColumn
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+
+RIVAL = 888888
+"""The process id of a recoverer that claims a journal first."""
 
 
 def _row(message: str) -> dict[str, object]:
@@ -158,6 +162,43 @@ def test_recover_journals_tolerates_a_missing_live_directory(tmp_path: Path) -> 
     store = HiveStore(tmp_path / "logs", LOG_SCHEMA, [LogColumn.DATE, LogColumn.PROCESS])
 
     assert recover_journals(tmp_path / "live", store, journal_glob(TelemetryDir.LOGS)) == []
+
+
+def test_a_journal_another_process_claimed_first_is_left_to_it(tmp_path: Path) -> None:
+    """Two processes starting together both see a dead writer's journal; the one that loses the rename skips it."""
+    store = Telemetry(tmp_path).logs
+    live = tmp_path / TelemetryDir.LIVE
+    live.mkdir()
+    orphan = live / f"{TelemetryDir.LOGS}-box-999999.jsonl"
+    orphan.write_text(json.dumps(_row("theirs"), default=json_default) + "\n", encoding="utf-8")
+    rival = live / f"{orphan.name}.{RIVAL}{CLAIM_SUFFIX}"
+
+    def taken(pid: int) -> bool:
+        if pid == RIVAL:
+            return True
+
+        _ = orphan.rename(rival)
+        return False
+
+    assert recover_journals(live, store, journal_glob(TelemetryDir.LOGS), alive=taken) == []
+    assert rival.exists() and store.scan().collect().height == 0
+
+
+def test_the_claim_of_a_recoverer_that_died_is_recovered_and_a_live_one_is_left(tmp_path: Path) -> None:
+    """A recoverer that died mid-checkpoint leaves its claim, which the next process folds in; a running recoverer keeps its own."""
+    store = Telemetry(tmp_path).logs
+    live = tmp_path / TelemetryDir.LIVE
+    live.mkdir()
+    stalled = live / f"{TelemetryDir.LOGS}-box-999999.jsonl.888888{CLAIM_SUFFIX}"
+    stalled.write_text(json.dumps(_row("stalled"), default=json_default) + "\n", encoding="utf-8")
+    running = live / f"{TelemetryDir.LOGS}-box-999998.jsonl.777777{CLAIM_SUFFIX}"
+    running.write_text(json.dumps(_row("running"), default=json_default) + "\n", encoding="utf-8")
+
+    recovered = recover_journals(live, store, journal_glob(TelemetryDir.LOGS), alive=lambda pid: pid == 777777)
+
+    assert recovered == [live / f"{TelemetryDir.LOGS}-box-999999.jsonl"]
+    assert not stalled.exists() and running.exists()
+    assert store.scan().collect().get_column(LogColumn.MESSAGE).to_list() == ["stalled"]
 
 
 def test_json_default_falls_back_to_a_repr() -> None:

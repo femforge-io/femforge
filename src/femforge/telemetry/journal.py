@@ -28,6 +28,9 @@ __all__ = ["Journal", "journal_glob", "journal_lines", "json_default", "records_
 JOURNAL_SUFFIX = ".jsonl"
 """Journals are newline-delimited JSON so a partially written tail costs at most one record."""
 
+CLAIM_SUFFIX = ".claim"
+"""What a journal is renamed to end in, after its recovering process id, while that process checkpoints it."""
+
 
 def json_default(value: object) -> object:
     """Render what ``json.dumps`` cannot: timestamps as ISO-8601 (the form ``coerce`` parses back), anything else as its repr."""
@@ -106,28 +109,33 @@ def recover_journals(live_dir: Path, store: HiveStore, pattern: str, *, alive: C
     if not live_dir.is_dir():
         return []
 
-    def journal_pid(path: Path) -> int | None:
-        _, _, tail = path.stem.rpartition("-")
-        if not tail.isdigit():
-            return None
+    def pid_after(text: str, separator: str) -> int | None:
+        _, _, tail = text.rpartition(separator)
+        return int(tail) if tail.isdigit() else None
 
-        return int(tail)
+    # A dead writer's journal, or the claim of a recoverer that died before it finished.
+    dead: list[Path] = [path for path in sorted(live_dir.glob(pattern)) if (pid := pid_after(path.stem, "-")) is not None and not alive(pid)]
+    stalled: list[Path] = [path for path in sorted(live_dir.glob(f"{pattern}.*{CLAIM_SUFFIX}")) if (pid := pid_after(path.stem, ".")) is not None and not alive(pid)]
 
     recovered: list[Path] = []
-    for path in sorted(live_dir.glob(pattern)):
-        pid = journal_pid(path)
-        if pid is None or alive(pid):
+    for path in [*dead, *stalled]:
+        journal = path.name[: path.name.index(JOURNAL_SUFFIX) + len(JOURNAL_SUFFIX)]
+        claimed = live_dir / f"{journal}.{os.getpid()}{CLAIM_SUFFIX}"
+        # Processes starting together race for the same journal; the rename lets one of them have it.
+        try:
+            _ = path.rename(claimed)
+        except (FileNotFoundError, FileExistsError):
             continue
 
-        records, skipped = journal_lines(path)
+        records, skipped = journal_lines(claimed)
 
         if skipped:
-            log.bind(journal=path.name, skipped=skipped).warning("Recovered journal had lines that were not JSON records.")
+            log.bind(journal=journal, skipped=skipped).warning("Recovered journal had lines that were not JSON records.")
 
         rows = records_frame(records, store.schema).collect()
         _ = store.append(rows)
-        path.unlink()
-        recovered.append(path)
+        claimed.unlink()
+        recovered.append(live_dir / journal)
 
     return recovered
 
