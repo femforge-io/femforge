@@ -34,7 +34,7 @@ from femforge.physical.conditions import (
 )
 from femforge.physical.readout import readout
 from femforge.physical.units import Quantity, U, Unit, quantity
-from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, EdgeStyle, Layer, SceneActor, feature_outline, forward, run_manifest, warped
+from femforge.viz.field_display import FLAT_RATIO, FULL_SWEEP, BodyPaint, BodyStyle, DisplaySpec, EdgeStyle, Layer, SceneActor, Shading, feature_outline, forward, run_manifest, warped
 from femforge.viz.field_lines import Bounds
 from femforge.viz.symmetry import Basis, Expansion, Surface, extruded_lines, prism_depth, swept_lines
 
@@ -199,9 +199,6 @@ BODY_HUE: float = 255.0
 
 GOLDEN_ANGLE: float = 137.5
 """`[deg]`: The hue step between bodies, which keeps any run of neighbours apart."""
-
-PLAIN_SPECULAR: float = 0.3
-"""`[-]`: The specular strength of a plain body, so its faces read apart under the light."""
 
 GLYPH_PREFIX = "glyph-"
 """The prefix every glyph layer actor name starts with."""
@@ -728,6 +725,9 @@ class GlyphView(BaseModel):
 
     edges: EdgeStyle = EdgeStyle()
     """How the outlines draw, in CSS pixels that `scale` multiplies."""
+
+    shading: Shading = Shading()
+    """How the bodies shade."""
 
 
 @dataclass(frozen=True)
@@ -1730,21 +1730,24 @@ class GroupScene:
 
     def render(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated glyph tests
         """Draw every body shaded in its body color, a solid run's feature edges in black over them, then the glyph layer."""
+        view: GlyphView = self.glyph_view or GlyphView()
+        shading: Shading = view.shading
         for index, name in enumerate(str(key) for key in self.blocks.keys()):
             surface: pv.PolyData = cast("pv.PolyData", cast("pv.DataSet", self.blocks[name]).extract_surface(algorithm=None))
             surface.clear_data()
             _ = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
                 surface,
                 color=body_color(index),
-                smooth_shading=True,
-                split_sharp_edges=True,
-                specular=PLAIN_SPECULAR,
+                smooth_shading=shading.smooth,
+                split_sharp_edges=shading.smooth,
+                feature_angle=shading.split_angle,
+                ambient=shading.ambient,
+                specular=shading.specular,
                 show_scalar_bar=False,
                 reset_camera=False,
                 name=SceneActor.STYLED.of(name),
             )
 
-        view: GlyphView = self.glyph_view or GlyphView()
         edges: pv.PolyData | None = feature_outline(self.blocks, view.edges.feature_angle) if self.frame.model_dim == 3 else None
 
         if edges is not None:

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import json
+import math
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -29,7 +30,15 @@ from trame_vtklocal.module.protocol import ObjectManagerAPI  # noqa: E402
 from vtkmodules.vtkCommonCore import vtkDataArray, vtkIdTypeArray  # noqa: E402
 from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkMultiBlockDataSet, vtkPolyData, vtkUnstructuredGrid  # noqa: E402
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCompositePolyDataMapper, vtkDataSetMapper, vtkPolyDataMapper  # noqa: E402
-from vtkmodules.vtkRenderingOpenGL2 import vtkDualDepthPeelingPass, vtkRenderStepsPass, vtkSSAAPass  # noqa: E402
+from vtkmodules.vtkRenderingOpenGL2 import (  # noqa: E402
+    vtkDualDepthPeelingPass,
+    vtkFramebufferPass,
+    vtkImageProcessingPass,
+    vtkOpenGLFXAAPass,
+    vtkRenderStepsPass,
+    vtkSSAAPass,
+    vtkToneMappingPass,
+)
 from vtkmodules.vtkSerializationManager import vtkObjectManager  # noqa: E402
 
 from femforge.viz.scene import Renderable  # noqa: E402
@@ -45,6 +54,7 @@ from femforge_workbench.panels.scene import (  # noqa: E402
     MULTI_SAMPLES,
     NEAR_TOLERANCE,
     SCREENSHOT_SCALE,
+    SERVER_ONLY,
     SSAA_SCALE,
     MIRROR_SSAA_SCALE,
     STILL_QUALITY,
@@ -64,7 +74,7 @@ from femforge_workbench.panels.scene import (  # noqa: E402
     view_rotation,
 )
 from femforge_workbench.registry import renderable  # noqa: E402
-from femforge_workbench.render import SLIDERS, Antialias, RenderSettings, RenderVar  # noqa: E402
+from femforge_workbench.render import SLIDERS, Antialias, Lighting, Projection, RenderSettings, RenderVar, ToneMapping, limits  # noqa: E402
 
 
 LIFT = 0.05
@@ -900,10 +910,83 @@ def test_each_mode_smooths_its_edges_as_the_render_settings_ask_and_ssaa_sorts_t
 
     assert renderer.GetPass() is None and not renderer.GetUseFXAA()
 
-    app.render = RenderSettings(client_antialias=Antialias.SSAA)
+    app.render = RenderSettings(client_antialias=Antialias.SSAA, tone_mapping=ToneMapping.FILMIC)
     panel.restyle()
 
-    assert renderer.GetPass() is None and not renderer.GetUseFXAA() and not panel.supersampled, "the mirror supersamples its own canvas"
+    assert renderer.GetPass() is None and not renderer.GetUseFXAA() and not panel.supersampled, "the mirror supersamples its own canvas and maps no tones"
+
+
+def test_the_stream_maps_its_tones_over_a_framed_peeling_chain_smoothed_by_fxaa_or_supersampled_inside(tmp_path: Path) -> None:
+    app = _shell("tone", tmp_path)
+    app.render = RenderSettings(tone_mapping=ToneMapping.FILMIC, exposure=1.5)
+    panel = ScenePanel(app, "scene", "Scene", renderable=Volume(), mode=ViewMode.SERVER)
+    renderer = panel.plotter.renderer
+
+    def delegate(chained: object) -> object:
+        return cast("vtkImageProcessingPass", chained).GetDelegatePass()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]  # the VTK stubs leave the pass untyped
+
+    smoothing = renderer.GetPass()
+    mapping = delegate(smoothing)
+    framed = delegate(mapping)
+    steps = delegate(framed)
+
+    assert isinstance(smoothing, vtkOpenGLFXAAPass) and panel.window().GetMultiSamples() == 0, "MSAA never reaches the tone mapping's framebuffer"
+    assert isinstance(mapping, vtkToneMappingPass) and mapping.GetToneMappingType() == vtkToneMappingPass.GenericFilmic and mapping.GetExposure() == 1.5
+    assert isinstance(framed, vtkFramebufferPass) and isinstance(steps, vtkRenderStepsPass), "the peeling draws into a framebuffer with depth"
+
+    app.render = RenderSettings(tone_mapping=ToneMapping.REINHARD, server_antialias=Antialias.SSAA)
+    panel.restyle()
+    mapping = renderer.GetPass()
+
+    assert isinstance(mapping, vtkToneMappingPass) and mapping.GetToneMappingType() == vtkToneMappingPass.Reinhard
+    assert isinstance(delegate(mapping), vtkSSAAPass), "the tone mapping draws at the window's size, so SSAA renders inside it"
+
+    app.render = RenderSettings(tone_mapping=ToneMapping.EXPONENTIAL, server_antialias=Antialias.OFF)
+    panel.restyle()
+    mapping = renderer.GetPass()
+
+    assert isinstance(mapping, vtkToneMappingPass) and mapping.GetToneMappingType() == vtkToneMappingPass.Exponential
+
+
+def test_the_lights_take_the_preset_at_the_brightness_and_the_projection_keeps_the_framed_height(tmp_path: Path) -> None:
+    app = _shell("lights", tmp_path)
+    panel = ScenePanel(app, "scene", "Scene", renderable=Volume())
+    renderer = panel.plotter.renderer
+
+    def intensities() -> list[float]:
+        return [float(light.intensity) for light in cast("list[pv.Light]", renderer.lights)]
+
+    kit = intensities()
+    panel.render(Volume())
+
+    assert intensities() == kit, "a renderable that clears the plotter gets its lights back"
+
+    panel.light(RenderSettings(brightness=2.0))
+
+    assert len(kit) > 3 and intensities() == pytest.approx([2.0 * each for each in kit])
+
+    panel.light(RenderSettings(lighting=Lighting.THREE_LIGHTS))
+
+    assert len(intensities()) == 3
+
+    panel.light(RenderSettings(lighting=Lighting.HEADLIGHT, brightness=0.5))
+
+    assert intensities() == [0.5]
+
+    camera = renderer.GetActiveCamera()
+    height = camera.GetParallelScale()
+    panel.project(RenderSettings(projection=Projection.PERSPECTIVE, view_angle=40.0))
+
+    assert not camera.GetParallelProjection() and camera.GetViewAngle() == 40.0
+    assert camera.GetDistance() * math.tan(math.radians(20.0)) == pytest.approx(height), "the perspective frames the height the orthographic view did"
+
+    panel.project(RenderSettings(projection=Projection.PERSPECTIVE, view_angle=20.0))
+
+    assert camera.GetDistance() * math.tan(math.radians(10.0)) == pytest.approx(height), "a narrower view moves back to frame the same height"
+
+    panel.project(RenderSettings())
+
+    assert camera.GetParallelProjection() and camera.GetParallelScale() == pytest.approx(height)
 
 
 def test_a_still_right_click_opens_the_view_menu_whose_settings_dialog_binds_the_renderer_and_the_shared_settings(tmp_path: Path) -> None:
@@ -923,11 +1006,27 @@ def test_a_still_right_click_opens_the_view_menu_whose_settings_dialog_binds_the
     assert [texts(node) for node in checks] == [["Show Axes"]] and prop(checks[0], "checked") == {"js": axes}
     assert [texts(node) for node in items] == [["Render Settings…"]] and dialog in str(prop(items[0], "onSelect"))
     assert prop(find(template, "ff-dialog")[0], "open") == {"js": dialog} and app.state[dialog] is False
-    assert [prop(group, "aria-label") for group in groups] == ["Renderer", "Client", "Server"]
-    assert [prop(group, "value") for group in groups] == [{"js": panel.key(StateVar.MODE)}, {"js": str(RenderVar.CLIENT_ANTIALIAS)}, {"js": str(RenderVar.SERVER_ANTIALIAS)}]
-    assert [len(find(group, "ff-toggle-group-item")) for group in groups] == [2, 3, 4], "the mirror offers only what VTK.wasm draws"
+    choices = [RenderVar.LIGHTING, RenderVar.PROJECTION, RenderVar.TONE_MAPPING]
+    switches = find(find(template, "ff-dialog")[0], "ff-switch")
+    mirrored = f"{panel.key(StateVar.MODE)} === \"client\""
+    antialias = groups[1]
+    items = find(antialias, "ff-toggle-group-item")
+    tips = [prop(tip, "content") for tip in find(find(template, "ff-dialog")[0], "ff-tip")]
+
+    assert [prop(group, "aria-label") for group in groups] == ["Renderer", "Antialiasing", "Lights", "Projection", "Tone Mapping"]
+    assert [prop(group, "value") for group in groups] == [
+        {"js": panel.key(StateVar.MODE)},
+        {"js": f"{mirrored} ? {RenderVar.CLIENT_ANTIALIAS} : {RenderVar.SERVER_ANTIALIAS}"},
+        *({"js": str(var)} for var in choices),
+    ], "one antialiasing control shows the choice of the view's renderer, each renderer keeping its own"
+    assert [len(find(group, "ff-toggle-group-item")) for group in groups] == [2, 4, 3, 2, 4]
+    assert [prop(item, "disabled") for item in items] == [None, None, {"js": mirrored}, None], "the mirror cannot draw MSAA"
+    assert prop(groups[4], "disabled") == {"js": mirrored}, "the mirror maps no tones"
+    assert tips == [{"js": f"{mirrored} ? \"{SERVER_ONLY}\" : ''"}] * 2, "a disabled setting says why"
+    assert [prop(switch, "checked") for switch in switches] == [{"js": str(RenderVar.SMOOTH_SHADING)}]
     assert prop(find(template, "ff-dialog")[0], "modal") is False and prop(find(template, "ff-dialog-content")[0], "persistent") is True, "the page stays in use"
     assert prop(find(template, "ff-scene-sync")[0], "supersample") == {"js": f"{RenderVar.CLIENT_ANTIALIAS} === \"ssaa\" ? {MIRROR_SSAA_SCALE} : 1"}
     assert [prop(slider, "value") for slider in sliders] == [{"js": str(var)} for var in SLIDERS]
+    assert [(prop(slider, "min"), prop(slider, "max")) for slider in sliders] == [limits(var) for var in SLIDERS], "a slider spans what its setting validates"
     assert all(app.server.trigger_name(app.apply_render) in str(prop(slider, "onValueCommit")) for slider in sliders), "a slider applies on its release"
     assert len(resets) == 1 and app.server.trigger_name(app.reset_render) in str(prop(resets[0], "onClick"))

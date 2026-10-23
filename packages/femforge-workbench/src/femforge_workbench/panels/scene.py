@@ -26,24 +26,34 @@ from vtkmodules.vtkFiltersCore import vtkCellDataToPointData
 from vtkmodules.vtkFiltersGeometry import vtkDataSetSurfaceFilter
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingAnnotation import vtkAxesActor
-from vtkmodules.vtkRenderingCore import vtkActor, vtkCamera, vtkCompositePolyDataMapper, vtkDataSetMapper, vtkRenderer, vtkRenderWindow, vtkRenderWindowInteractor
-from vtkmodules.vtkRenderingOpenGL2 import vtkDualDepthPeelingPass, vtkRenderStepsPass, vtkSSAAPass, vtkTranslucentPass
+from vtkmodules.vtkRenderingCore import vtkActor, vtkCamera, vtkCompositePolyDataMapper, vtkDataSetMapper, vtkRenderer, vtkRenderPass, vtkRenderWindow, vtkRenderWindowInteractor
+from vtkmodules.vtkRenderingOpenGL2 import (
+    vtkDualDepthPeelingPass,
+    vtkFramebufferPass,
+    vtkOpenGLFXAAPass,
+    vtkRenderStepsPass,
+    vtkSSAAPass,
+    vtkTextureObject,
+    vtkToneMappingPass,
+    vtkTranslucentPass,
+)
 
 from femforge.common.log import log
 from femforge.common.utils import title
 from femforge.viz.field_display import camera_needs_reset
 from femforge.viz.scene import Renderable
-from femforge_workbench.panels import TWO_SEGMENTS, Carry, Cls, PanelComponent, readouts, segmented
+from femforge_workbench.panels import FOUR_SEGMENTS, TWO_SEGMENTS, Carry, Cls, PanelComponent, readouts, segmented, segments, setting
 from femforge_workbench.persist import APP_NAME
 from femforge_workbench.registry import WorkbenchSpec
 from femforge_workbench.reload import Reloader, default_roots
-from femforge_workbench.render import CLIENT_ANTIALIAS, SERVER_ANTIALIAS, Antialias, RenderVar
+from femforge_workbench.render import CLIENT_ANTIALIAS, Antialias, Lighting, Projection, RenderSettings, RenderVar, ToneMapping, limits
 from femforge_workbench.theme import hex_color
 from femforge_workbench.widgets.button import Button
 from femforge_workbench.widgets.context_menu import ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger
 from femforge_workbench.widgets.dialog import Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 from femforge_workbench.widgets.element import EVENT, setter
 from femforge_workbench.widgets.icon import Icon, IconName
+from femforge_workbench.widgets.reveal import Reveal
 from femforge_workbench.widgets.scene import SceneSync
 from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.tip import Tip
@@ -76,10 +86,16 @@ DRAG_TOLERANCE = 4
 ANTIALIAS_NAMES = {Antialias.OFF: "Off", Antialias.FXAA: "FXAA", Antialias.MSAA: "MSAA", Antialias.SSAA: "SSAA"}
 """How each antialiasing reads in the settings."""
 
-SETTINGS_DIALOG = "top-auto bottom-12 right-4 left-auto translate-x-0 translate-y-0 sm:max-w-sm"
-"""The settings dialog docks at the bottom right with no scrim, so the views it changes stay in sight."""
+SETTINGS_DIALOG = "top-auto bottom-12 right-4 left-auto max-h-[calc(100dvh-11rem)] translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-sm"
+"""The settings dialog docks at the bottom right with no scrim, so the views it changes stay in sight; its body scrolls in a short window."""
 
-SETTINGS_BODY = "flex flex-col gap-4"
+SERVER_ONLY = "Server renderer only"
+"""Why a setting the mirror cannot draw is disabled in Client mode."""
+
+SEGMENT_HOST = "grid"
+"""The cell around a segment that may be disabled, which carries its tooltip."""
+
+SETTINGS_BODY = "-mx-6 flex flex-col gap-5 overflow-y-auto px-6"
 SETTINGS_GROUP = "flex flex-col gap-3"
 SETTINGS_HEADING = "text-label font-semibold text-foreground"
 SLIDER_STACK = "flex flex-col gap-1.5"
@@ -269,6 +285,24 @@ def view_rotation(camera: vtkCamera) -> list[float]:
     rx, ry, rz = dy * uz - dz * uy, dz * ux - dx * uz, dx * uy - dy * ux
 
     return [rx, ry, rz, 0.0, ux, uy, uz, 0.0, -dx, -dy, -dz, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+
+def tone_mapping(render: RenderSettings, delegate: vtkRenderPass) -> vtkToneMappingPass:
+    """The settings' tone mapping over what `delegate` draws, at their exposure; the filmic curve takes VTK's default preset."""
+    mapping = vtkToneMappingPass()
+    match render.tone_mapping:
+        case ToneMapping.REINHARD:
+            mapping.SetToneMappingType(vtkToneMappingPass.Reinhard)
+        case ToneMapping.EXPONENTIAL:
+            mapping.SetToneMappingType(vtkToneMappingPass.Exponential)
+        case _:
+            mapping.SetToneMappingType(vtkToneMappingPass.GenericFilmic)
+            mapping.SetGenericFilmicDefaultPresets()
+
+    mapping.SetExposure(render.exposure)
+    mapping.SetDelegatePass(delegate)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+
+    return mapping
 
 
 def surface_with_point_data(dataset: vtkDataSet) -> vtkPolyData:
@@ -561,6 +595,8 @@ class ScenePanel(PanelComponent):
         self.interactor.SetRenderWindow(self.window())
         self.interactor.SetInteractorStyle(vtkInteractorStyleTrackballCamera())
         self.triad = Triad(self.window())
+        self.light(app.render)
+        self.project(app.render)
 
         self.pixel_ratio = 1.0
         self.stream_ratio = 1.0
@@ -716,21 +752,37 @@ class ScenePanel(PanelComponent):
                 ToggleGroupItem(title(str(choice)), value=str(choice), classes=segment)
 
     def build_settings(self) -> None:
-        """The Render Settings dialog the view's menu opens: this view's renderer, then the antialiasing and outlines every 3D view draws with."""
+        """The Render Settings dialog the view's menu opens: this view's renderer, then how every 3D view draws."""
         dialog = self.key(StateVar.SETTINGS)
 
-        def slider(var: RenderVar, label: str, unit: str, bounds: tuple[float, float], step: float) -> None:
+        mode = self.key(StateVar.MODE)
+        mirrored = f"{mode} === {json.dumps(str(ViewMode.CLIENT))}"
+        streamed_only = react.Bind(f"{mirrored} ? {json.dumps(SERVER_ONLY)} : ''")
+
+        def slider(var: RenderVar, label: str, unit: str, step: float, *, disabled: react.Bind | None = None) -> None:
+            low, high = limits(var)
             with html.Div(classes=SLIDER_STACK):
                 readouts(label, react.Bind(f"{var}[0].toFixed({1 if step < 1 else 0}) + {json.dumps(unit)}"))
                 Slider(
                     value=react.Bind(str(var)),
                     on_value_change=setter(str(var)),
                     on_value_commit=self.callback(self.app.apply_render),
-                    min_=bounds[0],
-                    max_=bounds[1],
+                    min_=low,
+                    max_=high,
                     step=step,
+                    disabled=disabled,
                     aria_label=title(label),
                 )
+
+        def group(heading: str) -> html.Div:
+            box = html.Div(classes=SETTINGS_GROUP)
+            with box:
+                html.Span(heading, classes=SETTINGS_HEADING)
+
+            return box
+
+        def chosen(var: RenderVar, value: StrEnum) -> react.Bind:
+            return react.Bind(f"{var} === {json.dumps(str(value))}")
 
         with Dialog(open_=react.Bind(dialog), on_open_change=setter(dialog), modal=False), DialogContent(classes=SETTINGS_DIALOG, scrim=False, persistent=True):
             with DialogHeader():
@@ -738,20 +790,56 @@ class ScenePanel(PanelComponent):
                 DialogDescription("The renderer is this view's; the rest applies to every 3D view.")
 
             with html.Div(classes=SETTINGS_BODY):
-                with html.Div(classes=SETTINGS_GROUP):
-                    html.Span("Renderer", classes=SETTINGS_HEADING)
+                with group("Renderer"):
                     self.build_mode_toggle(track=f"{Cls.SEGMENTED} {TWO_SEGMENTS}", segment=str(Cls.SEGMENT))
 
-                with html.Div(classes=SETTINGS_GROUP):
-                    html.Span("Antialiasing", classes=SETTINGS_HEADING)
-                    segmented(RenderVar.CLIENT_ANTIALIAS, "Client", [str(value) for value in CLIENT_ANTIALIAS], read=lambda value: ANTIALIAS_NAMES[Antialias(value)])
-                    segmented(RenderVar.SERVER_ANTIALIAS, "Server", [str(value) for value in SERVER_ANTIALIAS], read=lambda value: ANTIALIAS_NAMES[Antialias(value)])
+                with group("Antialiasing"):
+                    # Each renderer keeps its own choice, so MSAA on the stream survives a visit to the mirror.
+                    chosen_var = f"({mirrored} ? {json.dumps(str(RenderVar.CLIENT_ANTIALIAS))} : {json.dumps(str(RenderVar.SERVER_ANTIALIAS))})"
+                    with ToggleGroup(
+                        type_="single",
+                        variant="outline",
+                        size="sm",
+                        value=react.Bind(f"{mirrored} ? {RenderVar.CLIENT_ANTIALIAS} : {RenderVar.SERVER_ANTIALIAS}"),
+                        on_value_change=react.Callback(f"{EVENT} && trame.state.set({chosen_var}, {EVENT})"),
+                        classes=f"{Cls.SEGMENTED} {FOUR_SEGMENTS}",
+                        aria_label="Antialiasing",
+                    ):
+                        for value in Antialias:
+                            if value in CLIENT_ANTIALIAS:
+                                ToggleGroupItem(ANTIALIAS_NAMES[value], value=str(value), classes=str(Cls.SEGMENT))
+                                continue
 
-                with html.Div(classes=SETTINGS_GROUP):
-                    html.Span("Edges", classes=SETTINGS_HEADING)
-                    slider(RenderVar.OUTLINE_WIDTH, "Outline Width", " px", (0.5, 6.0), 0.5)
-                    slider(RenderVar.FEATURE_ANGLE, "Feature Angle", "°", (5.0, 90.0), 1.0)
-                    slider(RenderVar.HIGHLIGHT_WIDTH, "Highlight Width", " px", (0.5, 6.0), 0.5)
+                            # A disabled item takes no pointer events, so its host shows the tooltip.
+                            with Tip(content=streamed_only, definition=True), html.Span(classes=SEGMENT_HOST):
+                                ToggleGroupItem(ANTIALIAS_NAMES[value], value=str(value), disabled=react.Bind(mirrored), classes=str(Cls.SEGMENT))
+
+                with group("Lighting"):
+                    segmented(RenderVar.LIGHTING, "Lights", [str(value) for value in Lighting])
+                    slider(RenderVar.BRIGHTNESS, "Brightness", "×", 0.05)
+                    slider(RenderVar.AMBIENT, "Ambient", "", 0.05)
+                    slider(RenderVar.SPECULAR, "Specular on Plain Bodies", "", 0.05)
+
+                with group("Shading"):
+                    setting(RenderVar.SMOOTH_SHADING, "Smooth Shading")
+                    with Reveal(open_=react.Bind(str(RenderVar.SMOOTH_SHADING)), classes=SETTINGS_GROUP):
+                        slider(RenderVar.SPLIT_ANGLE, "Split Angle", "°", 1.0)
+
+                with group("Camera"):
+                    segmented(RenderVar.PROJECTION, "Projection", [str(value) for value in Projection])
+                    with Reveal(open_=chosen(RenderVar.PROJECTION, Projection.PERSPECTIVE), classes=SETTINGS_GROUP):
+                        slider(RenderVar.VIEW_ANGLE, "Field of View", "°", 1.0)
+
+                with Tip(content=streamed_only, definition=True), group("Tone Mapping"):
+                    segments(RenderVar.TONE_MAPPING, "Tone Mapping", [str(value) for value in ToneMapping], disabled=react.Bind(mirrored))
+                    with Reveal(open_=react.Bind(f"{RenderVar.TONE_MAPPING} !== {json.dumps(str(ToneMapping.OFF))}"), classes=SETTINGS_GROUP):
+                        slider(RenderVar.EXPOSURE, "Exposure", "×", 0.05, disabled=react.Bind(mirrored))
+
+                with group("Lines"):
+                    slider(RenderVar.OUTLINE_WIDTH, "Outline Width", " px", 0.5)
+                    slider(RenderVar.FEATURE_ANGLE, "Feature Angle", "°", 1.0)
+                    slider(RenderVar.HIGHLIGHT_WIDTH, "Highlight Width", " px", 0.5)
+                    slider(RenderVar.LINE_WIDTH, "Field Line Width", " px", 0.5)
 
             with DialogFooter(show_close_button=True):
                 Button("Reset to Defaults", size="sm", variant="ghost", on_click=self.callback(self.app.reset_render))
@@ -938,6 +1026,8 @@ class ScenePanel(PanelComponent):
         else:
             self.plotter.renderer.ResetCamera()
 
+        # A renderable may clear the plotter, which drops its lights with its actors.
+        self.light(self.app.render)
         self.antialias()
         if self.mode is not ViewMode.CLIENT:
             self.footprint = None
@@ -1158,27 +1248,90 @@ class ScenePanel(PanelComponent):
             self.state[self.key(StateVar.NOTICE)] = text
 
     def antialias(self) -> None:
-        """Smooths the edges as the render settings ask for the current mode; the mirror supersamples its own canvas."""
+        """Builds the renderer's passes for the current mode from the render settings: its antialiasing and, on the stream, its tone mapping."""
         render = self.app.render
-        chosen = render.client_antialias if self.mode is ViewMode.CLIENT else render.server_antialias
-        self.supersampled = self.mode is ViewMode.SERVER and chosen is Antialias.SSAA
+        streamed = self.mode is ViewMode.SERVER
+        chosen = render.server_antialias if streamed else render.client_antialias
+        toned = streamed and render.tone_mapping is not ToneMapping.OFF
+        self.supersampled = streamed and chosen is Antialias.SSAA
         renderer = self.plotter.renderer
         self.plotter.disable_anti_aliasing()
+        drawn = renderer.GetPass()
+        if drawn is not None:
+            drawn.ReleaseGraphicsResources(self.window())  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the window parameter untyped
+
         renderer.SetPass(None)  # pyright: ignore[reportArgumentType]  # VTK takes None to drop the pass; its stub omits it
+        if not toned and not self.supersampled:
+            # The mirror supersamples its own canvas.
+            if chosen in (Antialias.FXAA, Antialias.MSAA):
+                self.plotter.enable_anti_aliasing(cast("Literal['msaa', 'fxaa']", str(chosen)), multi_samples=MULTI_SAMPLES)
+
+            return
+
+        # A custom chain draws translucent bodies unsorted unless its steps peel them as the renderer itself would.
+        peeling = vtkDualDepthPeelingPass()
+        peeling.SetTranslucentPass(vtkTranslucentPass())  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+        steps = vtkRenderStepsPass()
+        steps.SetTranslucentPass(peeling)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+        top: vtkRenderPass = steps
         if self.supersampled:
-            # pyvista's SSAA pass draws translucent bodies unsorted, so its steps peel them as the renderer itself would.
-            peeling = vtkDualDepthPeelingPass()
-            peeling.SetTranslucentPass(vtkTranslucentPass())  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
-            steps = vtkRenderStepsPass()
-            steps.SetTranslucentPass(peeling)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
             supersampling = vtkSSAAPass()
-            supersampling.SetDelegatePass(steps)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
-            renderer.SetPass(supersampling)
-        elif chosen in (Antialias.FXAA, Antialias.MSAA):
-            self.plotter.enable_anti_aliasing(cast("Literal['msaa', 'fxaa']", str(chosen)), multi_samples=MULTI_SAMPLES)
+            supersampling.SetDelegatePass(top)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+            top = supersampling
+        elif toned:
+            # The peeling needs a depth buffer, which the tone mapping's own framebuffer lacks; SSAA's has one.
+            framed = vtkFramebufferPass()
+            framed.SetDepthFormat(vtkTextureObject.Fixed24)
+            framed.SetDelegatePass(top)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+            top = framed
+
+        if toned:
+            # The tone mapping draws at the window's size, so SSAA renders inside it.
+            top = tone_mapping(render, top)
+
+        if toned and not self.supersampled and chosen is not Antialias.OFF:
+            # The tone mapping draws into a framebuffer the window's multisamples never reach, so MSAA smooths with FXAA there.
+            smoothing = vtkOpenGLFXAAPass()
+            smoothing.SetDelegatePass(top)  # pyright: ignore[reportUnknownMemberType]  # the VTK stubs leave the pass parameter untyped
+            top = smoothing
+
+        renderer.SetPass(top)
+
+    def light(self, render: RenderSettings) -> None:
+        """Places the lights the render settings ask for, each at the settings' brightness."""
+        plotter = self.plotter
+        plotter.remove_all_lights(only_active=True)
+        match render.lighting:
+            case Lighting.LIGHT_KIT:
+                plotter.enable_lightkit(only_active=True)
+            case Lighting.THREE_LIGHTS:
+                plotter.enable_3_lights(only_active=True)
+            case Lighting.HEADLIGHT:
+                plotter.add_light(pv.Light(light_type="headlight"))
+
+        placed = cast("list[pv.Light]", plotter.renderer.lights)
+        for each in placed:
+            each.intensity *= render.brightness
+
+    def project(self, render: RenderSettings) -> None:
+        """Gives the camera the settings' projection and field of view, keeping the height of the scene it frames."""
+        camera = self.plotter.renderer.GetActiveCamera()
+        framed = camera.GetParallelScale() if camera.GetParallelProjection() else camera.GetDistance() * math.tan(math.radians(camera.GetViewAngle()) / 2.0)
+        perspective = render.projection is Projection.PERSPECTIVE
+        camera.SetViewAngle(render.view_angle)
+        camera.SetParallelProjection(not perspective)
+        if perspective:
+            camera.SetDistance(framed / math.tan(math.radians(render.view_angle) / 2.0))
+        else:
+            camera.SetParallelScale(framed)
+
+        self.plotter.renderer.ResetCameraClippingRange()
 
     def restyle(self) -> None:
         """Redraws the scene with the new render settings at the window scale they give, the camera kept."""
+        self.adopt_camera()
+        self.light(self.app.render)
+        self.project(self.app.render)
         self.antialias()
         self.rescale()
 

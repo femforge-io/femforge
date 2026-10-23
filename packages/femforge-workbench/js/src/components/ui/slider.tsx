@@ -2,15 +2,55 @@ import * as React from "react"
 import { cn } from "cn"
 import { Slider as SliderPrimitive } from "radix-ui"
 
+import { stepped, wheelSteps } from "@/components/slider/wheel"
+
+const COMMIT_DELAY = 300
+
 function Slider({
   className,
   defaultValue,
   value,
   min = 0,
   max = 100,
+  step = 1,
+  disabled,
+  onValueChange,
+  onValueCommit,
   "aria-label": label,
   ...props
 }: React.ComponentProps<typeof SliderPrimitive.Root>) {
+  const root = React.useRef<HTMLSpanElement>(null)
+  const latest = React.useRef({ value, min, max, step, disabled, onValueChange, onValueCommit })
+  latest.current = { value, min, max, step, disabled, onValueChange, onValueCommit }
+
+  // React registers wheel listeners as passive, and only an active one may keep the page from scrolling under a stepped slider.
+  React.useEffect(() => {
+    const element = root.current
+    if (!element) return undefined
+
+    let timer = 0
+    const wheel = (event: WheelEvent): void => {
+      const { value: values, min: low, max: high, step: grid, disabled: off, onValueChange: change, onValueCommit: commit } = latest.current
+      if (off || !Array.isArray(values) || event.deltaY === 0) return
+
+      event.preventDefault()
+      const { left, width } = element.getBoundingClientRect()
+      const next = stepped(values, width ? (event.clientX - left) / width : 0, wheelSteps(event.deltaY, event.deltaMode), low, high, grid)
+      if (next.every((each, at) => each === values[at])) return
+
+      change?.(next)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => commit?.(next), COMMIT_DELAY)
+    }
+
+    element.addEventListener("wheel", wheel, { passive: false })
+
+    return () => {
+      window.clearTimeout(timer)
+      element.removeEventListener("wheel", wheel)
+    }
+  }, [])
+
   const _values = React.useMemo(
     () =>
       Array.isArray(value)
@@ -23,11 +63,16 @@ function Slider({
 
   return (
     <SliderPrimitive.Root
+      ref={root}
       data-slot="slider"
       defaultValue={defaultValue}
       value={value}
       min={min}
       max={max}
+      step={step}
+      disabled={disabled}
+      onValueChange={onValueChange}
+      onValueCommit={onValueCommit}
       className={cn(
         "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
         className

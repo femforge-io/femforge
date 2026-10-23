@@ -419,8 +419,12 @@ class BodyStyle(BaseModel):
     """`[-]`: The body's own opacity, multiplied by the display's."""
 
 
+PLAIN_SPECULAR: float = 0.3
+"""`[-]`: The specular strength of a plain body, so its faces read apart under the light."""
+
+
 class EdgeStyle(BaseModel):
-    """How the feature-edge outline and the hover and selection outlines draw."""
+    """How the drawn lines draw: the feature-edge outline, the hover and selection outlines and the field lines."""
 
     model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
@@ -432,6 +436,38 @@ class EdgeStyle(BaseModel):
 
     highlight_width: float = Field(default=2.0, gt=0.0)
     """`[px]`: The width of a hover outline in CSS pixels; a selection draws wider in proportion."""
+
+    line_width: float = Field(default=1.0, gt=0.0)
+    """`[px]`: The width of a field line drawn as a poly-line, in CSS pixels."""
+
+
+class Shading(BaseModel):
+    """How solid surfaces shade under the lights."""
+
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
+
+    smooth: bool = True
+    """Interpolate the normals across each surface so curved faces shade evenly; False shades every facet flat."""
+
+    split_angle: float = Field(default=FEATURE_ANGLE, gt=0.0, lt=180.0)
+    """`[deg]`: The dihedral angle above which a smooth surface keeps its edge sharp."""
+
+    ambient: float = Field(default=0.0, ge=0.0, le=1.0)
+    """`[-]`: The share of a surface's color shown without light, which lifts the faces turned away from the lights."""
+
+    specular: float = Field(default=PLAIN_SPECULAR, ge=0.0, le=1.0)
+    """`[-]`: The highlight strength of a body in a plain color; a body on a colormap takes none, so no highlight reads as a value."""
+
+
+def shaded(surface: pv.PolyData, shading: Shading) -> pv.PolyData:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
+    """The surface with point normals split at the shading's angle when it shades smoothly, as is otherwise or when it has no faces."""
+    if not shading.smooth or surface.GetNumberOfPolys() == 0:
+        return surface
+
+    return cast(
+        "pv.PolyData",
+        surface.compute_normals(cell_normals=False, point_normals=True, split_vertices=True, feature_angle=shading.split_angle, auto_orient_normals=False),
+    )
 
 
 class DisplaySpec(BaseModel):
@@ -482,7 +518,10 @@ class DisplaySpec(BaseModel):
     """Draw the black feature-edge wireframe over the visible bodies."""
 
     edges: EdgeStyle = EdgeStyle()
-    """How the wireframe draws."""
+    """How the wireframe and the field lines draw."""
+
+    shading: Shading = Shading()
+    """How the bodies shade."""
 
     scale: float = Field(default=1.0, gt=0.0)
     """`[-]`: Window pixels per CSS pixel, which the wireframe's width scales by."""
@@ -981,6 +1020,9 @@ class FieldScene:
         self.data_range: tuple[float, float] = (0.0, 1.0)
         self._actor: pv.Actor | None = None
         self._surfaces: pv.MultiBlock | None = None
+        self.shading: Shading = Shading()
+        """How the drawn surfaces shade, whose normals a change of smoothness or split angle rebuilds."""
+        self._styled_shading: Shading = Shading()
         """The surface copy of the shown blocks the body actor draws, which every apply recolors with the blocks."""
         self._styled: dict[str, tuple[str, float]] = {}
         """The ``(color, opacity)`` of every solid body actor the plotter holds."""
@@ -1063,6 +1105,10 @@ class FieldScene:
         scale: float = spec.warp_scale if spec.warp_scale is not None else self.auto_warp_scale(name)
 
         return (name, scale) if scale > 0.0 else None
+
+    def shades_like(self, shading: Shading) -> bool:
+        """Whether the drawn surfaces carry the normals ``shading`` asks for; its light terms restyle them in place."""
+        return self.shading.smooth == shading.smooth and (not shading.smooth or self.shading.split_angle == shading.split_angle)
 
     def reshaped(self, spec: DisplaySpec) -> bool:
         """Whether a spec asks for other shown blocks than the scene holds: another expansion, sweep or warp."""
@@ -1196,9 +1242,14 @@ class FieldScene:
             _ = plotter.remove_actor(name)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
 
         # pyvista draws a composite through surface copies of its blocks, so the scene keeps those copies to recolor them.
-        self._surfaces = self.blocks.as_polydata_blocks()
+        surfaces: pv.MultiBlock = self.blocks.as_polydata_blocks()
+        for name in [str(key) for key in surfaces.keys()]:
+            surfaces[name] = shaded(cast("pv.PolyData", surfaces[name]), spec.shading)
+
+        self._surfaces = surfaces
+        self.shading = spec.shading
         self._actor = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
-            self._surfaces,
+            surfaces,
             scalars=SCALARS_ARRAY,
             show_edges=False,
             show_scalar_bar=False,
@@ -1210,7 +1261,7 @@ class FieldScene:
 
     def update(self, plotter: pv.Plotter, spec: DisplaySpec) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated integration test
         """Recolor an already-rendered scene in place, the cheap path a panel calls on every knob change; a changed expansion or warp draws the scene anew."""
-        if self._actor is None or self.reshaped(spec.fitted(self.fields)):
+        if self._actor is None or self.reshaped(spec.fitted(self.fields)) or not self.shades_like(spec.shading):
             self.spec = spec
             self.render(plotter)
             return
@@ -1267,17 +1318,28 @@ class FieldScene:
             mapper.block_attr[index + 1].visible = name not in fitted.hidden_bodies and name not in solid
             mapper.block_attr[index + 1].opacity = fitted.body_opacity(name)
 
+        look = self._actor.prop
+        look.interpolation = "gouraud" if fitted.shading.smooth else "flat"
+        look.ambient = fitted.shading.ambient
+
         painted: bool = any(name not in fitted.hidden_bodies and name not in solid for name in (str(key) for key in self.blocks.keys()))
         self._update_scalar_bar(plotter, mapper, info, fitted if painted else None)
-        self._update_styled(plotter, {body: (color, fitted.body_opacity(body)) for body, color in solid.items()})
+        self._update_styled(plotter, {body: (color, fitted.body_opacity(body)) for body, color in solid.items()}, fitted.shading)
         self._update_outline(plotter, fitted)
         self._update_streamlines(plotter, fitted)
         self._update_lines_bar(plotter)
         if self.glyphs is not None:
             self.glyphs.update(plotter, self, self.glyph_view)
 
-    def _update_styled(self, plotter: pv.Plotter, styled: Mapping[str, tuple[str, float]]) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
-        """Give every solid body an actor of its own in its ``(color, opacity)``, replacing only the ones that changed and removing the ones dropped."""
+    def _update_styled(self, plotter: pv.Plotter, styled: Mapping[str, tuple[str, float]], shading: Shading) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
+        """Give every solid body an actor of its own in its ``(color, opacity)`` and the shading, replacing only the ones that changed and removing the ones dropped."""
+        if shading != self._styled_shading:
+            for name in self._styled:
+                _ = plotter.remove_actor(SceneActor.STYLED.of(name))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
+
+            self._styled = {}
+            self._styled_shading = shading
+
         for name in [name for name in self._styled if name not in styled]:
             _ = plotter.remove_actor(SceneActor.STYLED.of(name))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
             del self._styled[name]
@@ -1294,6 +1356,11 @@ class FieldScene:
                 surface,
                 color=color,
                 opacity=opacity,
+                smooth_shading=shading.smooth,
+                split_sharp_edges=shading.smooth,
+                feature_angle=shading.split_angle,
+                ambient=shading.ambient,
+                specular=shading.specular,
                 show_scalar_bar=False,
                 name=SceneActor.STYLED.of(name),
             )
@@ -1534,16 +1601,18 @@ class FieldScene:
 
     def line_style(self, options: FieldLineOptions, actors: StreamlineActors) -> FieldLineOptions:
         """
-        The field lines in the display's colormap, inversion, log scale and opacity map; a polar display leaves them as asked.
+        The field lines at the display's width, in its colormap, inversion, log scale and opacity map; a polar display leaves their colors as asked.
 
         Their range is the display's while it shows their field's magnitude, else the automatic range of that magnitude over their own region, whatever the bodies show.
         """
         spec: DisplaySpec = self.spec
+        width: float = spec.edges.line_width * spec.scale
         if spec.mode is DisplayMode.POLAR_XY:
-            return options
+            return options.model_copy(update={"line_width": width})
 
         return options.model_copy(
             update={
+                "line_width": width,
                 "colormap": spec.colormap,
                 "invert": spec.invert,
                 "log_scale": spec.log_scale,

@@ -238,6 +238,11 @@ A click always gets an answer in the same frame, even when its result takes seco
 - A frame that solves a section adds its own facts below the Type, such as Normal, Plane Origin and Thickness.
 - A failed geometry check is a warning notice over the tables, one line per failing body and test.
 
+### Slider
+
+- The mouse wheel steps the slider under the pointer: one step per notch, up the track for a turn away from you. On a range slider it moves the thumb nearest the pointer, never past the other.
+- A wheel step applies like a drag: the value shows at once, and the change commits 300 ms after the last notch.
+
 ### Select and menu
 
 - An item under the pointer or the keyboard takes the hover wash.
@@ -305,20 +310,36 @@ A click always gets an answer in the same frame, even when its result takes seco
 
 ### Render Settings
 
-- The dialog docks at the bottom right above the status bar with no scrim, so the views it changes stay in sight. A choice applies at once; a slider applies on its release.
+- The dialog docks at the bottom right above the status bar with no scrim, so the views it changes stay in sight. Its body scrolls when the window is short. A choice applies at once; a slider applies on its release.
 - The dialog stays open while you work in the page. Only its close buttons, or Escape pressed inside it, close it.
 - Renderer chooses Client or Server for the view the menu was opened on, on the same state as the toolbar toggle. Everything else applies to every 3D view of the user, in every workbench.
+- Antialiasing shows the choice of the view's renderer. Each renderer keeps its own choice, so MSAA on the server survives a switch to the client and back.
+- A setting the view's renderer cannot draw stays in place, disabled, with the definition tooltip "Server renderer only". The tooltip sits on the disabled control's host, because a disabled control takes no pointer events.
 
 | Group | Setting | Values | Default |
 |---|---|---|---|
-| Antialiasing | Client | Off, FXAA, SSAA | FXAA |
-| Antialiasing | Server | Off, FXAA, MSAA, SSAA | MSAA |
-| Edges | Outline Width | 0.5 to 6 px | 2 px |
-| Edges | Feature Angle | 5° to 90° | 30° |
-| Edges | Highlight Width | 0.5 to 6 px; a selected silhouette draws 1.5× and a selected 2D boundary 2× | 2 px |
+| Antialiasing | Antialiasing | Off, FXAA, MSAA, SSAA; MSAA is server only | FXAA on the client, MSAA on the server |
+| Lighting | Lights | Light Kit, Three Lights, Headlight | Light Kit |
+| Lighting | Brightness | 0.25× to 2× the preset's intensity | 1× |
+| Lighting | Ambient | 0 to 0.5 | 0 |
+| Lighting | Specular on Plain Bodies | 0 to 1; a body on a colormap takes none, so no highlight reads as a value | 0.3 |
+| Shading | Smooth Shading | On, Off | On |
+| Shading | Split Angle, shown with Smooth Shading | 5° to 90° | 30° |
+| Camera | Projection | Orthographic, Perspective | Orthographic |
+| Camera | Field of View, shown with Perspective | 10° to 90° | 30° |
+| Tone Mapping | Tone Mapping, server only | Off, Reinhard, Exponential, Filmic | Off |
+| Tone Mapping | Exposure, shown with a tone mapping | 0.25× to 4× | 1× |
+| Lines | Outline Width | 0.5 to 6 px | 2 px |
+| Lines | Feature Angle | 5° to 90° | 30° |
+| Lines | Highlight Width | 0.5 to 6 px; a selected silhouette draws 1.5× and a selected 2D boundary 2× | 2 px |
+| Lines | Field Line Width | 0.5 to 6 px | 1 px |
 
 - Client mode has no MSAA, because VTK.wasm ignores the window's multisamples.
 - Client SSAA renders the canvas 2× each side and the browser averages it down. VTK.wasm maps the pointer by the device pixel ratio alone, so the view scales each pointer offset by 2 before VTK.wasm reads it.
+- Client mode has no tone mapping. VTK.wasm draws wide lines 1 px wide under any custom render pass, so the mirror keeps the renderer's own passes.
+- Client mode draws an opacity-mapped body unsorted, so its opaque parts can show what lies behind them. ES 3 has no dual depth peeling, and the single-layer depth peeling hides the outline under a translucent body.
+- Server tone mapping draws into its own framebuffer, which the window's multisamples never reach, so MSAA smooths with FXAA there. SSAA renders inside the tone mapping, and the translucent stage peels depth inside a framebuffer with a depth buffer.
+- Switching the projection keeps the framed height: the perspective camera moves to the distance that shows what the orthographic view showed.
 - Server SSAA renders each side √5 times larger. Lines and text scale by √5 to keep their width, and its translucent stage peels depth like the renderer's own.
 - The server keeps the settings per user under the user config directory, not in browser storage: browser storage is separate per port, and the server needs the settings before its first frame.
 - Reset to Defaults puts every setting back.

@@ -33,7 +33,7 @@ from femforge_workbench.panels import PanelComponent
 from femforge_workbench.persist import APP_NAME, LocalJsonStore, StateKey, UiStateStore, default_user
 from femforge_workbench.registry import WorkbenchKind, WorkbenchSpec, discover, resolve
 from femforge_workbench.reload import Reloader, default_roots, persistent
-from femforge_workbench.render import RenderSettings, RenderVar, load_render, render_state, save_render, settings_from_state
+from femforge_workbench.render import CHOICES, RenderSettings, RenderVar, load_render, render_state, save_render, settings_from_state
 from femforge_workbench.tasks import TaskBoard, TaskField, TaskPhase, TaskView
 from femforge_workbench.theme import Palette
 from femforge_workbench.widgets.button import Button
@@ -688,9 +688,9 @@ class Workbench(TrameApp):
         with self.state:
             self.state[StateVar.TASK_SHEET] = not bool(self.state[StateVar.TASK_SHEET])
 
-    @change(RenderVar.CLIENT_ANTIALIAS, RenderVar.SERVER_ANTIALIAS)
-    def on_antialias(self, **_: object) -> None:
-        """Applies an antialiasing the settings chose; a slider applies on its release instead."""
+    @change(*CHOICES)
+    def on_render_choice(self, **_: object) -> None:
+        """Applies a render setting a toggle or a switch chose; a slider applies on its release instead."""
         self.apply_render()
 
     @guard
