@@ -756,6 +756,14 @@ def glyph_layer(run: Run, scene: FieldScene) -> GlyphLayer | None:
         return None
 
 
+def reselected(previous: GlyphView | None, view: GlyphView | None) -> bool:
+    """Whether ``view`` differs from ``previous`` only in the selected entity."""
+    if previous is None or view is None or previous.selected == view.selected:
+        return False
+
+    return previous.model_copy(update={"selected": None}) == view.model_copy(update={"selected": None})
+
+
 def group_scene(run: Run) -> GroupScene | None:
     """The mesh-only scene of a run without fields, None when its mesh is gone or cannot be read."""
     try:
@@ -1784,15 +1792,34 @@ class FieldViewerController(TrameComponent):
         )
 
     def show_glyphs(self, view: GlyphView | None) -> None:
-        """Draws ``view`` over the shown run, or removes the glyph layer for None; switching the ghost on turns the camera to Iso once."""
+        """Draws ``view`` over the shown run, or removes the glyph layer for None; a new selection alone swaps only the highlight; switching the ghost on turns the camera to Iso once."""
         ghosted = view is not None and view.ghost and (self.glyph_view is None or not self.glyph_view.ghost)
+        previous = self.glyph_view
         self.glyph_view = view
         self.iso_pending = self.iso_pending or ghosted
+        if reselected(previous, view) and self.reselect():
+            return
+
         if self.scene is not None:
             self.request_redraw()
             return
 
         self.draw_groups()
+
+    def reselect(self) -> bool:
+        """Swaps the highlight of the shown scene for the new selection and pushes one frame; False when the scene is not drawn yet or a redraw is pending."""
+        viewer = self.viewer
+        host = self.scene if self.scene is not None else self.groups
+        pending = self.task is not None and not self.task.done()
+        if viewer is None or host is None or host.glyphs is None or viewer.renderable is not host or pending:
+            return False
+
+        view = self.scaled_glyphs()
+        host.glyph_view = view
+        host.glyphs.update(viewer.plotter, host, view)
+        viewer.push()
+
+        return True
 
     def draw_groups(self) -> None:
         """Draws the mesh-only scene of a run without fields over its notice while the glyphs are shown, and empties the view back to the notice once they are not."""
