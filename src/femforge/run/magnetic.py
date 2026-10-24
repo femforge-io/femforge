@@ -11,7 +11,7 @@ from femforge.elmer.variables import ElmerVariable
 from femforge.run.electrical import read_boundary_names
 
 
-# The trailing component index on a vector column name, e.g. "res: magnet force 2".
+# The trailing component index on a vector column name, e.g. "component 1: res: magnetic force 2".
 _COMPONENT_RE = re.compile(r"(.*?)\s+([123])\s*$")
 
 
@@ -36,15 +36,10 @@ def force_triples(raw: Mapping[str, float]) -> dict[str, Vec3]:
 
 
 def _join_components(triples: Mapping[str, Vec3], names_by_component: Mapping[int, str]) -> dict[str, Vec3]:
-    """Component name -> Vec3, matched by the name (case-insensitive) or ``component <id>`` appearing in a column stem — deliberately loose, Elmer's exact column wording is unpinned in-repo."""
-    out: dict[str, Vec3] = {}
-    for component_id, name in names_by_component.items():
-        for stem, vec in triples.items():
-            low: str = stem.lower()
-            if name.lower() in low or f"component {component_id}" in low:
-                out[name] = vec
-                break
-    return out
+    """Component name -> Vec3, matched on a column stem's exact ``component <id>:`` label."""
+    labelled: dict[str, Vec3] = {stem.partition(":")[0].strip().lower(): vec for stem, vec in triples.items()}
+
+    return {name: labelled[label] for component_id, name in names_by_component.items() if (label := f"component {component_id}") in labelled}
 
 
 def component_forces(raw: Mapping[str, float], names_by_component: Mapping[int, str]) -> dict[str, Vec3]:

@@ -70,12 +70,12 @@ def test_parse_force_and_torque_narrow_to_the_nodal_sums(tmp_path: Path) -> None
         "res: nodal force 1",
         "res: nodal force 2",
         "res: nodal force 3",
-        "res: magnet force 1",
-        "res: magnet force 2",
-        "res: magnet force 3",
-        "res: component 2 force 1",
-        "res: component 2 force 2",
-        "res: component 2 force 3",
+        "component 1: res: magnetic force 1",
+        "component 1: res: magnetic force 2",
+        "component 1: res: magnetic force 3",
+        "component 2: res: magnetic force 1",
+        "component 2: res: magnetic force 2",
+        "component 2: res: magnetic force 3",
         "res: nodal torque 3",
     ]
     (tmp_path / "case.dat.names").write_text(
@@ -90,25 +90,25 @@ def test_parse_force_and_torque_narrow_to_the_nodal_sums(tmp_path: Path) -> None
     assert result.torque is not None
     assert (result.torque.magnitude.x, result.torque.magnitude.y, result.torque.magnitude.z) == pytest.approx((0.0, 0.0, 9.9))
     # The component triples still ride along in raw for run.magnetic.
-    assert result.raw["res: magnet force 2"] == pytest.approx(2.0)
+    assert result.raw["component 1: res: magnetic force 2"] == pytest.approx(2.0)
     # Without a components.yml there is nothing to join the triples against.
     assert result.component_forces == {}
     assert result.component_torques == {}
 
 
 def test_parse_joins_component_forces_against_components_yml(tmp_path: Path) -> None:
-    # Named and "component <id>" column stems both join to the components.yml names as typed pint vectors.
+    # The "component <id>:" column labels join to the components.yml names as typed pint vectors.
     (tmp_path / "case.dat").write_text("1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0\n", encoding="utf-8")
     names = [
-        "res: n42_magnetizationn force 1",
-        "res: n42_magnetizationn force 2",
-        "res: n42_magnetizationn force 3",
-        "res: component 2 force 1",
-        "res: component 2 force 2",
-        "res: component 2 force 3",
-        "res: n42_magnetizationn torque 1",
-        "res: n42_magnetizationn torque 2",
-        "res: n42_magnetizationn torque 3",
+        "component 1: res: magnetic force 1",
+        "component 1: res: magnetic force 2",
+        "component 1: res: magnetic force 3",
+        "component 2: res: magnetic force 1",
+        "component 2: res: magnetic force 2",
+        "component 2: res: magnetic force 3",
+        "component 1: res: magnetic torque 1",
+        "component 1: res: magnetic torque 2",
+        "component 1: res: magnetic torque 3",
     ]
     (tmp_path / "case.dat.names").write_text(
         "Variables in columns of matrix:\n" + "".join(f"{i}: {name}\n" for i, name in enumerate(names, 1)),
@@ -158,8 +158,8 @@ def _write_axisym_outputs(tmp_path: Path) -> None:
     names = [
         "res: nodal force 1",
         "res: nodal force 2",
-        "res: n42_magnetizationn force 1",
-        "res: n42_magnetizationn force 2",
+        "component 1: res: magnetic force 1",
+        "component 1: res: magnetic force 2",
     ]
     (tmp_path / "case.dat.names").write_text(
         "Variables in columns of matrix:\n" + "".join(f"{i}: {name}\n" for i, name in enumerate(names, 1)),
@@ -190,7 +190,7 @@ def test_parse_axisymmetric_revolves_the_typed_vectors(tmp_path: Path) -> None:
     assert magnet.magnitude.y == pytest.approx(5.0 * math.tau)
 
     assert result.raw["res: nodal force 1"] == pytest.approx(1.5)
-    assert result.raw["res: n42_magnetizationn force 2"] == pytest.approx(5.0)
+    assert result.raw["component 1: res: magnetic force 2"] == pytest.approx(5.0)
 
 
 def test_parse_cartesian_2d_scales_the_per_metre_vectors_by_the_thickness(tmp_path: Path) -> None:
@@ -201,7 +201,7 @@ def test_parse_cartesian_2d_scales_the_per_metre_vectors_by_the_thickness(tmp_pa
     assert result.force is not None
     assert result.force.magnitude.to_list() == pytest.approx([0.015, -0.02, 0.0])
     assert result.component_forces["N42_MAGNETIZATIONN"].magnitude.y == pytest.approx(0.05)
-    assert result.raw["res: n42_magnetizationn force 2"] == pytest.approx(5.0)
+    assert result.raw["component 1: res: magnetic force 2"] == pytest.approx(5.0)
 
 
 def test_parse_reads_the_frame_from_the_manifest(tmp_path: Path) -> None:
