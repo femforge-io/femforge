@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable, Sequence
 from enum import Enum
-from typing import cast
+from typing import Literal, cast, get_args, get_origin
 
 from femforge.common.utils import title
 from femforge.common.vector import Vec3
@@ -42,8 +42,23 @@ def components(text: str) -> list[str | None]:
     return [part.strip() for part in parts.split(",")]
 
 
-def views(label: str, value: object) -> list[FieldView]:
-    """The fields one authored value shows as: a vector quantity as magnitude and direction, a quantity as number and unit, a vector by component, a choice or text; none for an unset value."""
+def is_choice(annotation: object) -> bool:
+    """Whether a field annotation is a ``Literal`` of strings, optionally with None, so its value reads as a choice rather than free text."""
+    options: list[object] = [option for option in cast("tuple[object, ...]", get_args(annotation)) if option is not type(None)]
+    if get_origin(annotation) is not Literal:
+        return len(options) == 1 and is_choice(options[0])
+
+    return all(isinstance(option, str) for option in options)
+
+
+def views(label: str, value: object, *, choice: bool = False) -> list[FieldView]:
+    """The fields one authored value shows as: a vector quantity as magnitude and direction, a quantity as number and unit, a vector by component, a choice or text; none for an unset value.
+
+    Args:
+        label: The field's label.
+        value: The authored value.
+        choice: Whether a string value is one of a fixed set of options, which reads title-cased like an enum.
+    """
     if value is None:
         return []
 
@@ -74,6 +89,9 @@ def views(label: str, value: object) -> list[FieldView]:
 
     if isinstance(value, int | float):
         return [{"label": label, "kind": "text", "value": f"{value:.4g}"}]
+
+    if isinstance(value, str) and choice:
+        return [{"label": label, "kind": "choice", "value": title(value)}]
 
     if isinstance(value, str):
         return [{"label": label, "kind": "text", "value": value}]
@@ -114,7 +132,8 @@ def condition_card(condition: Condition, *, icon: IconName | None, dropped: Sequ
         dropped_tip: Why the frame drops a component, by its name.
     """
     fields: list[FieldView] = []
-    names = [name for name in type(condition).model_fields if name not in SKIPPED]
+    model_fields = type(condition).model_fields
+    names = [name for name in model_fields if name not in SKIPPED]
     kind = str(getattr(condition, "kind", ""))
     for name in names:
         if name in COMPONENTS:
@@ -123,7 +142,7 @@ def condition_card(condition: Condition, *, icon: IconName | None, dropped: Sequ
 
             continue
 
-        found = views(title(name), cast("object", getattr(condition, name)))
+        found = views(title(name), cast("object", getattr(condition, name)), choice=is_choice(model_fields[name].annotation))
         for view in found:
             if view["kind"] == "vector" and view["label"] == "Direction" and dropped:
                 view["dropped"] = [index for index, axis in enumerate(COMPONENTS) if axis in dropped]

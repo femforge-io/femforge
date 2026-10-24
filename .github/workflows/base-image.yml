@@ -12,11 +12,16 @@ jobs:
   bump:
     if: github.repository == 'femforge-io/femforge'
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
+      # A pull request opened with the workflow's own token starts no workflows, so the bot App opens it.
+      - uses: actions/create-github-app-token@v3
+        id: bot
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
       - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.bot.outputs.token }}
       - uses: astral-sh/setup-uv@v10.3.0
       - run: uv sync --locked --no-default-groups
       - name: Compare the pinned base with the current ubuntu:24.04
@@ -31,7 +36,8 @@ jobs:
       - name: Propose the current base
         if: steps.base.outputs.current != '' && steps.base.outputs.current != steps.base.outputs.pinned
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT: ${{ steps.bot.outputs.app-slug }}[bot]
           PINNED: ${{ steps.base.outputs.pinned }}
           CURRENT: ${{ steps.base.outputs.current }}
           BRANCH: ${{ steps.base.outputs.branch }}
@@ -42,11 +48,11 @@ jobs:
           fi
           sed -i "s/$PINNED/$CURRENT/" src/femforge/elmer/runtime/docker_image.py
           uv run --no-sync femforge image bump --part patch
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "$BOT"
+          git config user.email "$(gh api "/users/$BOT" --jq .id)+$BOT@users.noreply.github.com"
           git switch -c "$BRANCH"
           git commit -am "Rebase the Elmer image on the current ubuntu:24.04"
           git push origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "Rebase the Elmer image on the current ubuntu:24.04" \
-            --body "ubuntu:24.04 moved from $PINNED to $CURRENT, which carries its security updates. This pins the new digest and bumps the image version, so the image workflow publishes it once this merges. A pull request opened by this workflow starts no checks: close and reopen it to run them."
+            --body "ubuntu:24.04 moved from $PINNED to $CURRENT, which carries its security updates. This pins the new digest and bumps the image version, so the image workflow publishes it once this merges."

@@ -114,7 +114,10 @@ class ConditionGlyph(StrEnum):
     """A thermal source or boundary value."""
 
     VOLTAGE = "voltage"
-    """A voltage potential or coil terminal."""
+    """A fixed voltage potential."""
+
+    COIL_TERMINAL = "coil_terminal"
+    """A coil's start or end electrode."""
 
 
 def _solve_axes(frame: Frame | None) -> tuple[Vec3, ...]:
@@ -648,7 +651,7 @@ class CoilTerminal(Condition):
 
     section: ClassVar[SifSection] = SifSection.BOUNDARY_CONDITION
 
-    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.VOLTAGE
+    glyph: ClassVar[ConditionGlyph | None] = ConditionGlyph.COIL_TERMINAL
 
     external_only: ClassVar[bool] = True
 

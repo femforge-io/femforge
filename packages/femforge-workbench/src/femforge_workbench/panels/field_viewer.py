@@ -21,7 +21,7 @@ from trame.widgets import html, react
 from vtkmodules.vtkRenderingCore import vtkActor
 
 from femforge.artifacts.lock import LOCK_SUFFIX, DirLock
-from femforge.common.files import RunFile
+from femforge.common.files import BundleFile, RunFile
 from femforge.common.log import TELEMETRY_ENV, log
 from femforge.common.utils import title
 from femforge.physical.conditions import ConditionGlyph
@@ -1257,17 +1257,32 @@ class FieldViewerController(TrameComponent):
                 self.set_busy(False)
 
     async def await_fields(self, location: Location, path: Path, token: int) -> None:
-        """Opens the run once its solve has ended, unless another open came first.
+        """Shows the run's groups once its mesh lands and opens the run once its solve has ended, unless another open came first.
 
         Args:
             location: The location to open once the run is solved.
-            path: The run's bundle directory, polled for the end of the solve.
+            path: The run's bundle directory, polled for the mesh and the end of the solve.
             token: The open generation that started the wait; a newer open ends it.
         """
+        # The Setup tab's module imports this one.
+        from femforge_workbench.panels.setup import SetupState, read_setup
+
         while token == self.generation:
             await asyncio.sleep(FIELDS_PERIOD)
             if token != self.generation:
                 return
+
+            meshing = self.setup is not None and self.setup.state is SetupState.MESHING
+            if meshing and (path / BundleFile.ENTITIES).is_file():
+                run = Run(path)
+                setup = await asyncio.to_thread(partial(read_setup, run, solving=True))
+                if token != self.generation:
+                    return
+
+                log.bind(run_id=path.name).info("Run meshed; showing its groups.")
+                self.setup = setup
+                self.publish_setup(fresh=False)
+                await self.adopt_groups(run, token)
 
             if not await asyncio.to_thread(solving, Run(path)):
                 log.bind(run_id=path.name).info("Run solved; opening its fields.")
