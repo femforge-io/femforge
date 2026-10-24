@@ -1,11 +1,12 @@
 """Tests for conditions and frame facts as read-only fields."""
 
 from enum import StrEnum
+from typing import Literal
 
 from femforge.common.vector import Vec3
-from femforge.physical.conditions import FixedDisplacement, SurfaceForce
+from femforge.physical.conditions import CoilTerminal, FixedDisplacement, SurfaceForce
 from femforge.physical.units import quantity
-from femforge_workbench.panels.fields import automatic_card, components, condition_card, fact_field, views
+from femforge_workbench.panels.fields import automatic_card, components, condition_card, fact_field, is_choice, views
 
 
 class Mode(StrEnum):
@@ -51,6 +52,13 @@ def test_a_force_mutes_its_dropped_direction_component() -> None:
     direction = next(field for field in card["fields"] if field["label"] == "Direction")
     assert direction.get("dropped") == [2]
     assert direction.get("tip") == "No z"
+
+
+def test_a_fixed_choice_reads_title_cased_like_an_enum() -> None:
+    assert [field.get("value") for field in condition_card(CoilTerminal(role="start"), icon=None)["fields"]] == ["Start"]
+    assert condition_card(CoilTerminal(role="end"), icon=None)["fields"] == [{"label": "Role", "kind": "choice", "value": "End"}]
+    assert views("Label", "mover") == [{"label": "Label", "kind": "text", "value": "mover"}], "free text keeps its spelling"
+    assert [is_choice(annotation) for annotation in (Literal["start", "end"], Literal["a"] | None, str, Literal[1, 2], int | None)] == [True, True, False, False, False]
 
 
 def test_a_condition_femforge_set_names_its_source() -> None:
