@@ -1112,7 +1112,7 @@ def glyph_actors(
                         marks.append(np.array([[center + [-cross, -cross, 0.0], center + [cross, cross, 0.0]], [center + [-cross, cross, 0.0], center + [cross, -cross, 0.0]]]))
 
                 chip(glyph, anchor + np.array([1.5 * radius, 0.0, 0.0]) if glyph.vector is not None else None)
-            case ConditionGlyph.THERMAL | ConditionGlyph.VOLTAGE:
+            case ConditionGlyph.THERMAL | ConditionGlyph.VOLTAGE | ConditionGlyph.COIL_TERMINAL:
                 if glyph.target is EntityKind.BOUNDARY:
                     _ = tint(glyph)
 

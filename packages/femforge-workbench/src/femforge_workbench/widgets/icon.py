@@ -37,6 +37,7 @@ type IconName = Literal[
     "filter",
     "flame",
     "folder",
+    "git-commit-horizontal",
     "grip-vertical",
     "info",
     "layout-grid",
