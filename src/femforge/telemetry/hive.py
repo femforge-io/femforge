@@ -41,13 +41,13 @@ _sequence_lock = threading.Lock()
 
 
 def shard_name() -> str:
-    """A shard filename unique across hosts, processes and writes: ``part-<host>-<pid>-<utcstamp>-<seq>.parquet``."""
+    """A shard filename unique across hosts, processes and writes: ``part-<host>-<pid>-<utcstamp>-<seq>.parquet``, the sequence zero-padded so names sort in write order."""
     with _sequence_lock:
         seq = next(_sequence)
 
     stamp = datetime.now(timezone.utc).strftime(_STAMP_FORMAT)
 
-    return f"{SHARD_PREFIX}{HOST}-{os.getpid()}-{stamp}-{seq}{SHARD_SUFFIX}"
+    return f"{SHARD_PREFIX}{HOST}-{os.getpid()}-{stamp}-{seq:09d}{SHARD_SUFFIX}"
 
 
 def write_shard(directory: Path, body: pl.DataFrame) -> Path:
