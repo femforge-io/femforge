@@ -51,6 +51,7 @@ __all__ = [
     "BoundarySite",
     "Component",
     "SummaryPart",
+    "DROPPED",
     "SummaryLine",
     "Condition",
     "Magnetization",
@@ -197,7 +198,8 @@ type SummaryLine = tuple[SummaryPart, ...]
 """One line of a condition's summary, its parts in reading order."""
 
 
-_DROPPED = "–"
+DROPPED = "–"
+"""What a summary reads for an authored axis the frame drops."""
 """What an authored axis the frame has no solve coordinate for reads as."""
 
 _EXPRESSION = "expr"
@@ -862,7 +864,7 @@ class FixedDisplacement(Condition):
             aligned: list[tuple[int, float]] = [(index, cosine) for index, cosine in enumerate(cosines, start=1) if cosine != 0.0]
 
             if not aligned:
-                return SummaryPart(_DROPPED, label=label, component=component)
+                return SummaryPart(DROPPED, label=label, component=component)
 
             index, cosine = aligned[0]
             solved: float | str | None = received.get(index)
