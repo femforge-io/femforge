@@ -191,9 +191,9 @@ Field lines follow the shown vector field. While a scalar or a principal value i
 | Section | Shows |
 |---|---|
 | Frame | The solve frame's kind, which way its plane faces, where it sits and how its axes run in the authored model, the thickness and plane state of a Cartesian 2D run, how a revolved section is shown, and the geometry check. A 2D run adds the Section Outline and Authored Body Ghost switches. |
+| Glyphs | One row per glyph kind the run draws, with how many groups draw it and a switch for the kind. It sits above the tables, so it stays in reach on a model with many groups. |
 | Bodies | One row per body, under a row for a material several bodies share, with its material and its conditions. |
 | Boundaries | One row per boundary group, named faces first, with its measure and its conditions. With Conditions lists only the groups that received one, the default above 12 groups; a run without `conditions.json` lists every group. |
-| Glyphs | One row per glyph kind the run draws, with how many groups draw it and a switch for the kind. |
 
 - **Glyphs show only while the tab does.** The scene then draws each condition as a shape on a neutral fill with its value, and Show Glyphs turns them all off. A row's icon toggles its own glyph.
 - **Plain Bodies** paints every body grey while it is on, so the glyphs read clearly.
