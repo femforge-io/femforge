@@ -490,7 +490,7 @@ def inactive_axes(frame: Frame | None) -> tuple[str, ...]:
 
 
 def cards_of(records: Sequence[ConditionRecord], frame: Frame | None) -> list[ConditionCard]:
-    """The read-only editor of each emission a group received: a condition femforge set names itself, one a later emission overrode reads muted."""
+    """The read-only editor of each emission a group received; a condition femforge set names itself."""
     cards: list[ConditionCard] = []
     inactive = inactive_axes(frame)
     for record in records:
