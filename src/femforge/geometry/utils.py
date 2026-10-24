@@ -10,6 +10,26 @@ from femforge.common.vector import Vec3
 from femforge.frames.base import Axis
 
 
+__all__ = [
+    "MATRIX_IDENTITY",
+    "Any3D",
+    "AnyShape",
+    "Mixin3D",
+    "NestedRect",
+    "Rect",
+    "Shape",
+    "V",
+    "all_colliinear",
+    "are_colliinear",
+    "boundary_box",
+    "boundary_cylinder",
+    "collinear_ends",
+    "compound_topology",
+    "create_debug_arrow",
+    "drop_collinear_points",
+    "remove_where",
+]
+
 V = b3d.Vector
 Mixin3D = three_d.Mixin3D
 Any3D = Mixin3D[Any]  # pyright: ignore[reportExplicitAny]

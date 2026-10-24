@@ -26,6 +26,13 @@ from femforge.geometry.utils import (
 V = b3d.Vector
 
 
+def test_a_wildcard_import_leaks_no_frame_axis_over_build123d() -> None:
+    namespace: dict[str, object] = {}
+    exec("from build123d import *; from femforge.geometry.utils import *", namespace)
+
+    assert namespace["Axis"] is b3d.Axis
+
+
 def _rect() -> Rect:
     r = Rect(label="r")
     r.left = 1.0
