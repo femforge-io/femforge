@@ -87,6 +87,14 @@ def _same(first: SifValue, second: SifValue) -> bool:
     return first == second
 
 
+def _origins(first: Source, second: Source) -> tuple[str, str, str]:
+    """Where two clashing sources came from, as an error reads them: each in parentheses, or named once at the end when both came from the same place."""
+    if first.origin == second.origin:
+        return "", "", f", both on {first.origin}"
+
+    return f" ({first.origin})", f" ({second.origin})", ""
+
+
 def merge(group: str, sources: Sequence[Source]) -> Merged:
     """Merges ``sources`` into one block's keywords: same-kind loads add, an ``ALONE`` kind appears once, any other repeated keyword keeps its value, and a load a fixed value overrides clashes.
 
@@ -104,7 +112,8 @@ def merge(group: str, sources: Sequence[Source]) -> Merged:
         if _combine(source) is Combine.ALONE:
             first: Source | None = alone.get(source.kind)
             if first is not None:
-                clashes.append(f"{group}: two {name} conditions ({first.origin} and {source.origin}); keep one")
+                where: str = f"on {first.origin}" if first.origin == source.origin else f"({first.origin} and {source.origin})"
+                clashes.append(f"{group}: two {name} conditions {where}; keep one")
                 continue
 
             alone[source.kind] = source
@@ -126,7 +135,8 @@ def merge(group: str, sources: Sequence[Source]) -> Merged:
                 continue
 
             if not _same(keywords[key], value):
-                clashes.append(f"{group}: {key} is {_shown(keywords[key])} from {title(owner.kind)} ({owner.origin}) but {_shown(value)} from {name} ({source.origin}); make them agree or remove one")
+                before, after, both = _origins(owner, source)
+                clashes.append(f"{group}: {key} is {_shown(keywords[key])} from {title(owner.kind)}{before} but {_shown(value)} from {name}{after}{both}; make them agree or remove one")
 
     for source in sources:
         if source.condition is None:
@@ -135,6 +145,7 @@ def merge(group: str, sources: Sequence[Source]) -> Merged:
         overriding: list[str] = list(dict.fromkeys(fixed for _, fixed in source.condition.yields_to(source.keywords) if fixed in keywords))
         for fixed in overriding:
             held: Source = owners[fixed]
-            clashes.append(f"{group}: {title(source.kind)} ({source.origin}) has no effect under the fixed {fixed} of {title(held.kind)} ({held.origin}); remove one")
+            loaded, holder, both = _origins(source, held)
+            clashes.append(f"{group}: {title(source.kind)}{loaded} has no effect under the fixed {fixed} of {title(held.kind)}{holder}{both}; remove one")
 
     return Merged(keywords, clashes)
