@@ -43,8 +43,10 @@ from trame.app import get_server  # noqa: E402
 from femforge_workbench.app import Workbench  # noqa: E402
 from femforge_workbench.dock import template_name  # noqa: E402
 from femforge_workbench.panels.field_viewer import SCALE_READOUT, TIMES, FieldPanel, FieldVar, FieldViewerController, FieldViewerPanel, highlightable, padded, workbench  # noqa: E402
+from femforge_workbench.widgets.element import EVENT  # noqa: E402
 from femforge_workbench.panels.setup import (  # noqa: E402
     FILTER_ABOVE,
+    chosen_expression,
     FilterChoice,
     MESHING,
     NoticeLevel,
@@ -325,6 +327,19 @@ def test_the_ghost_caption_reads_the_warp_scale_as_a_plain_grouped_number() -> N
     assert [scale_text(scale) for scale in (22654.0, 1234.5, 120.0)] == ["22,700", "1,230", "120"]
     assert [scale_text(scale) for scale in (1.5, 2.0, 0.00123, 0.0)] == ["1.5", "2", "0.00123", "0"], "below 10 reads its significant decimals"
     assert [scale_text(scale) for scale in (1e6, 2.27e7)] == ["1,000,000", "2.27e+7"], "exponent form only above a million"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to evaluate the selection expression")
+def test_a_row_click_selects_in_the_browser_as_the_server_would() -> None:
+    rows: list[dict[str, object]] = [{"id": "body:COIL"}, {"id": "boundary:COIL__EXT", "dimmed": True}, {"id": "tag:0"}, {"id": "material:Copper"}]
+    clicks = ["body:COIL", "boundary:COIL__EXT", "tag:0", "material:Copper", "", "body:"]
+    script = (
+        f"const {SetupVar.BODY_ROWS} = {json.dumps(rows)}; const {FieldVar.SELECTED_ENTITY} = 'body:OLD'; "
+        f"console.log(JSON.stringify({json.dumps(clicks)}.map({EVENT} => ({chosen_expression(SetupVar.BODY_ROWS)}))))"
+    )
+    chosen = cast("list[str]", json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", check=True).stdout))
+
+    assert chosen == ["body:COIL", "body:OLD", "", "", "", ""], "a dimmed row keeps the old selection; a tag or material row clears it"
 
 
 SCALES: tuple[float, ...] = (22654.0, 1234.5, 120.0, 1.5, 2.0, 0.00123, 0.0, 1e6, 2.27e7)

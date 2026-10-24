@@ -777,6 +777,14 @@ def check_line(check: GeometryCheck | None, frame: Frame | None) -> tuple[list[s
     return [line(mismatch) for mismatch in mismatches], True
 
 
+def chosen_expression(rows: SetupVar) -> str:
+    """The JS selection a click on a row of ``rows`` makes, as ``select`` decides it on the server: a body or boundary id, the old selection for a dimmed row, else none."""
+    selected = str(FieldVar.SELECTED_ENTITY)
+    kinds = "|".join(kind.value for kind in EntityKind)
+
+    return f"({rows}.find(row => row.id === {EVENT}) || {{}}).dimmed ? {selected} : /^({kinds}):./.test({EVENT} || '') ? {EVENT} : ''"
+
+
 def notice_of(model: SetupModel) -> tuple[str, NoticeLevel]:
     """The notice over the tables, empty for none: a failed-before-meshing warning, a run without the sidecar, or a run that sets no conditions."""
     if model.state is SetupState.AUTHORED:
@@ -1119,7 +1127,7 @@ class SetupPanel(PanelComponent):
             selected=react.Bind(str(FieldVar.SELECTED_ENTITY)),
             label=label,
             columns=columns,
-            on_select=self.callback(self.on_select, args=f"[{EVENT}]"),
+            on_select=self.optimistic(self.on_select, str(FieldVar.SELECTED_ENTITY), chosen_expression(rows), f"[{EVENT}]"),
             on_hover=react.Callback(f"trame.state.set({json.dumps(str(FieldVar.HOVERED))}, {EVENT})"),
             on_frame=self.callback(self.on_frame, args=f"[{EVENT}]"),
             on_show=self.callback(self.on_show, args=f"[{EVENT}]"),

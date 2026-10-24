@@ -73,6 +73,7 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     colormap_items,
     names_of,
     number_of,
+    reselected,
     pair_of,
     INDEX_UNREADABLE,
     NO_INDEX_NOTICE,
@@ -2167,6 +2168,70 @@ def test_the_setup_tab_draws_the_glyphs_while_shown_follows_the_warp_and_removes
         assert _glyph_actors(viewer) == []
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("fields", [True, False])
+def test_a_new_selection_swaps_only_the_highlight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fields: bool) -> None:
+    async def run() -> None:
+        app = _shell("reselect", tmp_path, monkeypatch)
+        controller = _controller(app)
+        viewer = app.panel(FieldPanel.VIEW_3D, FieldViewerPanel)
+
+        await controller.load(_glyph_bundle(tmp_path / "tipped", fields=fields))
+        await controller.settle()
+        app.state[FieldVar.SETUP_SHOWN] = True
+        app.state[FieldVar.SELECTED_ENTITY] = "boundary:TIP"
+        controller.on_glyphs()
+        await controller.settle()
+
+        actors = cast("dict[str, object]", viewer.plotter.renderer.actors)
+        arrows = actors["glyph-arrows"]
+        tip = actors["glyph-selection-fill"]
+        host = controller.scene if fields else controller.groups
+        assert host is not None and host.glyphs is not None
+        drawn = host.glyphs.drawn
+
+        app.state[FieldVar.SELECTED_ENTITY] = "body:LEFT"
+        controller.on_glyphs()
+        await controller.settle()
+
+        actors = cast("dict[str, object]", viewer.plotter.renderer.actors)
+        assert actors["glyph-arrows"] is arrows, "the glyphs stay as drawn"
+        assert actors["glyph-selection-fill"] is not tip and "glyph-selection" in actors, "only the highlight is swapped"
+        assert host.glyphs.drawn == drawn and host.glyph_view is not None and host.glyph_view.selected == "body:LEFT"
+
+        app.state[FieldVar.SELECTED_ENTITY] = ""
+        controller.on_glyphs()
+        await controller.settle()
+
+        assert not {"glyph-selection", "glyph-selection-fill"} & set(_glyph_actors(viewer)) and "glyph-arrows" in _glyph_actors(viewer)
+
+    asyncio.run(run())
+
+
+def test_only_a_selection_change_takes_the_highlight_path() -> None:
+    base = GlyphView(selected="body:A")
+
+    assert reselected(base, base.model_copy(update={"selected": "body:B"}))
+    assert not reselected(base, base), "nothing changed"
+    assert not reselected(base, base.model_copy(update={"selected": "body:B", "ghost": True})), "the ghost changed too"
+    assert not reselected(None, base) and not reselected(base, None)
+
+
+def test_a_pending_redraw_takes_the_full_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> bool:
+        app = _shell("reselect-pending", tmp_path, monkeypatch)
+        controller = _controller(app)
+
+        await controller.load(_glyph_bundle(tmp_path / "tipped"))
+        await controller.settle()
+        controller.task = asyncio.create_task(asyncio.sleep(1))
+        chosen = controller.reselect()
+        _ = controller.task.cancel()
+
+        return chosen
+
+    assert asyncio.run(run()) is False
 
 
 def test_the_ghost_turns_the_camera_to_iso_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

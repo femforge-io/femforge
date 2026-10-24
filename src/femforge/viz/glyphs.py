@@ -1219,6 +1219,18 @@ class GlyphLayer:
     hover_actors: dict[str, pv.Actor] = field(default_factory=dict)
     """The hidden hover outline of each entity id the last draw outlined."""
 
+    chosen: tuple[object, ...] | None = None
+    """What the selection actors were built for: the drawn key and the selected entity id."""
+
+    chosen_names: frozenset[str] = frozenset()
+    """The selection actor names the plotter holds from the last selection draw."""
+
+    shown: tuple[list[Glyph], dict[str, pv.DataSet]] = field(default_factory=lambda: ([], {}))
+    """The glyphs the last draw showed, anchors moved with the warp, and their groups' warped cells, which a selection reuses."""
+
+    shapes: dict[tuple[str, str, float], pv.PolyData] = field(default_factory=dict)
+    """A body's surface or feature outline by kind, name and feature angle, kept while the host, its expansion and its warp stay."""
+
     @classmethod
     def from_run(cls, run: Run, scene: FieldScene | None = None) -> GlyphLayer:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
         """The glyphs of ``run`` from its conditions sidecar and entities, in the frame of ``scene`` when given, else of its manifest."""
@@ -1321,18 +1333,40 @@ class GlyphLayer:
             host: The scene the glyphs sit on.
             view: What to draw; None removes every glyph actor.
         """
+        if host is not self.host or self.drawn is None or self.drawn[1:3] != (host.expanded, host.warped):
+            self.shapes = {}
+
         self.host = host
-        key: tuple[object, ...] = (view, host.expanded, host.warped, host.spec.hidden_bodies)
+        base: GlyphView | None = view.model_copy(update={"selected": None}) if view is not None else None
+        key: tuple[object, ...] = (base, host.expanded, host.warped, host.spec.hidden_bodies)
         present: set[str] = set(cast("Mapping[str, object]", plotter.renderer.actors).keys())
 
-        if key == self.drawn and self.names <= present:
-            return
+        if key != self.drawn or not self.names <= present:
+            self.draw_base(plotter, host, base, key, present)
+
+        self.draw_selection(plotter, host, view)
+
+    def draw_base(
+        self, plotter: pv.Plotter, host: GlyphHost, view: GlyphView | None, key: tuple[object, ...], present: set[str]
+    ) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated glyph tests
+        """Draw everything but the selection: the glyphs, the decorations and the hidden hover outlines.
+
+        Args:
+            plotter: The plotter the host scene is drawn in.
+            host: The scene the glyphs sit on.
+            view: What to draw, without a selection; None removes every glyph actor.
+            key: What the actors are built for, recorded as the drawn key.
+            present: The actor names the plotter holds.
+        """
 
         for name in sorted(name for name in present if name.startswith(GLYPH_PREFIX)):
             _ = plotter.remove_actor(name, render=False)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
 
         self.drawn = key
         self.names = frozenset()
+        self.chosen = None
+        self.chosen_names = frozenset()
+        self.shown = ([], {})
         self.label_spots = np.zeros((0, 3))
         self.label_texts = ()
         self.hover_actors = {}
@@ -1341,11 +1375,9 @@ class GlyphLayer:
             return
 
         moved, cells = self.moved_glyphs(host, view)
+        self.shown = (moved, cells)
         placement: GlyphPlacement = self.placement(host)
         built: list[GlyphDraw] = [*glyph_actors(moved, cells, placement, view), *self.decorations(host, view)]
-        chosen: pv.PolyData | None = self.accent_glyphs(view.selected, moved, cells, placement, view) if view.selected else None
-        if chosen is not None:
-            built.append(GlyphDraw(GlyphActor.SELECTION_GLYPHS, chosen, color=view.accent, line_width=MARK_LINE_PX * view.scale, layer=Layer.SELECTION))
 
         draws: list[GlyphDraw] = [draw for draw in built if draw.mesh.n_points]
         labelled: list[GlyphDraw] = [draw for draw in draws if draw.labels]
@@ -1422,6 +1454,80 @@ class GlyphLayer:
         self.names = frozenset([*(f"{draw.actor}{LABELS_SUFFIX}" if draw.labels else str(draw.actor) for draw in merged), *hovers])
         log.bind(run_id=self.run_id, actors=sorted(self.names), glyphs=len(self.glyphs)).debug("Glyphs drawn.")
 
+    def draw_selection(
+        self, plotter: pv.Plotter, host: GlyphHost, view: GlyphView | None
+    ) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context; proven by the gated glyph tests
+        """Swap only the selection actors for those of the selected entity, so a new selection never rebuilds the rest of the layer.
+
+        Args:
+            plotter: The plotter the host scene is drawn in.
+            host: The scene the glyphs sit on.
+            view: What to draw; its ``selected`` names the entity to accent.
+        """
+        selected: str | None = view.selected if view is not None else None
+        key: tuple[object, ...] = (self.drawn, selected)
+        present: set[str] = set(cast("Mapping[str, object]", plotter.renderer.actors).keys())
+
+        if key == self.chosen and self.chosen_names <= present:
+            return
+
+        for name in sorted(self.chosen_names & present):
+            _ = plotter.remove_actor(name, render=False)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista removes by actor name, and its _Wrapped stub loses `self`
+
+        self.chosen = key
+        self.chosen_names = frozenset()
+
+        if view is None or selected is None:
+            return
+
+        moved, cells = self.shown
+        placement: GlyphPlacement = self.placement(host)
+        draws: list[GlyphDraw] = self.selection(host, view)
+        accented: pv.PolyData | None = self.accent_glyphs(selected, moved, cells, placement, view)
+        if accented is not None:
+            draws.append(GlyphDraw(GlyphActor.SELECTION_GLYPHS, accented, color=view.accent, line_width=MARK_LINE_PX * view.scale, layer=Layer.SELECTION))
+
+        for draw in (draw for draw in draws if draw.mesh.n_points):
+            added = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
+                draw.mesh,
+                color=draw.color,
+                opacity=draw.opacity,
+                line_width=draw.line_width,
+                show_scalar_bar=False,
+                reset_camera=False,
+                render=False,
+                name=str(draw.actor),
+            )
+            forward(added, draw.layer)
+            self.chosen_names = self.chosen_names | {str(draw.actor)}
+
+    def shape(self, host: GlyphHost, kind: str, name: str, feature_angle: float = 0.0) -> pv.PolyData | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """A copy of a body's surface or feature outline, extracted once while the host, expansion and warp stay.
+
+        Args:
+            host: The scene whose blocks hold the body.
+            kind: ``surface`` for the outer surface, ``outline`` for the feature edges.
+            name: The body's block name.
+            feature_angle: The crease angle of an outline, in degrees.
+        """
+        import pyvista as pv
+
+        key: tuple[str, str, float] = (kind, name, feature_angle)
+        if key not in self.shapes:
+            block = cast("pv.DataSet", host.blocks[name])
+            if kind == "outline":
+                found: pv.PolyData | None = feature_outline(pv.MultiBlock([block]), feature_angle)
+            else:
+                found = cast("pv.PolyData", block.extract_surface(algorithm=None))
+                found.clear_data()
+
+            if found is None:
+                return None
+
+            self.shapes[key] = found
+
+        return self.shapes[key].copy()
+
     def refs(self, host: GlyphHost) -> list[EntityRef]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
         """Every body ``host`` draws and every boundary of the run."""
         bodies: list[EntityRef] = [EntityRef(kind=EntityKind.BODY, name=name) for name in host.blocks.keys()]
@@ -1447,7 +1553,7 @@ class GlyphLayer:
             if ref.name not in host.blocks.keys():
                 return None
 
-            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([cast("pv.DataSet", host.blocks[ref.name])]), view.edges.feature_angle)
+            edges: pv.PolyData | None = self.shape(host, "outline", ref.name, view.edges.feature_angle)
             if edges is None:
                 return None
 
@@ -1524,15 +1630,11 @@ class GlyphLayer:
 
         return _merged(pieces) if pieces else None
 
-    def decorations(self, host: GlyphHost, view: GlyphView) -> list[GlyphDraw]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
-        """The selection highlight, the section outline with its plane, and the authored ghost with its hull."""
-        import pyvista as pv
-
+    def selection(self, host: GlyphHost, view: GlyphView) -> list[GlyphDraw]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The accent silhouette and fill of the selected body, or the accent lines or cells of the selected boundary."""
         placement: GlyphPlacement = self.placement(host)
-        diagonal: float = placement.diagonal
-        lift: FloatArray = np.array([0.0, 0.0, TINT_LIFT * diagonal])
+        lift: FloatArray = np.array([0.0, 0.0, TINT_LIFT * placement.diagonal])
         draws: list[GlyphDraw] = []
-        plane = self.frame.plane
 
         def segments_mesh(segments: FloatArray) -> pv.PolyData:
             copies: list[FloatArray] = [copy.reshape(-1, 2, 3) for copy in placement.copies(segments.reshape(-1, 3))]
@@ -1542,17 +1644,15 @@ class GlyphLayer:
         ref: EntityRef | None = EntityRef.parse(view.selected) if view.selected else None
 
         if ref is not None and ref.kind is EntityKind.BODY and ref.name in host.blocks.keys():
-            block = cast("pv.DataSet", host.blocks[ref.name])
-            edges: pv.PolyData | None = feature_outline(pv.MultiBlock([block]), view.edges.feature_angle)
+            edges: pv.PolyData | None = self.shape(host, "outline", ref.name, view.edges.feature_angle)
             raise_by: FloatArray = 2.0 * lift if placement.flat and not placement.revolved and not placement.extruded else np.zeros(3)
 
             if edges is not None:
                 edges.points = np.asarray(edges.points, dtype=np.float64) + raise_by
                 draws.append(GlyphDraw(GlyphActor.SELECTION, edges, color=view.accent, line_width=SILHOUETTE_LINE_SHARE * view.edges.highlight_width * view.scale))
 
-            if ref.name not in host.spec.hidden_bodies:
-                fill: pv.PolyData = cast("pv.PolyData", block.extract_surface(algorithm=None))
-                fill.clear_data()
+            fill: pv.PolyData | None = self.shape(host, "surface", ref.name) if ref.name not in host.spec.hidden_bodies else None
+            if fill is not None:
                 fill.points = np.asarray(fill.points, dtype=np.float64) + raise_by
                 draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, fill, color=view.accent, opacity=SELECTION_TINT, layer=Layer.SELECTION))
         elif ref is not None and ref.kind is EntityKind.BOUNDARY:
@@ -1572,6 +1672,23 @@ class GlyphLayer:
                 surface: pv.PolyData = cast("pv.PolyData", cells.extract_surface(algorithm=None))
                 surface.clear_data()
                 draws.append(GlyphDraw(GlyphActor.SELECTION_FILL, surface, color=view.accent, opacity=SELECTION_OPACITY, layer=Layer.SELECTION))
+
+        return draws
+
+    def decorations(self, host: GlyphHost, view: GlyphView) -> list[GlyphDraw]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
+        """The section outline with its plane, and the authored ghost with its hull."""
+        import pyvista as pv
+
+        placement: GlyphPlacement = self.placement(host)
+        diagonal: float = placement.diagonal
+        lift: FloatArray = np.array([0.0, 0.0, TINT_LIFT * diagonal])
+        draws: list[GlyphDraw] = []
+        plane = self.frame.plane
+
+        def segments_mesh(segments: FloatArray) -> pv.PolyData:
+            copies: list[FloatArray] = [copy.reshape(-1, 2, 3) for copy in placement.copies(segments.reshape(-1, 3))]
+
+            return _polylines(np.concatenate(copies))
 
         if plane is not None and view.outline:
             loops: pv.PolyData | None = feature_outline(self.deformed_section(host))
@@ -1694,6 +1811,8 @@ class GroupScene:
 
         self.section_blocks: pv.MultiBlock = blocks
         self.blocks: pv.MultiBlock = blocks
+        self.surfaces: tuple[pv.MultiBlock, dict[str, pv.PolyData]] | None = None
+        self.outline: tuple[pv.MultiBlock, float, pv.PolyData | None] | None = None
 
     @classmethod
     def from_run(cls, run: Run) -> GroupScene | None:  # pragma: no cover - needs pyvista (viz extra); proven by the gated glyph tests
@@ -1732,9 +1851,17 @@ class GroupScene:
         """Draw every body shaded in its body color, a solid run's feature edges in black over them, then the glyph layer."""
         view: GlyphView = self.glyph_view or GlyphView()
         shading: Shading = view.shading
-        for index, name in enumerate(str(key) for key in self.blocks.keys()):
-            surface: pv.PolyData = cast("pv.PolyData", cast("pv.DataSet", self.blocks[name]).extract_surface(algorithm=None))
-            surface.clear_data()
+        # Surfaces and outline are extracted once per blocks object: a 3D mesh of millions of cells takes seconds to extract.
+        if self.surfaces is None or self.surfaces[0] is not self.blocks:
+            extracted: dict[str, pv.PolyData] = {}
+            for name in (str(key) for key in self.blocks.keys()):
+                surface: pv.PolyData = cast("pv.PolyData", cast("pv.DataSet", self.blocks[name]).extract_surface(algorithm=None))
+                surface.clear_data()
+                extracted[name] = surface
+
+            self.surfaces = (self.blocks, extracted)
+
+        for index, (name, surface) in enumerate(self.surfaces[1].items()):
             _ = plotter.add_mesh(  # pyright: ignore[reportUnknownMemberType]
                 surface,
                 color=body_color(index),
@@ -1748,7 +1875,10 @@ class GroupScene:
                 name=SceneActor.STYLED.of(name),
             )
 
-        edges: pv.PolyData | None = feature_outline(self.blocks, view.edges.feature_angle) if self.frame.model_dim == 3 else None
+        if self.frame.model_dim == 3 and (self.outline is None or self.outline[0] is not self.blocks or self.outline[1] != view.edges.feature_angle):
+            self.outline = (self.blocks, view.edges.feature_angle, feature_outline(self.blocks, view.edges.feature_angle))
+
+        edges: pv.PolyData | None = self.outline[2] if self.frame.model_dim == 3 and self.outline is not None else None
 
         if edges is not None:
             outline = plotter.add_mesh(edges, color="black", line_width=view.edges.width * view.scale, reset_camera=False, name=str(SceneActor.OUTLINE))  # pyright: ignore[reportUnknownMemberType]
