@@ -58,6 +58,7 @@ NO_INDEX = "No run index. Pass telemetry to the workbench to list runs."
 OPEN_FAILED = "The run could not be opened."
 NO_GLYPHS = "No glyphs in this run."
 NO_GLYPHS_AUTHORED = "Glyphs need a mesh; this run failed before meshing."
+NO_GLYPHS_MESHING = "Glyphs appear once the mesh is ready."
 NO_GHOST = "No authored geometry in this bundle."
 GHOST_WARPED = "Undeformed; the solved body is warped "
 NO_CELLS_FIELDS = "Not in the fields file: no condition landed here."
@@ -75,6 +76,7 @@ SOLVING_PLAIN = "Solving · showing the mesh."
 NO_FIELDS_PLAIN = "No fields · showing the mesh."
 NO_MESH = "Glyphs need the mesh; re-solve to restore it."
 FAILED_BEFORE_MESH = "The run failed before meshing. Showing the authored tags; re-run it to mesh and list its groups."
+MESHING = "The run is meshing. Showing the authored tags; its groups and glyphs follow once the mesh is ready."
 NAME_COLUMN = "Name"
 TAG_COLUMN = "Tag"
 MATERIAL_COLUMN = "Material"
@@ -113,6 +115,9 @@ class SetupState(StrEnum):
 
     AUTHORED = "authored"
     """The run failed before meshing, so only its authored tags are known."""
+
+    MESHING = "meshing"
+    """The run is still meshing, so only its authored tags are known so far."""
 
     GROUPS = "groups"
     """The run has mesh groups to list."""
@@ -239,12 +244,12 @@ class SetupModel:
 
     @property
     def state(self) -> SetupState:
-        """Groups once the run has any, else only the authored tags."""
+        """Groups once the run has any, else only the authored tags of a run still meshing or one that failed before it."""
         entities = self.entities
         if len(entities.bodies) or len(entities.boundaries):
             return SetupState.GROUPS
 
-        return SetupState.AUTHORED
+        return SetupState.MESHING if self.solving else SetupState.AUTHORED
 
 
 @dataclass(frozen=True)
@@ -777,6 +782,9 @@ def notice_of(model: SetupModel) -> tuple[str, NoticeLevel]:
     if model.state is SetupState.AUTHORED:
         return FAILED_BEFORE_MESH, NoticeLevel.WARNING
 
+    if model.state is SetupState.MESHING:
+        return MESHING, NoticeLevel.INFO
+
     conditions = model.conditions
     if conditions is None:
         return NO_SIDECAR, NoticeLevel.INFO
@@ -1161,11 +1169,15 @@ class SetupPanel(PanelComponent):
                 )
 
         authored = f"{SetupVar.STATE} === {json.dumps(str(SetupState.AUTHORED))}"
-        with react.If(f"!{rows}.length && !({authored})"):
+        meshing = f"{SetupVar.STATE} === {json.dumps(str(SetupState.MESHING))}"
+        with react.If(f"!{rows}.length && !({authored}) && !({meshing})"):
             html.Span(NO_GLYPHS, classes=str(Cls.CAPTION))
 
         with react.If(authored):
             html.Span(NO_GLYPHS_AUTHORED, classes=str(Cls.CAPTION))
+
+        with react.If(meshing):
+            html.Span(NO_GLYPHS_MESHING, classes=str(Cls.CAPTION))
 
     def build(self) -> None:
         """Builds the busy bar, the empty state, the notices, the sections and the live region."""
@@ -1197,7 +1209,7 @@ class SetupPanel(PanelComponent):
 
                     section(GLYPHS_SECTION, "Glyphs", self.build_legend)
 
-                    with react.If(f"{state} === {json.dumps(str(SetupState.AUTHORED))}"):
+                    with react.If(f"[{json.dumps(str(SetupState.AUTHORED))}, {json.dumps(str(SetupState.MESHING))}].includes({state})"):
                         section(TAGS_SECTION, "Authored Tags", partial(self.grid, SetupVar.TAG_ROWS, "Authored tags", [TAG_COLUMN, ""]), SetupVar.TAG_COUNT)
 
                     with react.If(f"{state} === {json.dumps(str(SetupState.GROUPS))}"):

@@ -46,6 +46,7 @@ from femforge_workbench.panels.field_viewer import SCALE_READOUT, TIMES, FieldPa
 from femforge_workbench.panels.setup import (  # noqa: E402
     FILTER_ABOVE,
     FilterChoice,
+    MESHING,
     NoticeLevel,
     RowView,
     SetupModel,
@@ -396,6 +397,8 @@ def test_the_notices_name_a_run_without_conditions_one_that_sets_none_and_one_th
     assert notice_of(replace(model, conditions=None))[0].startswith("This run recorded no conditions.json")
     assert notice_of(empty) == ("This run sets no conditions; every boundary takes the solver's natural condition.", NoticeLevel.INFO)
     assert notice_of(authored)[1] is NoticeLevel.WARNING and authored.state is SetupState.AUTHORED
+    meshing = replace(authored, solving=True)
+    assert meshing.state is SetupState.MESHING and notice_of(meshing) == (MESHING, NoticeLevel.INFO), "a run still meshing has not failed"
     rows = tag_rows(authored).rows
     assert [row.get("name") for row in rows] == ["Name=LeftFace", "Name=RightFace", "Name=Flexure"] and {row.get("kind_icon") for row in rows} == {"file"}
     assert rows[0].get("cards", [])[0]["fields"] == [{"label": "Displacement", "kind": "vector", "values": ["0", "0", "0"], "axes": ["X", "Y", "Z"], "unit": "mm"}]

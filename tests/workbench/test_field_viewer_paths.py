@@ -1,6 +1,7 @@
 """The field viewer's guard paths: stale opens, empty controllers, failed reads and the camera edge cases."""
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from femforge.common.files import RunFile
 from femforge.config import SimulationConfig
 from femforge.meshing.config import MeshConfig
 from femforge.run.bundle import write_manifest
+from femforge.run.entities import Bodies, Boundaries, Entities
 from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.run.result import RunStatus
@@ -27,7 +29,9 @@ pytest.importorskip("pyvista")
 
 from femforge_workbench.panels import Shared  # noqa: E402
 from femforge_workbench.panels import field_viewer as field_viewer_module  # noqa: E402
-from femforge_workbench.panels.field_viewer import FieldPanel, FieldVar, FieldViewerPanel, highlightable, missing_fields, only  # noqa: E402
+from femforge_workbench.panels import setup as setup_panel  # noqa: E402
+from femforge_workbench.panels.field_viewer import FieldPanel, FieldVar, FieldViewerController, FieldViewerPanel, highlightable, missing_fields, only  # noqa: E402
+from femforge_workbench.panels.setup import SetupModel, SetupState, read_setup  # noqa: E402
 
 
 def test_a_run_whose_fields_were_purged_says_when_and_by_whom(tmp_path: Path) -> None:
@@ -121,6 +125,60 @@ def test_a_wait_for_fields_ends_once_a_newer_open_came(tmp_path: Path, monkeypat
         return opened
 
     assert asyncio.run(run()) == []
+
+
+def _meshing(controller: FieldViewerController, bundle: Path) -> None:
+    controller.setup = replace(read_setup(Run(bundle), solving=True), entities=Entities(bodies=Bodies(()), boundaries=Boundaries(())))
+
+
+def test_a_wait_for_fields_shows_the_groups_once_the_mesh_lands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(field_viewer_module, "FIELDS_PERIOD", 0.01)
+
+    def solved(run: Run) -> bool:
+        return False
+
+    monkeypatch.setattr(field_viewer_module, "solving", solved)
+
+    async def run() -> FieldViewerController:
+        app = _shell("paths-meshed", tmp_path, monkeypatch)
+        controller = _controller(app)
+        bundle = _glyph_bundle(tmp_path / "meshed", fields=False)
+        _meshing(controller, bundle)
+        opened: list[object] = []
+        monkeypatch.setattr(controller, "open", opened.append)
+
+        await controller.await_fields(bundle, bundle, controller.generation)
+
+        return controller
+
+    controller = asyncio.run(run())
+    assert controller.setup is not None and controller.setup.state is SetupState.GROUPS
+    assert controller.groups is not None, "the mesh-only scene is drawn as soon as the mesh lands"
+
+
+def test_a_mesh_read_for_an_older_open_is_dropped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(field_viewer_module, "FIELDS_PERIOD", 0.01)
+
+    async def run() -> FieldViewerController:
+        app = _shell("paths-meshed-old", tmp_path, monkeypatch)
+        controller = _controller(app)
+        bundle = _glyph_bundle(tmp_path / "meshed", fields=False)
+        _meshing(controller, bundle)
+        real = setup_panel.read_setup
+
+        def newer(run: Run, *, solving: bool = False) -> SetupModel:
+            controller.generation += 1
+
+            return real(run, solving=solving)
+
+        monkeypatch.setattr(setup_panel, "read_setup", newer)
+
+        await controller.await_fields(bundle, bundle, controller.generation)
+
+        return controller
+
+    controller = asyncio.run(run())
+    assert controller.setup is not None and controller.setup.state is SetupState.MESHING and controller.groups is None
 
 
 def test_mesh_groups_read_for_an_older_open_are_dropped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
