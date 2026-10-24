@@ -57,6 +57,9 @@ class Ladder:
     rungs: tuple[Rung, ...]
     """The rungs, smallest unit first."""
 
+    zero: Rung | None = None
+    """The rung a zero reads in; the smallest when None."""
+
     def matches(self, value: Quantity) -> bool:
         """Whether ``value`` has this ladder's dimensionality."""
         return quantity(1.0, self.rungs[0].unit).dimensionality == value.dimensionality
@@ -95,7 +98,7 @@ POWER_DENSITY = Ladder((Rung("W/m**3", "W/m³"), Rung("kW/m**3", "kW/m³"), Rung
 CURRENT = Ladder((Rung("A", "A"), Rung("kA", "kA")))
 """Currents in A or kA."""
 
-FLUX_DENSITY = Ladder((Rung("mT", "mT"), Rung("T", "T")))
+FLUX_DENSITY = Ladder((Rung("mT", "mT"), Rung("T", "T")), zero=Rung("T", "T"))
 """Flux densities in mT or T."""
 
 LADDERS: tuple[Ladder, ...] = (LENGTH, AREA, FORCE, PRESSURE, CURRENT_DENSITY, VOLTAGE, TEMPERATURE, HEAT_FLUX, HEAT_TRANSFER, POWER_DENSITY, CURRENT, FLUX_DENSITY)
@@ -124,11 +127,14 @@ def _significant(value: float) -> str:
 
 
 def _rung(value: Quantity) -> Rung | None:
-    """The largest rung of the ladder of ``value`` that reads it at least 1, else the smallest; None when no ladder matches."""
+    """The largest rung of the ladder of ``value`` that reads it at least 1, else the smallest; zero reads in the ladder's zero rung; None when no ladder matches."""
     ladder: Ladder | None = next((candidate for candidate in LADDERS if candidate.matches(value)), None)
 
     if ladder is None:
         return None
+
+    if value.magnitude == 0.0:
+        return ladder.zero or ladder.rungs[0]
 
     for rung in reversed(ladder.rungs):
         if abs(_rounded(value.m_as(rung.unit))) >= 1.0:
