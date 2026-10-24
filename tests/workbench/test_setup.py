@@ -504,7 +504,7 @@ def test_the_tab_builds_its_switches_legend_sections_and_grids(tmp_path: Path, m
     headers = [cast("Node", trigger["children"][0]) for trigger in find(template, "ff-accordion-trigger")]  # pyright: ignore[reportIndexIssue]  # a trigger node holds its header span
 
     assert [_bound(node, "checked") for node in switches] == [str(FieldVar.SECTION_OUTLINE), str(FieldVar.AUTHORED_GHOST)], "the 2D switches are the only switches; the legend shows the glyphs"
-    assert [texts(find(header, "span")[1])[0] for header in headers] == ["Frame", "Authored Tags", "Bodies", "Boundaries", "Glyphs"]
+    assert [texts(find(header, "span")[1])[0] for header in headers] == ["Frame", "Glyphs", "Authored Tags", "Bodies", "Boundaries"], "Glyphs sits above the tables so it stays in reach"
     assert [_bound(node, "rows") for node in grids] == [str(SetupVar.TAG_ROWS), str(SetupVar.BODY_ROWS), str(SetupVar.BOUNDARY_ROWS)]
     assert all(_bound(node, "selected") == str(FieldVar.SELECTED_ENTITY) for node in grids)
     assert all(prop(node, "onHover") == {"callback": {"js": f'trame.state.set("{FieldVar.HOVERED}", $event)'}} for node in grids), "a hovered row outlines its group in the view"

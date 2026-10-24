@@ -87,7 +87,7 @@ TAGS_SECTION = "tags"
 BODIES_SECTION = "bodies"
 BOUNDARIES_SECTION = "boundaries"
 GLYPHS_SECTION = "glyphs"
-OPEN_SECTIONS = [FRAME_SECTION, TAGS_SECTION, BODIES_SECTION, BOUNDARIES_SECTION, GLYPHS_SECTION]
+OPEN_SECTIONS = [FRAME_SECTION, GLYPHS_SECTION, TAGS_SECTION, BODIES_SECTION, BOUNDARIES_SECTION]
 HEADER = "flex flex-1 items-center gap-2"
 COUNT = "ml-auto font-normal text-muted-foreground tabular-nums"
 GEOMETRY_CHECK = "Geometry Check: "
@@ -1195,13 +1195,13 @@ class SetupPanel(PanelComponent):
                     with react.If(f"{SetupVar.FRAME_FACTS}.length"):
                         section(FRAME_SECTION, "Frame", self.build_frame)
 
+                    section(GLYPHS_SECTION, "Glyphs", self.build_legend)
+
                     with react.If(f"{state} === {json.dumps(str(SetupState.AUTHORED))}"):
                         section(TAGS_SECTION, "Authored Tags", partial(self.grid, SetupVar.TAG_ROWS, "Authored tags", [TAG_COLUMN, ""]), SetupVar.TAG_COUNT)
 
                     with react.If(f"{state} === {json.dumps(str(SetupState.GROUPS))}"):
                         section(BODIES_SECTION, "Bodies", partial(self.grid, SetupVar.BODY_ROWS, "Bodies", react.Bind(str(SetupVar.BODY_COLUMNS))), SetupVar.BODY_COUNT)
                         section(BOUNDARIES_SECTION, "Boundaries", self.build_boundaries, SetupVar.BOUNDARY_COUNT)
-
-                    section(GLYPHS_SECTION, "Glyphs", self.build_legend)
 
             html.Span([react.Bind(str(SetupVar.ANNOUNCE))], classes=SR_ONLY, role="status", aria_live="polite", __properties=[("aria_live", "aria-live"), "role"])
