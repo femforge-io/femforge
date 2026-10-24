@@ -48,6 +48,16 @@ def test_a_second_condition_of_a_kind_that_stands_alone_clashes_once() -> None:
     assert merged.clashes == ["SHELL: two Convection conditions (tag A and tag B); keep one"]
 
 
+def test_clashes_within_one_tag_name_it_once() -> None:
+    films = merge("PUCK__EXT", [Source("convection", FILM, "tag PUCK", FILM.to_elmer()), Source("convection", FILM, "tag PUCK", FILM.to_elmer())])
+    temperatures = merge("TIP", [Source("fixed_temperature", FIXED, "tag A", {"Temperature": 300.0}), Source("fixed_temperature", FIXED, "tag A", {"Temperature": 350.0})])
+    shadowed = merge("TIP", [Source("convection", FILM, "tag A", FILM.to_elmer()), Source("fixed_temperature", FIXED, "tag A", {"Temperature": 300.0})])
+
+    assert films.clashes == ["PUCK__EXT: two Convection conditions on tag PUCK; keep one"]
+    assert temperatures.clashes == ["TIP: Temperature is 300 from Fixed Temperature but 350 from Fixed Temperature, both on tag A; make them agree or remove one"]
+    assert shadowed.clashes == ["TIP: Convection has no effect under the fixed Temperature of Fixed Temperature, both on tag A; remove one"]
+
+
 def test_an_automatic_block_holds_a_fixed_value_an_authored_one_must_match() -> None:
     voltage = FixedVoltage(value=5 * U.V)
     merged = merge("AIR__EXT", [Source("fixed_voltage", voltage, "tag A", {"Potential": 5.0}), Source("far_field", None, "automatic", {"Potential": "Real 0"})])
