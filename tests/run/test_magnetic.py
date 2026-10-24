@@ -12,15 +12,15 @@ RAW: dict[str, float] = {
     "res: nodal force 1": 12.5,
     "res: nodal force 2": -3.4,
     "res: nodal force 3": 0.27,
-    "res: magnet force 1": 1.0,
-    "res: magnet force 2": 2.0,
-    "res: magnet force 3": 3.0,
-    "res: component 2 force 1": 4.0,
-    "res: component 2 force 2": 5.0,  # no index-3 column: the missing component defaults to 0.0
+    "component 1: res: magnetic force 1": 1.0,
+    "component 1: res: magnetic force 2": 2.0,
+    "component 1: res: magnetic force 3": 3.0,
+    "component 2: res: magnetic force 1": 4.0,
+    "component 2: res: magnetic force 2": 5.0,  # no index-3 column: the missing component defaults to 0.0
     "res: nodal torque 3": 9.9,
-    "res: magnet torque 1": 0.5,
-    "res: magnet torque 2": 0.6,
-    "res: magnet torque 3": 0.7,
+    "component 1: res: magnetic torque 1": 0.5,
+    "component 1: res: magnetic torque 2": 0.6,
+    "component 1: res: magnetic torque 3": 0.7,
     "res: magnetic field energy": 42.0,
     "res: eddy current power": 0.001,
     "time": 1.0,  # no trailing component index -> never a triple
@@ -33,17 +33,23 @@ def _xyz(vec: Vec3) -> tuple[float, float, float]:
 
 def test_force_triples_excludes_the_nodal_sum() -> None:
     triples = force_triples(RAW)
-    assert set(triples) == {"res: magnet force", "res: component 2 force"}
-    assert _xyz(triples["res: magnet force"]) == pytest.approx((1.0, 2.0, 3.0))
-    assert _xyz(triples["res: component 2 force"]) == pytest.approx((4.0, 5.0, 0.0))
+    assert set(triples) == {"component 1: res: magnetic force", "component 2: res: magnetic force"}
+    assert _xyz(triples["component 1: res: magnetic force"]) == pytest.approx((1.0, 2.0, 3.0))
+    assert _xyz(triples["component 2: res: magnetic force"]) == pytest.approx((4.0, 5.0, 0.0))
 
 
-def test_component_forces_join_by_name_or_component_id() -> None:
-    forces = component_forces(RAW, {1: "MAGNET", 2: "SPACER"})
-    # MAGNET matches its name in the stem; SPACER's stem carries only "component 2".
-    assert set(forces) == {"MAGNET", "SPACER"}
-    assert _xyz(forces["MAGNET"]) == pytest.approx((1.0, 2.0, 3.0))
-    assert _xyz(forces["SPACER"]) == pytest.approx((4.0, 5.0, 0.0))
+def test_component_forces_join_by_component_id() -> None:
+    forces = component_forces(RAW, {1: "SPACER", 2: "SEAT"})
+    assert set(forces) == {"SPACER", "SEAT"}
+    assert _xyz(forces["SPACER"]) == pytest.approx((1.0, 2.0, 3.0))
+    assert _xyz(forces["SEAT"]) == pytest.approx((4.0, 5.0, 0.0))
+
+
+def test_a_body_named_magnet_takes_its_own_column() -> None:
+    # "MAGNET" is a substring of every "magnetic force" stem, so only the component id may decide.
+    forces = component_forces(RAW, {1: "SPACER", 2: "MAGNET"})
+    assert _xyz(forces["SPACER"]) == pytest.approx((1.0, 2.0, 3.0))
+    assert _xyz(forces["MAGNET"]) == pytest.approx((4.0, 5.0, 0.0))
 
 
 def test_component_with_no_matching_column_is_dropped() -> None:
