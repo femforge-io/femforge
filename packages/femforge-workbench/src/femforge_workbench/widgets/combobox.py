@@ -18,7 +18,7 @@ class ComboboxItem(TypedDict, total=False):
 
 
 class Combobox(Element):
-    """A searchable select whose `filters` toggle its groups on and off and whose `compact` face shows only the swatch; `model` binds its value to a state variable."""
+    """A searchable select whose `filters` toggle its groups on and off and whose arrow keys apply as they step; `model` binds its value to a state variable."""
 
     def __init__(
         self,
@@ -27,9 +27,7 @@ class Combobox(Element):
         items: Prop[Sequence[ComboboxItem]] = None,
         value: Prop[str] = None,
         on_value_change: Event = None,
-        lead: Prop[ComboboxItem] = None,
         filters: Prop[Sequence[str]] = None,
-        compact: Prop[bool] = None,
         placeholder: Prop[str] = None,
         search_placeholder: Prop[str] = None,
         empty_text: Prop[str] = None,
@@ -44,9 +42,7 @@ class Combobox(Element):
             items: The options.
             value: The chosen option's value.
             on_value_change: Receives the chosen value.
-            lead: An option listed first, in a group of its own above the items.
             filters: The group toggles that narrow the items.
-            compact: Shows only the chosen option's swatch on the trigger.
             placeholder: The trigger's text while nothing is chosen.
             search_placeholder: The search field's placeholder.
             empty_text: The text shown when no option matches the search.

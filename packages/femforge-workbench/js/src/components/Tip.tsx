@@ -7,6 +7,8 @@ export interface TipProps {
   side?: "top" | "right" | "bottom" | "left";
   /** Marks a definition, which explains a value, with the accent edge; a label, which names what a control does, goes without. */
   definition?: boolean;
+  /** False opens it on hover only, for a control that takes focus where its tooltip would be in the way. */
+  focus?: boolean;
   children?: ReactNode;
 }
 
@@ -22,13 +24,15 @@ function Trigger({ child, onClick: _close, ...props }: TriggerProps) {
 }
 
 /** Gives its one child a tooltip, below it by default, that opens on hover and on keyboard focus; empty content renders the child alone. */
-export function Tip({ content, side = "bottom", definition = false, children }: TipProps) {
+export function Tip({ content, side = "bottom", definition = false, focus = true, children }: TipProps) {
   const child = Children.toArray(children)[0];
   if (content === undefined || content === null || content === "") return <>{child}</>;
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{isValidElement(child) ? <Trigger child={child} /> : child}</TooltipTrigger>
+      <TooltipTrigger asChild onFocus={focus ? undefined : (event) => event.preventDefault()}>
+        {isValidElement(child) ? <Trigger child={child} /> : child}
+      </TooltipTrigger>
       <TooltipContent side={side} definition={definition}>
         {content}
       </TooltipContent>

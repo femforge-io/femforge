@@ -32,7 +32,7 @@ from femforge.run.result import Result
 from femforge.telemetry.paths import Telemetry, resolve_root
 from femforge.telemetry.runs import RunQuery
 from femforge.telemetry.schemas import LiveRunColumn, RunColumn
-from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap
+from femforge.viz.field_display import OPACITY_MAP, BodyPaint, BodyStyle, DisplayMode, DisplaySpec, FieldInfo, FieldScene, Legend, default_display, line_vectors, sample_colormap, spread_colors
 from femforge.viz.field_lines import Bounds, FieldLineOptions, SeedPlacement
 from femforge.viz.glyphs import LABEL_FONT_PX, EntityKind, EntityRef, GlyphHost, GlyphLayer, GlyphView, GroupScene
 from femforge.viz.symmetry import EXTRUDING, REVOLVING, Expansion, offered, shown_as
@@ -47,13 +47,13 @@ from femforge_workbench.registry import FIELD_VIEWER
 from femforge_workbench.tasks import TaskPhase, TaskView
 from femforge_workbench.theme import hex_color, mix
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
+from femforge_workbench.widgets.body_look import BodyLook
 from femforge_workbench.widgets.busy import Busy
 from femforge_workbench.widgets.button import Button
-from femforge_workbench.widgets.checkbox import Checkbox
 from femforge_workbench.widgets.combobox import Combobox, ComboboxItem
 from femforge_workbench.widgets.element import EVENT, Prop, setter
 from femforge_workbench.widgets.icon import Icon
-from femforge_workbench.widgets.input import ColorInput, Input
+from femforge_workbench.widgets.input import Input
 from femforge_workbench.widgets.reveal import Reveal
 from femforge_workbench.widgets.slider import Slider
 from femforge_workbench.widgets.tip import Tip
@@ -124,13 +124,22 @@ OPEN_SECTIONS = [SYMMETRY_SECTION, DEFORMATION_SECTION, FIELD_SECTION, LINES_SEC
 OPACITY_RANGE = (0.0, 1.0)
 OPACITY_STEP = 0.01
 ALL_BODIES = "All Bodies"
+ALL_ROW = "all"
+"""The id the All Bodies row's look acts on: every body of the run."""
+
+MIXED = "mixed"
+"""The paint of a row whose bodies take their color from different places."""
+
+FIXED_START = "darkgray"
+"""The color a body that has none of its own starts from when its look turns Fixed."""
+
+PALETTE_MAP = "Set2"
+"""The qualitative colormap the fixed-color chips are sampled from."""
 PREVIEW_STOPS = 16
 """Colors sampled for a colormap's swatch, enough for the CSS gradient to read as the map."""
 
 FAVORITES_GROUP = "Favorites"
 COLORMAP_FILTERS = [FAVORITES_GROUP, *(kind.value for kind in ColormapType)]
-SAME_AS_FIELD = "same-as-field"
-SAME_AS_FIELD_LABEL = "Same as Field"
 STACK = "flex flex-col gap-1.5"
 HOVER_SHARE = 0.6
 """`[-]`: The share of the accent in a hover outline, the rest the background's."""
@@ -140,16 +149,12 @@ FIT_SHARE = 0.15
 LABEL_EM = 0.6
 """`[-]`: The width of a label character, as a share of the font size, for fitting the labels the scene draws."""
 BODY_TABLE = "flex w-full shrink-0 flex-col gap-1"
-BODY_ROW = "grid h-6 grid-cols-[1rem_minmax(0,1fr)_5.5rem_4.5rem] items-center gap-x-2"
+BODY_ROW = "grid h-6 grid-cols-[1.125rem_minmax(0,1fr)_2.5rem] items-center gap-x-2.5"
 BODY_NAME = "truncate"
 MEMBER_NAME = "truncate pl-3"
 GROUP_NAME = "truncate font-medium"
-CHIP_SLOT = "flex h-6 min-w-0 items-center gap-1 rounded-md border border-input px-1.5"
-"""A row's color control, boxed like the body colormap's select so every row's swatch and trailing icon line up with it."""
-CHIP = "h-3.5 min-w-0 flex-1 cursor-pointer rounded-sm border-0 p-0"
-COLOR_CHIP = f"{CHIP} [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[3px] [&::-webkit-color-swatch]:border-0"
-CHIP_CLEAR = "size-3.5 shrink-0 text-muted-foreground"
-CHIP_SPACER = "size-3.5 shrink-0"
+BODY_META = "text-right text-label tabular-nums text-muted-foreground"
+HIDDEN_NAME = " text-muted-foreground"
 PRECISION = 3
 """Significant figures of the range readouts, matching the color bar's labels."""
 RANGE_VAR = "--ff-range"
@@ -263,12 +268,11 @@ class FieldVar(StrEnum):
     OPACITY_MAPPING = "field_opacity_mapping"
     OPACITY_RANGE = "field_opacity_range"
     BODY_ROWS = "field_body_rows"
+    ALL_LOOK = "field_all_look"
+    """The All Bodies look: the bodies' shared paint (or mixed), every body's color and every body's name."""
+
     FIELD_GRADIENT = "field_gradient"
     BODY_COLORMAP = "field_body_colormap"
-    BODY_COLORMAP_SHOWN = "field_body_colormap_shown"
-    """The body colormap picker's value: SAME_AS_FIELD while no body takes the body colormap."""
-
-    BODY_LEAD = "field_body_lead"
     COLORMAP_ITEMS = "field_colormap_items"
     SETUP_SHOWN = "field_setup_shown"
     """Whether the Setup tab is on screen, the only time the scene draws glyphs."""
@@ -416,6 +420,7 @@ class RowKey(StrEnum):
     MEMBER = "member"
     PAINT = "paint"
     COLOR = "color"
+    COLORS = "colors"
     OPACITY = "opacity"
 
 
@@ -456,6 +461,18 @@ def colormap_items() -> list[ComboboxItem]:
         items.append(item)
 
     return items
+
+
+def all_look(rows: Sequence[Item]) -> Item:
+    """The All Bodies look from the body table's rows: the paint the bodies share or mixed, each body's color, and the body names."""
+    bodies = [row for row in rows if not row[RowKey.GROUP]]
+    paints = {str(row[RowKey.PAINT]) for row in bodies}
+
+    return {
+        RowKey.PAINT: paints.pop() if len(paints) == 1 else MIXED,
+        RowKey.COLORS: [color for row in bodies for color in cast("list[str | None]", row[RowKey.COLORS])],
+        RowKey.MEMBERS: [row[RowKey.ID] for row in bodies],
+    }
 
 
 def mode_items(info: FieldInfo) -> list[Item]:
@@ -521,8 +538,9 @@ def body_rows(bodies: Bodies, names: Sequence[str], looks: Mapping[str, BodyStyl
             RowKey.MEMBERS: list(members),
             RowKey.GROUP: group,
             RowKey.MEMBER: member,
-            RowKey.PAINT: str(paints.pop()) if len(paints) == 1 else str(BodyPaint.FIELD),
+            RowKey.PAINT: str(paints.pop()) if len(paints) == 1 else MIXED,
             RowKey.COLOR: colors[0],
+            RowKey.COLORS: colors,
             RowKey.OPACITY: [own[0].opacity],
         }
 
@@ -988,10 +1006,9 @@ class FieldViewerController(TrameComponent):
                 FieldVar.OPACITY_MAPPING: display.opacity_map is not None,
                 FieldVar.OPACITY_RANGE: list(display.opacity_map or OPACITY_RANGE),
                 FieldVar.BODY_ROWS: [],
+                FieldVar.ALL_LOOK: all_look([]),
                 FieldVar.FIELD_GRADIENT: colormap_gradient(display.colormap, reverse=display.invert) or "",
                 FieldVar.BODY_COLORMAP: display.body_colormap,
-                FieldVar.BODY_COLORMAP_SHOWN: SAME_AS_FIELD,
-                FieldVar.BODY_LEAD: self.lead(colormap_gradient(display.colormap, reverse=display.invert)),
                 FieldVar.COLORMAP_ITEMS: colormap_items(),
                 FieldVar.SETUP_SHOWN: False,
                 FieldVar.GLYPH_KINDS_OFF: [],
@@ -1380,6 +1397,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.FIELDS] = []
             self.state[FieldVar.MODES] = []
             self.state[FieldVar.BODY_ROWS] = []
+            self.state[FieldVar.ALL_LOOK] = all_look([])
             self.state[FieldVar.VISIBLE_BODIES] = []
             self.state[FieldVar.HAS_VECTORS] = False
             self.state[FieldVar.LINES_BODIES] = body_items([])
@@ -1494,7 +1512,7 @@ class FieldViewerController(TrameComponent):
             self.state[FieldVar.MODES] = mode_items(scene.field_info(spec.field))
             self.state[FieldVar.MODE] = str(spec.mode)
             self.state[FieldVar.BODY_ROWS] = self.rows(scene)
-            self.state[FieldVar.BODY_COLORMAP_SHOWN] = str(self.state[FieldVar.BODY_COLORMAP]) if self.painted(BodyPaint.COLORMAP) else SAME_AS_FIELD
+            self.state[FieldVar.ALL_LOOK] = all_look(cast("list[Item]", self.state[FieldVar.BODY_ROWS]))
             self.state[FieldVar.VISIBLE_BODIES] = [body for body in self.bodies if body not in self.hidden_bodies]
             self.state[FieldVar.HAS_VECTORS] = has_vector_field(scene.fields)
             self.state[FieldVar.LINES_BODIES] = body_items(self.bodies)
@@ -1537,7 +1555,10 @@ class FieldViewerController(TrameComponent):
         return current if current in self.bodies else WHOLE_DOMAIN
 
     def members(self, row_id: object) -> list[str]:
-        """The bodies a table row stands for, nothing for a row the current run does not have."""
+        """The bodies a table row stands for, every body for the All Bodies row, nothing for a row the current run does not have."""
+        if row_id == ALL_ROW:
+            return list(self.bodies)
+
         rows = cast("list[Item]", self.state[FieldVar.BODY_ROWS])
         found = [row for row in rows if row[RowKey.ID] == row_id]
 
@@ -1567,41 +1588,21 @@ class FieldViewerController(TrameComponent):
         return body_rows(scene.bodies, self.bodies, self.looks, str(self.state[FieldVar.BODY_COLORMAP]))
 
     def publish_rows(self) -> None:
-        """Puts the body table's rows for the current looks and body colormap in the state, and what the body colormap picker reads."""
+        """Puts the body table's rows and the All Bodies look for the current looks and body colormap in the state."""
         if self.scene is None:
             return
 
         with self.state:
             self.state[FieldVar.BODY_ROWS] = self.rows(self.scene)
-            self.state[FieldVar.BODY_COLORMAP_SHOWN] = str(self.state[FieldVar.BODY_COLORMAP]) if self.painted(BodyPaint.COLORMAP) else SAME_AS_FIELD
-
-    def painted(self, paint: BodyPaint) -> list[str]:
-        """The run's bodies whose color comes from `paint`."""
-        return [name for name in self.bodies if self.look(name).paint is paint]
-
-    def lead(self, gradient: str | None) -> ComboboxItem:
-        """The body colormap picker's first entry, drawn in the field colormap."""
-        item: ComboboxItem = {"value": SAME_AS_FIELD, "label": SAME_AS_FIELD_LABEL}
-        if gradient is not None:
-            item["swatch"] = gradient
-
-        return item
+            self.state[FieldVar.ALL_LOOK] = all_look(cast("list[Item]", self.state[FieldVar.BODY_ROWS]))
 
     def on_body_colormap_pick(self, value: object) -> None:
-        """Same as field returns the body colormap's bodies to the field colormap; a colormap, picked while no body takes one, takes the shown field-colored bodies, else every shown body."""
-        if value == SAME_AS_FIELD:
-            self.restyle(self.painted(BodyPaint.COLORMAP), paint=BodyPaint.FIELD, color=None)
-            return
-
+        """A colormap picked in a look's Colormap mode: every body that takes the shared body colormap redraws in it."""
         with self.state:
             self.state[FieldVar.BODY_COLORMAP] = str(value)
 
-        if self.painted(BodyPaint.COLORMAP):
-            return
-
-        shown = names_of(self.state[FieldVar.VISIBLE_BODIES])
-        fielded = [name for name in self.painted(BodyPaint.FIELD) if name in shown]
-        self.restyle(fielded or shown, paint=BodyPaint.COLORMAP, color=None)
+        self.publish_rows()
+        self.request_redraw()
 
     def on_row_visible(self, row_id: object, checked: object) -> None:
         """A row's checkbox: shows or hides every body it stands for."""
@@ -1611,13 +1612,17 @@ class FieldViewerController(TrameComponent):
         with self.state:
             self.state[FieldVar.VISIBLE_BODIES] = [name for name in self.bodies if name in shown]
 
-    def on_row_colormap(self, row_id: object) -> None:
-        """A row's field chip: its bodies take their share of the body colormap."""
-        self.restyle(self.members(row_id), paint=BodyPaint.COLORMAP, color=None)
+    def on_row_paint(self, row_id: object, paint: object) -> None:
+        """A look's mode picked: Field and Colormap hand the bodies to the field or body colormap, Fixed keeps the color they show now."""
+        members = self.members(row_id)
+        if str(paint) != BodyPaint.SOLID:
+            self.restyle(members, paint=BodyPaint(str(paint)), color=None)
+            return
 
-    def on_row_field(self, row_id: object) -> None:
-        """A row's clear button: its bodies take the field colormap again."""
-        self.restyle(self.members(row_id), paint=BodyPaint.FIELD, color=None)
+        rows = cast("list[Item]", self.state[FieldVar.BODY_ROWS])
+        shown = {str(row[RowKey.ID]): row[RowKey.COLOR] for row in rows if not row[RowKey.GROUP]}
+        color = next((str(shown[name]) for name in members if shown.get(name)), hex_of(FIXED_START))
+        self.restyle(members, paint=BodyPaint.SOLID, color=color)
 
     def on_row_color(self, row_id: object, color: object) -> None:
         """A row's color picked by hand: its bodies keep it until cleared."""
@@ -2078,10 +2083,9 @@ class FieldViewerController(TrameComponent):
 
     @change(FieldVar.COLORMAP, FieldVar.INVERT)
     def on_colormap(self, **_: object) -> None:
-        """Repaints the field chips of the body table and the body picker's Same as field in the colormap the scene draws."""
+        """Repaints the body looks that follow the field in the colormap the scene draws."""
         gradient = colormap_gradient(str(self.state[FieldVar.COLORMAP]), reverse=bool(self.state[FieldVar.INVERT]))
         self.state[FieldVar.FIELD_GRADIENT] = gradient or ""
-        self.state[FieldVar.BODY_LEAD] = self.lead(gradient)
 
     @change(FieldVar.RUN)
     def on_run(self, **_: object) -> None:
@@ -2241,19 +2245,6 @@ class FieldControlsPanel(PanelComponent):
             aria_label="Colormap",
         )
 
-    def build_body_colormap(self) -> None:
-        """The body colormap picker as a swatch in the color column, reading Same as field while no body takes it."""
-        Combobox(
-            value=react.Bind(str(FieldVar.BODY_COLORMAP_SHOWN)),
-            on_value_change=self.optimistic(self.controller.on_body_colormap_pick, str(FieldVar.BODY_COLORMAP_SHOWN), EVENT, f"[{EVENT}]"),
-            items=react.Bind(str(FieldVar.COLORMAP_ITEMS)),
-            lead=react.Bind(str(FieldVar.BODY_LEAD)),
-            filters=COLORMAP_FILTERS,
-            compact=True,
-            search_placeholder="Search Colormaps",
-            aria_label="Body colormap",
-        )
-
     def slider(self, model: FieldVar, label: str, bounds: tuple[float, float | react.Bind], step: float | react.Bind) -> None:
         """A slider over `model` whose thumbs move with the drag and whose scene follows the release.
 
@@ -2348,91 +2339,73 @@ class FieldControlsPanel(PanelComponent):
         self.build_opacity()
 
     def build_bodies(self) -> None:
-        """The body table: the All bodies row with the body colormap, then a row per body and per material group, every row checkbox, name, color and opacity."""
+        """The body table: the All Bodies row, whose look sets every body and the overall opacity, then a row per body and per material group, each its look and its name."""
         controller = self.controller
         visible = str(FieldVar.VISIBLE_BODIES)
+        bodies = f"{FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP})"
         row = ITEM
-        members = f"{row}.{RowKey.MEMBERS}"
 
-        def opacity_slider(value: str, change: react.Callback, commit: react.Callback, label: str | react.Bind) -> None:
-            Slider(
-                value=react.Bind(value),
-                on_value_change=change,
-                on_value_commit=commit,
-                min_=OPACITY_RANGE[0],
-                max_=OPACITY_RANGE[1],
-                step=OPACITY_STEP,
-                aria_label=label,
+        def look(row_id: str, members: str, paint: str, colors: str, opacity: str, label: str | react.Bind, change: react.Callback) -> None:
+            BodyLook(
+                paint=react.Bind(paint),
+                colors=react.Bind(colors),
+                shown=react.Bind(f"{members}.every(m => {visible}.includes(m)) || ({members}.some(m => {visible}.includes(m)) && 'mixed')"),
+                opacity=react.Bind(opacity),
+                field_gradient=react.Bind(str(FieldVar.FIELD_GRADIENT)),
+                colormap=react.Bind(str(FieldVar.BODY_COLORMAP)),
+                colormaps=react.Bind(str(FieldVar.COLORMAP_ITEMS)),
+                filters=COLORMAP_FILTERS,
+                palette=spread_colors(PALETTE_MAP, 8),
+                label=label,
+                on_shown_change=self.optimistic(
+                    controller.on_row_visible,
+                    visible,
+                    f"{bodies}.map(r => r.{RowKey.ID}).filter(id => {members}.includes(id) ? {EVENT} === true : {visible}.includes(id))",
+                    f"[{row_id}, {EVENT}]",
+                ),
+                on_opacity_change=change,
+                on_opacity_commit=self.callback(controller.on_commit),
+                on_paint_change=self.callback(controller.on_row_paint, args=f"[{row_id}, {EVENT}]"),
+                on_color_change=self.callback(controller.on_row_color, args=f"[{row_id}, {EVENT}]"),
+                on_colormap_change=self.optimistic(controller.on_body_colormap_pick, str(FieldVar.BODY_COLORMAP), EVENT, f"[{EVENT}]"),
             )
+
+        def meta(opacity: str) -> None:
+            html.Span([react.Bind(f"{opacity} < 1 ? Math.round({opacity} * 100) + ' %' : ''")], classes=BODY_META)
 
         with html.Div(classes=BODY_TABLE):
             with html.Div(classes=BODY_ROW):
-                Checkbox(
-                    checked=react.Bind(f"{visible}.length === 0 ? false : {visible}.length === {FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP}).length || 'indeterminate'"),
-                    on_checked_change=react.Callback(f"trame.state.set({json.dumps(visible)}, {EVENT} === true ? {FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP}).map(r => r.{RowKey.ID}) : [])"),
-                    aria_label="Show every body",
+                # Server-built, so the bound arrays keep their identity between renders.
+                look(
+                    json.dumps(ALL_ROW),
+                    f"{FieldVar.ALL_LOOK}.{RowKey.MEMBERS}",
+                    f"{FieldVar.ALL_LOOK}.{RowKey.PAINT}",
+                    f"{FieldVar.ALL_LOOK}.{RowKey.COLORS}",
+                    f"{FieldVar.OPACITY}[0]",
+                    ALL_BODIES,
+                    react.Callback(f"trame.state.set({json.dumps(str(FieldVar.OPACITY))}, [{EVENT}])"),
                 )
                 html.Span(ALL_BODIES, classes=GROUP_NAME)
-                self.build_body_colormap()
-                opacity_slider(str(FieldVar.OPACITY), setter(str(FieldVar.OPACITY)), self.callback(controller.on_commit), "Opacity of every body")
+                meta(f"{FieldVar.OPACITY}[0]")
 
             with react.For(items=str(FieldVar.BODY_ROWS), name=row), html.Div(classes=BODY_ROW):
-                Checkbox(
-                    checked=react.Bind(f"{members}.every(m => {visible}.includes(m)) || ({members}.some(m => {visible}.includes(m)) && 'indeterminate')"),
-                    on_checked_change=self.optimistic(
-                        controller.on_row_visible,
-                        visible,
-                        f"{FieldVar.BODY_ROWS}.filter(r => !r.{RowKey.GROUP}).map(r => r.{RowKey.ID}).filter(id => {members}.includes(id) ? {EVENT} === true : {visible}.includes(id))",
-                        f"[{row}.{RowKey.ID}, {EVENT}]",
-                    ),
-                    aria_label=react.Bind(f"'Show ' + {row}.{RowKey.TITLE}"),
+                look(
+                    f"{row}.{RowKey.ID}",
+                    f"{row}.{RowKey.MEMBERS}",
+                    f"{row}.{RowKey.PAINT}",
+                    f"{row}.{RowKey.COLORS}",
+                    f"{row}.{RowKey.OPACITY}[0]",
+                    react.Bind(f"{row}.{RowKey.TITLE}"),
+                    self.callback(controller.on_row_opacity, args=f"[{row}.{RowKey.ID}, {EVENT}]"),
                 )
                 html.Span(
                     [react.Bind(f"{row}.{RowKey.TITLE}")],
-                    classes=react.Bind(f"{row}.{RowKey.GROUP} ? {json.dumps(GROUP_NAME)} : {row}.{RowKey.MEMBER} ? {json.dumps(MEMBER_NAME)} : {json.dumps(BODY_NAME)}"),
+                    classes=react.Bind(
+                        f"({row}.{RowKey.GROUP} ? {json.dumps(GROUP_NAME)} : {row}.{RowKey.MEMBER} ? {json.dumps(MEMBER_NAME)} : {json.dumps(BODY_NAME)})"
+                        f" + ({row}.{RowKey.MEMBERS}.some(m => {visible}.includes(m)) ? '' : {json.dumps(HIDDEN_NAME)})"
+                    ),
                 )
-                with html.Span(classes=CHIP_SLOT):
-                    painted = f"{row}.{RowKey.PAINT} !== {json.dumps(str(BodyPaint.FIELD))}"
-                    with react.If(painted):
-                        tip = react.Bind(f"{row}.{RowKey.PAINT} === {json.dumps(str(BodyPaint.COLORMAP))} ? 'From the body colormap: pick to fix a color' : 'A fixed color'")
-                        with Tip(content=tip):
-                            ColorInput(
-                                value=react.Bind(f"{row}.{RowKey.COLOR}"),
-                                on_change=self.callback(controller.on_row_color, args=f"[{row}.{RowKey.ID}, {EVENT}.target.value]"),
-                                classes=COLOR_CHIP,
-                                aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' color'"),
-                            )
-                        with (
-                            Tip(content="Back to the field colormap"),
-                            Button(
-                                size="icon-xs",
-                                variant="ghost",
-                                classes=CHIP_CLEAR,
-                                aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' back to the field colormap'"),
-                                on_click=self.callback(controller.on_row_field, args=f"[{row}.{RowKey.ID}]"),
-                            ),
-                        ):
-                            Icon("x")
-
-                    with react.If(f"!({painted})"), Tip(content="Field colormap: click for the body colormap"):
-                        Button(
-                            size="icon-xs",
-                            variant="ghost",
-                            classes=CHIP,
-                            style={"background": react.Bind(str(FieldVar.FIELD_GRADIENT))},
-                            aria_label=react.Bind(f"{row}.{RowKey.TITLE} + ' to the body colormap'"),
-                            on_click=self.callback(controller.on_row_colormap, args=f"[{row}.{RowKey.ID}]"),
-                        )
-
-                    with react.If(f"!({painted})"):
-                        html.Span(classes=CHIP_SPACER, aria_hidden=True)
-
-                opacity_slider(
-                    f"{row}.{RowKey.OPACITY}",
-                    self.callback(controller.on_row_opacity, args=f"[{row}.{RowKey.ID}, {EVENT}[0]]"),
-                    self.callback(controller.on_commit),
-                    react.Bind(f"{row}.{RowKey.TITLE} + ' opacity'"),
-                )
+                meta(f"{row}.{RowKey.OPACITY}[0]")
 
     def build_lines(self) -> None:
         """The field-line section: the switch, the seeds, the region and the two integration sliders."""

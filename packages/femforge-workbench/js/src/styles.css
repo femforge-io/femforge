@@ -48,6 +48,7 @@
   --card-foreground: var(--foreground);
   --popover: oklch(0.245 0.008 255);
   --popover-foreground: var(--foreground);
+  --tooltip: oklch(0.12 0.006 255);
   --primary: oklch(0.8756 0.2202 153.5);
   --primary-foreground: oklch(0.18 0.02 160);
   --stripe: oklch(1 0 0 / 3%);
@@ -68,6 +69,11 @@
   --input: oklch(1 0 0 / 10%);
   --readonly: oklch(0.8 0 0 / 10%);
   --readonly-foreground: oklch(0.8 0.008 255);
+  --checker-a: oklch(0.34 0.008 255);
+  --checker-b: oklch(0.24 0.006 255);
+  --swatch-ring: oklch(1 0 0 / 14%);
+  --knob-ring: oklch(1 0 0);
+  --knob-shadow: oklch(0 0 0 / 50%);
   --ring: var(--primary);
   --chart-1: oklch(0.5768 0.2788 301.56);
   --chart-2: oklch(0.3583 0.1904 285.1854);
@@ -119,6 +125,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-tooltip: var(--tooltip);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -304,4 +311,28 @@
   to {
     left: 100%;
   }
+}
+
+/* The fixed-color picker: saturation and value over the hue in --hue, the hue strip, and the knob both drag. */
+.ff-sv {
+  background:
+    linear-gradient(0deg, oklch(0 0 0), transparent), linear-gradient(90deg, oklch(1 0 0), hsl(var(--hue) 100% 50%));
+}
+
+.ff-hue-strip {
+  background: linear-gradient(
+    90deg,
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
+  );
+}
+
+.ff-knob {
+  border: 2px solid var(--knob-ring);
+  box-shadow: 0 0 0 1px var(--knob-shadow);
 }

@@ -68,7 +68,10 @@ from femforge_workbench.panels.field_viewer import (  # noqa: E402
     OPEN_SECTIONS,
     RowKey,
     body_rows,
-    SAME_AS_FIELD,
+    ALL_ROW,
+    FIXED_START,
+    hex_of,
+    MIXED,
     colormap_gradient,
     colormap_items,
     names_of,
@@ -248,7 +251,7 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
     rows = [node for node in find(template, "ReactFor") if _bound(node, "items") == str(FieldVar.BODY_ROWS)]
 
     assert selects == [str(var) for var in (FieldVar.FIELD, FieldVar.MODE, FieldVar.SEED_PLACEMENT, FieldVar.LINES_BODY)]
-    assert comboboxes == [str(FieldVar.COLORMAP), str(FieldVar.BODY_COLORMAP_SHOWN)]
+    assert comboboxes == [str(FieldVar.COLORMAP)], "the body colormap lives in the body looks now"
     assert switches == [str(var) for var in (FieldVar.WARP, FieldVar.INVERT, FieldVar.LOG_SCALE, FieldVar.OUTLINE, FieldVar.AUTO_CLIM, FieldVar.OPACITY_MAPPING, FieldVar.STREAMLINES)]
     assert [_bound(node, "value") for node in sliders] == [
         str(FieldVar.SWEEP),
@@ -257,8 +260,6 @@ def test_every_control_binds_its_global_state_key(tmp_path: Path, monkeypatch: p
         str(FieldVar.OPACITY_RANGE),
         str(FieldVar.LINE_COUNT),
         str(FieldVar.MAX_LENGTH),
-        str(FieldVar.OPACITY),
-        f"item.{RowKey.OPACITY}",
     ]
     assert all(prop(node, "onValueCommit") is not None for node in sliders)
     assert _bound(sliders[1], "max") == str(FieldVar.WARP_SCALE_MAX) and _bound(sliders[1], "step") == f"{FieldVar.WARP_SCALE_MAX} / 100"
@@ -1174,6 +1175,11 @@ def test_body_rows_put_a_material_that_owns_several_bodies_over_them_with_the_lo
     assert rows[0][RowKey.MEMBERS] == ["A1", "A2"] and rows[0][RowKey.COLOR] == "#ff0000" and rows[0][RowKey.OPACITY] == [0.5]
     assert rows[0][RowKey.PAINT] == "solid" and rows[3][RowKey.PAINT] == "field" and rows[3][RowKey.COLOR] is None and rows[3][RowKey.OPACITY] == [1.0]
     assert rows[4][RowKey.PAINT] == "colormap" and rows[4][RowKey.COLOR] == "#808080", "the one colormap body takes the middle of the map"
+    assert rows[0][RowKey.COLORS] == ["#ff0000", "#ff0000"]
+
+    looks["A2"] = BodyStyle(body="A2", paint=BodyPaint.COLORMAP)
+    mixed = body_rows(bodies, ["A1", "A2", "B", "C"], looks, "gray")[0]
+    assert mixed[RowKey.PAINT] == MIXED and len(cast("list[object]", mixed[RowKey.COLORS])) == 2
 
 
 def test_colormap_items_list_the_favorites_first_and_every_catalogue_name_once() -> None:
@@ -1252,7 +1258,7 @@ def test_the_body_table_sets_visibility_colors_and_opacities_that_reach_the_draw
         await controller.settle()
         mapped = scene.spec.opacity_map
 
-        controller.on_row_colormap("LEFT")
+        controller.on_row_paint("LEFT", "colormap")
         await controller.settle()
         solid = scene.spec.solid()
         with app.state:
@@ -1278,7 +1284,7 @@ def test_the_body_table_sets_visibility_colors_and_opacities_that_reach_the_draw
         await controller.settle()
         hidden = scene.spec.hidden_bodies
         controller.on_row_visible("RIGHT", True)
-        controller.on_row_field("LEFT")
+        controller.on_row_paint("LEFT", "field")
         await controller.settle()
         cleared = scene.spec.solid()
 
@@ -1299,7 +1305,7 @@ def test_the_body_table_sets_visibility_colors_and_opacities_that_reach_the_draw
     asyncio.run(run())
 
 
-def test_a_body_row_cycles_field_then_body_colormap_and_a_hand_picked_color_holds_until_cleared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_look_cycles_its_modes_and_fixed_starts_from_the_color_it_shows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def run() -> list[tuple[str, str | None]]:
         app = _shell("cycle", tmp_path, monkeypatch)
         controller = _controller(app)
@@ -1311,37 +1317,43 @@ def test_a_body_row_cycles_field_then_body_colormap_and_a_hand_picked_color_hold
             look = controller.look("LEFT")
             steps.append((str(look.paint), look.color))
 
-        controller.on_row_colormap("LEFT")
+        controller.on_row_paint("LEFT", "solid")
+        note()
+        controller.on_row_paint("LEFT", "colormap")
+        note()
+        controller.on_row_paint("LEFT", "solid")
         note()
         controller.on_row_color("LEFT", "#00ff00")
         note()
-        controller.on_row_field("LEFT")
+        controller.on_row_paint("LEFT", "field")
         note()
-        controller.on_row_colormap("LEFT")
-        controller.on_body_colormap_pick(SAME_AS_FIELD)
-        note()
-        assert controller.members("no-such-row") == []
+        assert controller.members("no-such-row") == [] and controller.members(ALL_ROW) == ["LEFT", "RIGHT"]
+        controller.on_row_paint(ALL_ROW, "colormap")
+        assert {str(controller.look(name).paint) for name in ("LEFT", "RIGHT")} == {"colormap"}, "the All Bodies look sets every body"
         await controller.settle()
 
         return steps
 
-    assert asyncio.run(run()) == [("colormap", None), ("solid", "#00ff00"), ("field", None), ("field", None)]
+    steps = asyncio.run(run())
+    assert steps[:2] == [("solid", hex_of(FIXED_START)), ("colormap", None)], "a field body has no color of its own to keep"
+    assert steps[2][0] == "solid" and steps[2][1] not in (None, hex_of(FIXED_START)), "Fixed keeps the share the body showed"
+    assert steps[3:] == [("solid", "#00ff00"), ("field", None)]
 
 
-def test_the_controls_offer_a_color_input_per_row_and_a_swatch_per_colormap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_body_table_is_one_look_per_row_under_the_all_bodies_look(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _shell("swatches", tmp_path, monkeypatch)
     template = _template(app, FieldPanel.CONTROLS)
 
-    colors = [node for node in find(template, "ff-input") if prop(node, "type") == "color"]
+    looks = find(template, "ff-body-look")
     swatches = [node for node in find(template, "span") if "linear-gradient" in str(prop(node, "style"))]
     conditions = [_bound(node, "value") for node in find(template, "ReactIf")]
-    pickers = find(template, "ff-combobox")
 
-    assert len(colors) == 1 and _bound(colors[0], "value") == f"item.{RowKey.COLOR}"
+    assert len(looks) == 2, "the All Bodies look, then the row template's"
+    assert [_bound(node, "paint") for node in looks] == [f"{FieldVar.ALL_LOOK}.{RowKey.PAINT}", f"item.{RowKey.PAINT}"]
+    assert [_bound(node, "opacity") for node in looks] == [f"{FieldVar.OPACITY}[0]", f"item.{RowKey.OPACITY}[0]"]
+    assert all(_bound(node, "colormap") == str(FieldVar.BODY_COLORMAP) and _bound(node, "colormaps") == str(FieldVar.COLORMAP_ITEMS) for node in looks)
+    assert find(template, "ff-input") == [] and find(template, "ff-checkbox") == [], "one control per row"
     assert swatches == [], "the swatches travel in the state, not the template"
-    assert [_bound(node, "items") for node in pickers] == [str(FieldVar.COLORMAP_ITEMS)] * 2
-    assert _bound(pickers[1], "lead") == str(FieldVar.BODY_LEAD)
-    assert [prop(node, "compact") for node in pickers] == [None, True], "the body colormap sits in the color column as a swatch"
     reveals = [_bound(node, "open") for node in find(template, "ff-reveal")]
     assert str(FieldVar.OPACITY_MAPPING) in reveals and str(FieldVar.WARP) in reveals, "the controls a switch governs expand and collapse with it"
     assert str(FieldVar.OPACITY_MAPPING) not in str(conditions)
@@ -1410,38 +1422,23 @@ def test_the_field_colormap_restyles_the_field_lines_without_integrating_them_ag
     assert isinstance(drawn, FieldLineOptions) and drawn.colormap == "lipari" and drawn.invert is True
 
 
-def test_the_body_colormap_picker_reads_same_as_field_until_a_pick_paints_the_shown_bodies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def run() -> list[tuple[object, dict[str, str]]]:
+def test_a_picked_body_colormap_recolors_its_bodies_and_leaves_the_rest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> tuple[object, dict[str, str], object]:
         app = _shell("body-picker", tmp_path, monkeypatch)
         controller = _controller(app)
         await controller.load(_bundle(tmp_path / "hex", _hex_grid()))
         await controller.settle()
-        steps: list[tuple[object, dict[str, str]]] = []
-
-        def note() -> None:
-            steps.append((app.state[FieldVar.BODY_COLORMAP_SHOWN], {name: str(controller.look(name).paint) for name in ("LEFT", "RIGHT")}))
-
-        note()
-        with app.state:
-            app.state[FieldVar.VISIBLE_BODIES] = ["LEFT"]
-
+        controller.on_row_paint("LEFT", "colormap")
         controller.on_body_colormap_pick("gray")
-        note()
-        controller.on_body_colormap_pick(SAME_AS_FIELD)
-        note()
-        controller.on_row_color("LEFT", "#00ff00")
-        controller.on_body_colormap_pick("viridis")
-        note()
         await controller.settle()
+        rows = cast("list[dict[str, object]]", app.state[FieldVar.BODY_ROWS])
 
-        return steps
+        return app.state[FieldVar.BODY_COLORMAP], {name: str(controller.look(name).paint) for name in ("LEFT", "RIGHT")}, rows[0][RowKey.COLORS]
 
-    assert asyncio.run(run()) == [
-        (SAME_AS_FIELD, {"LEFT": "field", "RIGHT": "field"}),
-        ("gray", {"LEFT": "colormap", "RIGHT": "field"}),
-        (SAME_AS_FIELD, {"LEFT": "field", "RIGHT": "field"}),
-        ("viridis", {"LEFT": "colormap", "RIGHT": "field"}),
-    ], "with no shown field-colored body, a pick takes every shown body"
+    picked, paints, colors = asyncio.run(run())
+
+    assert picked == "gray" and paints == {"LEFT": "colormap", "RIGHT": "field"}, "a pick changes the shared map, not who takes it"
+    assert colors == ["#808080"]
 
 
 # --- symmetry and the tour ------------------------------------------------------
