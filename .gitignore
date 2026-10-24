@@ -16,3 +16,6 @@ docs/schema/
 packages/femforge-workbench/js/node_modules/
 packages/femforge-workbench/js/dist/
 packages/femforge-workbench/src/femforge_workbench/widgets/serve/
+
+# Stray screenshots from browser checks
+/*.png
