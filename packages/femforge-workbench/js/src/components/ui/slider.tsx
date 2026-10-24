@@ -2,6 +2,7 @@ import * as React from "react"
 import { cn } from "cn"
 import { Slider as SliderPrimitive } from "radix-ui"
 
+import { holdSelection } from "@/components/slider/drag"
 import { stepped, wheelSteps } from "@/components/slider/wheel"
 
 const COMMIT_DELAY = 300
@@ -17,6 +18,7 @@ function Slider({
   onValueChange,
   onValueCommit,
   "aria-label": label,
+  onPointerDown,
   ...props
 }: React.ComponentProps<typeof SliderPrimitive.Root>) {
   const root = React.useRef<HTMLSpanElement>(null)
@@ -51,6 +53,23 @@ function Slider({
     }
   }, [])
 
+  // A drag that leaves the track would select text across the page: selection stays off until the pointer is released anywhere.
+  const grab = (event: React.PointerEvent<HTMLSpanElement>): void => {
+    onPointerDown?.(event)
+    if (disabled || event.button !== 0) return
+
+    window.getSelection()?.removeAllRanges()
+    const release = holdSelection(document.documentElement.style)
+    const end = (): void => {
+      release()
+      window.removeEventListener("pointerup", end)
+      window.removeEventListener("pointercancel", end)
+    }
+
+    window.addEventListener("pointerup", end)
+    window.addEventListener("pointercancel", end)
+  }
+
   const _values = React.useMemo(
     () =>
       Array.isArray(value)
@@ -73,6 +92,7 @@ function Slider({
       disabled={disabled}
       onValueChange={onValueChange}
       onValueCommit={onValueCommit}
+      onPointerDown={grab}
       className={cn(
         "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
         className
