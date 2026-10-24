@@ -514,9 +514,9 @@ def test_every_shipped_condition_but_the_force_output_draws_a_glyph() -> None:
     assert {condition.glyph for condition in shipped_conditions()} == {*ConditionGlyph, None}
 
 
-def test_the_coil_conditions_share_the_current_and_voltage_glyphs() -> None:
+def test_a_coil_drive_shares_the_current_glyph_and_a_coil_terminal_has_its_own() -> None:
     assert (CoilDrive.glyph, CurrentDensity.glyph) == (ConditionGlyph.CURRENT_DENSITY, ConditionGlyph.CURRENT_DENSITY)
-    assert (CoilTerminal.glyph, FixedVoltage.glyph) == (ConditionGlyph.VOLTAGE, ConditionGlyph.VOLTAGE)
+    assert (CoilTerminal.glyph, FixedVoltage.glyph) == (ConditionGlyph.COIL_TERMINAL, ConditionGlyph.VOLTAGE)
     assert {JouleHeat.glyph, Convection.glyph, HeatSource.glyph} == {ConditionGlyph.THERMAL}
 
 

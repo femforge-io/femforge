@@ -380,6 +380,8 @@ def icon_of(glyph: ConditionGlyph, *, negative: bool = False) -> IconName:
             return "flame"
         case ConditionGlyph.VOLTAGE:
             return "zap"
+        case ConditionGlyph.COIL_TERMINAL:
+            return "git-commit-horizontal"
 
 
 def legend_label(glyph: ConditionGlyph) -> str:
@@ -387,7 +389,7 @@ def legend_label(glyph: ConditionGlyph) -> str:
     match glyph:
         case ConditionGlyph.VOLTAGE:
             return ElmerVariable.POTENTIAL.display_name
-        case ConditionGlyph.SURFACE_FORCE | ConditionGlyph.FIXED_DISPLACEMENT | ConditionGlyph.MAGNETIZATION | ConditionGlyph.CURRENT_DENSITY | ConditionGlyph.THERMAL:
+        case ConditionGlyph.SURFACE_FORCE | ConditionGlyph.FIXED_DISPLACEMENT | ConditionGlyph.MAGNETIZATION | ConditionGlyph.CURRENT_DENSITY | ConditionGlyph.THERMAL | ConditionGlyph.COIL_TERMINAL:
             return title(glyph.value)
 
 

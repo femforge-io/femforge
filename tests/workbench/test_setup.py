@@ -408,6 +408,7 @@ def test_the_legend_counts_each_glyph_kind_the_run_draws(tmp_path: Path) -> None
 
     assert legend_rows(model) == [{"kind": "surface_force", "label": "Surface Force", "count": 1}, {"kind": "fixed_displacement", "label": "Fixed Displacement", "count": 1}]
     assert legend_label(ConditionGlyph.VOLTAGE) == "Voltage Potential"
+    assert legend_label(ConditionGlyph.COIL_TERMINAL) == "Coil Terminal"
 
 
 def test_every_glyph_kind_has_an_icon_and_a_negative_drive_points_into_the_plane() -> None:
