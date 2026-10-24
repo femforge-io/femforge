@@ -128,6 +128,14 @@ def test_shard_names_are_unique_within_a_process() -> None:
     assert shard_name().endswith(SHARD_SUFFIX)
 
 
+def test_shards_sort_in_write_order_past_ten_writes(tmp_path: Path) -> None:
+    """The zero-padded sequence keeps the tenth shard after the ninth, not after the first."""
+    store = _store(tmp_path)
+    written: list[Path] = [path for _ in range(12) for path in store.append(_rows(1))]
+
+    assert store.shards() == sorted(written, key=lambda path: int(path.stem.rsplit("-", 1)[1]))
+
+
 def test_compact_merges_only_settled_shards(tmp_path: Path) -> None:
     """Shards older than the settle window fold into one; fresh ones are left alone."""
     store = _store(tmp_path)
