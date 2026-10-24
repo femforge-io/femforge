@@ -186,7 +186,7 @@ A new persisted model joins `SCHEMA_MODELS`; `tests/test_schemas.py` checks that
 | `import femforge` | 60 ms | pydantic, pint, numpy, loguru, rich, any `femforge.*` submodule | `tests/test_import_time.py:77-93` |
 | the first `ff.SimulationConfig` | 500 ms | gmsh, build123d, polars, pyvista, vtk, trame, loguru, `femforge.elmer.runtime`, `femforge.execution`, `femforge.run`, `femforge.telemetry`, `femforge_workbench` | `tests/test_import_time.py:81-82`, `tests/test_import_time.py:96-115` |
 
-`FEMFORGE_IMPORT_BUDGET_SCALE` multiplies every budget on a slow machine (`tests/test_import_time.py:21`). New code that `SimulationConfig` imports counts against the 500 ms budget. These rules keep the heavy stacks off the config path:
+`FEMFORGE_IMPORT_BUDGET_SCALE` multiplies every budget on a slow machine (`tests/test_import_time.py:21`). New code that `SimulationConfig` imports counts against the 750 ms budget. These rules keep the heavy stacks off the config path:
 
 | Rule | Where |
 |---|---|
