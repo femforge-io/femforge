@@ -50,7 +50,7 @@ These tests run inside `pytest` and guard properties that no type checker sees.
 | `tests/test_public_api.py` | every public name has a docstring of its own, every field of a curated record is documented, and every public callable with three or more parameters has an `Args:` block naming exactly its parameters |
 | `tests/test_public_api.py` | `ff.workbench` without the workbench package names the install command `pip install "femforge[workbench]"` |
 | `tests/test_field_docstrings.py` | each physical field in the listed modules has a `` `glyph` `[unit]`: meaning `` first line, pint parses the unit, and a property function's unit matches its declared dimensionality |
-| `tests/test_import_time.py` | `import femforge` stays under 60 ms and loads no subpackage and none of pydantic, pint, numpy, loguru and rich; the first `ff.SimulationConfig` stays under 500 ms and loads no CAD, viz or run stack |
+| `tests/test_import_time.py` | `import femforge` stays under 60 ms and loads no subpackage and none of pydantic, pint, numpy, loguru and rich; the first `ff.SimulationConfig` stays under 750 ms and loads no CAD, viz or run stack |
 | `tests/meshing/test_firewall.py` | after [block_gmsh][femforge.meshing.block_gmsh], no import in the process loads gmsh, and the call refuses once gmsh has loaded |
 | `tests/run/test_gmsh_firewall.py` | a driver that meshes through a [WorkerMesher][femforge.meshing.WorkerMesher] never loads gmsh, whether it meshes, reuses a cached mesh or rebinds one |
 | `tests/test_schemas.py` | the schema export covers every registered model and writes valid JSON |
