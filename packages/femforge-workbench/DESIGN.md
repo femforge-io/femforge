@@ -25,7 +25,8 @@ The workbench has one scheme, dark. All values are OKLCH. Neutrals are cool, wit
 |---|---|---|
 | `--background` | `oklch(0.17 0.004 255)` | Panel bodies and the 3D view. |
 | `--card` | `oklch(0.19 0.004 255)` | Tab strips, section headers, the app bar and the task bar. The only raised plane. |
-| `--popover` | `oklch(0.245 0.008 255)` | Menus, select lists and tooltips. |
+| `--popover` | `oklch(0.245 0.008 255)` | Menus, select lists and popovers. |
+| `--tooltip` | `oklch(0.12 0.006 255)` | Tooltips: darker than every plane, so a tooltip over a popover still stands apart. |
 | `--stripe` | `oklch(1 0 0 / 3%)` | The fill of every second row in the task drawer. |
 | `--scrim` | `oklch(0 0 0 / 55%)` | The shade behind a dialog and around the tour's highlight. |
 | `--wash-hover` | `oklch(0.24 0.006 255)` | A hovered row or button. |
@@ -101,7 +102,7 @@ Cursors:
   - Row actions keep a fixed-width column. A control revealed on hover also shows on `:focus-within`, and it never moves the text beside it.
 - A header never names an icon column.
 - Controls of one kind (checkboxes, color maps, sliders) line up in one column across the rows of a section.
-- Text that does not fit truncates with an ellipsis and shows the full text in a tooltip. A field grows into free width before it truncates.
+- Text that does not fit truncates with an ellipsis; on hover the full text opens in place over it, running on to the right. A field grows into free width before it truncates.
 - A section whose content would be empty with every filter cleared is hidden. A filter that leaves no rows keeps the section and shows one muted row that says so, such as "No boundaries have conditions."
 
 ## Panel states
@@ -141,6 +142,7 @@ A click always gets an answer in the same frame, even when its result takes seco
 - Expand and collapse animate height and opacity. Controls that depend on a setting, such as the deformation scale under Deformed Shape, expand and collapse with it (`Reveal`).
 - A state change animates every property it changes over one duration. A switch's thumb fades its color while it slides, so no part of the control jumps while another part moves.
 - An element that moves between two containers keeps one shared layout id and animates between its positions. The task summary moving from the task bar into the drawer header is one example.
+- A set of choices marks its choice with one marker under every item (`Glide`), which slides to a new choice. A marker that follows held keys or the pointer slides over `--duration-micro`, the rest over `--duration-panel`. Only a new choice slides; the first place and a layout change snap, a marker whose choice leaves its set fades out, and the marker stays hidden while its popover opens.
 - A camera move interpolates its orientation by quaternion slerp, the focal point linearly and the distance geometrically. Euler angles never drive a camera move, because they lock at the poles.
   - A new move starts from the current pose and cancels the running move.
   - Any pointer or wheel input in the view cancels the running move.
@@ -161,9 +163,9 @@ A click always gets an answer in the same frame, even when its result takes seco
   - A label names what a control does in a word or two, such as `Top view` on a view button. It has no edge.
   - A definition explains a value, such as what Plane Stress means or why a component is inactive. It has a 2 px `--primary` edge on the left.
 - `text-label`, at most 20 rem wide, no arrow.
-- A tooltip opens below its element. It flips above only where the window has no room below.
+- A tooltip opens below its element. It flips above only where the window has no room below. The one exception is cut text, whose full text opens in place.
 - A tooltip opens after the pointer rests for `--delay-tooltip`. Once one is open, the next one opens at once while the pointer moves within `--skip-tooltip` of leaving the last.
-- Every tooltip also opens on keyboard focus.
+- Every tooltip also opens on keyboard focus, except the body look's eye, which sits beside the focused opacity slider.
 - The native `title` attribute is not used.
 
 | Token | Value | Use |
@@ -242,12 +244,32 @@ A click always gets an answer in the same frame, even when its result takes seco
 
 - The mouse wheel steps the slider under the pointer: one step per notch, up the track for a turn away from you. On a range slider it moves the thumb nearest the pointer, never past the other.
 - A wheel step applies like a drag: the value shows at once, and the change commits 300 ms after the last notch.
+- A drag turns text selection off for the whole page until the pointer is released, wherever it goes.
+
+### Body look
+
+One control per body: an 18 px swatch that opens the body's popover.
+
+- **The swatch shows the look.** A diagonal gradient is the field colormap; a plain fill is one color; a small corner dot of the body colormap marks a color the body colormap gave it. Opacity shows through a checkerboard. A group whose bodies differ shows diagonal bands of their colors, over the field colormap when some follow the field.
+- **Hidden is an outline.** A hidden body's swatch drops its fill, checkerboard and dot for a faint ring with a muted `eye-off`, and its name goes muted.
+- **The popover keeps visibility and opacity on top.** That row never moves: the `eye` button, then the opacity slider over a checkerboard tinted with the body's color, then the percent.
+- **Field, Colormap and Fixed choose where the color comes from.** Colormap lists the shared body colormap in a choice list. Fixed is a saturation and value square, a hue strip and palette chips. Field is disabled for a run without fields.
+- **Switching modes crossfades.** The old mode fades out over the new one as it fades in, and the height follows the new one. The scene redraws once the popover has settled.
+- **Hiding folds the popover to its top row.** The modes slide away, and showing the body again brings back the same mode. The opacity slider dims but still moves: moving it shows the body again.
 
 ### Select and menu
 
 - An item under the pointer or the keyboard takes the hover wash.
 - The chosen item uses the selected-row treatment: `--wash-selected` with the 2 px `--primary` marker on its left edge. No checkmark.
 - An item's label never wraps. Detail after the label truncates with an ellipsis.
+
+### Choice list
+
+The searchable list of a picker popover, one component for the Field colormap picker and the body look's Colormap mode.
+
+- A search box, then the group toggles, then the list under uppercase section headings that stick while their section scrolls.
+- The arrow keys step through the list and apply as they go: the marker and the trigger follow each step at once, and the server hears at most one step per 100 ms. Typing only moves the highlight. A click or Enter picks, and closes a picker; the scene redraws once it has closed.
+- The list opens on the chosen item. Its height follows the matches, from 160 px to 650 px, and never pushes the popover off screen.
 
 ### Run select
 

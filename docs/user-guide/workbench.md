@@ -152,7 +152,7 @@ The controls come in five sections:
 | Deformation | Deformed Shape, Scale |
 | Field | Quantity, Mode, Colormap, Invert Colormap, Log Scale, Outline, Auto Range with the color range slider, Legend, Opacity Mapping |
 | Field Lines | Show Field Lines, Seeds, Integrate Within, the seed count, Length |
-| Bodies | An All Bodies row with the body colormap and the overall opacity, then one row per body and per material that owns several bodies, each with a visibility checkbox, a color and an opacity |
+| Bodies | An All Bodies row, whose look sets every body and the overall opacity, then one row per body and per material that owns several bodies, each a look swatch and its name |
 
 **Symmetry expands a run solved on a section.** Solved As names the solve frame. For an axisymmetric run, Show As shows the r–z half-plane as solved, mirrors it into the full plane, or revolves it around the axis into a solid in the frame the model was authored in. Revolve is the default, at a full Sweep of 360°; a smaller sweep cuts the solid open so the cut faces show the field inside the bodies. Only the surfaces are revolved, so a section costs about as much to draw revolved as flat. The field lines of a revolved run are seeded as in a solid run, on the center plane, the gap line or through the volume of the swept solid, integrated in the section and swept back to their seeds. A run solved in 3D or on a planar Cartesian 2D section has nothing to expand. [DisplaySpec][femforge.viz.DisplaySpec] holds the choice as `expansion` and `sweep`.
 
@@ -172,13 +172,15 @@ The Quantity picker lists every scalar, vector and principal-value array of the 
 | `MAX_PRINCIPAL` | the largest principal value | principal stresses and strains, the default |
 | `MID_PRINCIPAL`, `MIN_PRINCIPAL` | the middle or the smallest principal value | principal stresses and strains |
 
-Each body's color comes from one of three sources, its [BodyPaint][femforge.viz.BodyPaint]:
+**A body's swatch opens its look.** The popover shows or hides the body and sets its opacity on its top row, then where its color comes from, its [BodyPaint][femforge.viz.BodyPaint]:
 
-| Paint | Color | In the body row |
-|---|---|---|
-| `FIELD` | the field colormap, by the displayed value | a swatch of the field colormap; click it for the body colormap |
-| `COLORMAP` | one color of the body colormap, spread evenly over every body that takes it | a color chip; pick a color to fix it |
-| `SOLID` | the body's own color | a color chip; the cross returns the body to the field colormap |
+| Mode | Paint | Color | The swatch |
+|---|---|---|---|
+| Field | `FIELD` | the field colormap, by the displayed value | a diagonal gradient of the field colormap |
+| Colormap | `COLORMAP` | one color of the body colormap, spread evenly over every body that takes it; the colormap is shared, so picking one recolors every such body | that color, with a corner dot of the body colormap |
+| Fixed | `SOLID` | a color picked on the square, the hue strip or a palette chip | that color |
+
+A hidden body's swatch is an outline with an eye-off, and its popover folds to the top row until the body shows again; moving the dimmed opacity slider shows it. The All Bodies swatch sets every body at once.
 
 **The automatic color range spans every body.** With Auto range on, the range is the union of each body's own range, over every body whether it is shown, hidden or painted another way, so hiding a body never rescales the rest. Each body is clamped to its 2nd to 98th percentile, so a small body keeps its range beside a large one. Log scale keeps only the positive values and starts at their 1st percentile. Turn Auto range off to pin the range with the slider.
 

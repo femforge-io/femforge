@@ -1,4 +1,5 @@
 import { useReducedMotion } from "motion/react";
+import { useEffect, useState } from "react";
 
 type Bezier = [number, number, number, number];
 
@@ -37,4 +38,23 @@ export function useDurations(): Durations {
     panel: token("--duration-panel") / 1000,
     camera: token("--duration-camera") / 1000,
   };
+}
+
+/** False for the first two frames after mount, so what a popover opens with snaps into place instead of animating. */
+export function useSettled(): boolean {
+  const [settled, setSettled] = useState(false);
+
+  useEffect(() => {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setSettled(true));
+    });
+
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, []);
+
+  return settled;
 }

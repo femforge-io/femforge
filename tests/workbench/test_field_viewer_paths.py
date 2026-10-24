@@ -266,12 +266,12 @@ def test_a_second_body_colormap_pick_only_changes_the_colormap(tmp_path: Path, m
 
         await controller.load(_bundle(tmp_path / "hex", _hex_grid()))
         await controller.settle()
-        app.state[FieldVar.VISIBLE_BODIES] = ["LEFT"]
+        controller.on_row_paint("LEFT", "colormap")
         controller.on_body_colormap_pick("gray")
         controller.on_body_colormap_pick("viridis")
 
         assert app.state[FieldVar.BODY_COLORMAP] == "viridis"
-        assert [controller.look(name).paint for name in ("LEFT", "RIGHT")] == [BodyPaint.COLORMAP, BodyPaint.FIELD], "the second pick takes no more bodies"
+        assert [controller.look(name).paint for name in ("LEFT", "RIGHT")] == [BodyPaint.COLORMAP, BodyPaint.FIELD], "a pick never takes more bodies"
 
     asyncio.run(run())
 
