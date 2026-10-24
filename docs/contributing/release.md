@@ -143,7 +143,7 @@ The Elmer image workflow (`.github/workflows/image.yml`) runs on a push to `main
 4. It pushes the image.
 5. It downloads the source of the installed `elmerfem-csc` package and attaches it to a `femforge-elmer-v<version>` GitHub release, which never becomes the latest release.
 
-The base-image workflow (`.github/workflows/base-image.yml`) runs on the first of each month and on demand. When the digest of `ubuntu:24.04` has moved from the one `BASE_IMAGE` pins, it pins the new digest, runs `femforge image bump --part patch`, and opens a pull request. That pull request starts no checks by itself; close and reopen it to run them. Merging it publishes the new image.
+The base-image workflow (`.github/workflows/base-image.yml`) runs on the first of each month and on demand. When the digest of `ubuntu:24.04` has moved from the one `BASE_IMAGE` pins, it pins the new digest, runs `femforge image bump --part patch`, and opens a pull request as the repository's bot GitHub App (secrets `BOT_APP_ID` and `BOT_PRIVATE_KEY`), so the required checks run on it. Merging it publishes the new image.
 
 ## Docs deploy
 
