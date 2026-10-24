@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 
 if TYPE_CHECKING:
@@ -35,8 +35,12 @@ class Scene:
         return self
 
     def render(self, plotter: pv.Plotter) -> None:
-        """Clear the plotter, draw every item in order, and repaint — once. Call on the plotter thread."""
+        """Clear the plotter but keep its lights, draw every item in order, and repaint — once. Call on the plotter thread."""
+        lights: list[pv.Light] = list(cast("list[pv.Light]", plotter.renderer.lights))
         plotter.clear()
+        for light in lights:
+            plotter.add_light(light)
+
         for item in self.items:
             item.render(plotter)
         plotter.render()
