@@ -344,6 +344,15 @@ def test_the_empty_tab_says_why_no_run_is_open() -> None:
     assert empty_text("FileNotFoundError: missing", indexed=True) == "The run could not be opened."
 
 
+def test_a_dropped_axis_reads_a_dash_even_without_a_frame() -> None:
+    held = FixedDisplacement(z=quantity(0.5, "mm"))
+    record = _record("fixed_displacement", held, 1, {}, dropped=("z",))
+
+    assert condition_lines(record, None) == [
+        {"parts": [{"text": "Fixed Displacement X 0 · Y 0 · "}, {"text": "Z –", "muted": True, "tip": "Authored Z runs along no solve axis."}]}
+    ]
+
+
 def test_a_dropped_axis_names_the_solve_axes_in_authored_terms() -> None:
     sideways = Cartesian2D(normal=Axis(direction=Direction(1, 0, 0)), thickness=quantity(10, "mm"))
 

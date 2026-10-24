@@ -21,7 +21,7 @@ from femforge.frames import BodyMismatch, Frame, GeometryCheck
 from femforge.frames.base import ALIGNMENT_TOLERANCE, axis_word
 from femforge.materials.properties import MaterialProperties
 from femforge.meshing.naming import name_fragment
-from femforge.physical.conditions import Condition, ConditionGlyph, SummaryPart
+from femforge.physical.conditions import DROPPED, Condition, ConditionGlyph, SummaryPart
 from femforge.physical.domain import EntityTag
 from femforge.physical.readout import readout
 from femforge.physical.units import U, quantity
@@ -430,7 +430,7 @@ def line_of(lead: str, parts: Sequence[tuple[str, bool, str]]) -> ConditionLine:
 
 
 def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[ConditionLine]:
-    """The lines one emission reads as: its kind and the solver-side summary in ``frame``, and each authored field the frame dropped muted with the reason."""
+    """The lines one emission reads as: its kind and the solver-side summary in ``frame``, and each authored field the frame dropped as a muted dash with the reason."""
     kind = title(record.kind)
     condition = record.condition
     if condition is None:
@@ -439,8 +439,10 @@ def condition_lines(record: ConditionRecord, frame: Frame | None) -> list[Condit
     emitted = {keyword.name: keyword.value for keyword in record.keywords}
 
     def read(part: SummaryPart) -> tuple[str, bool, str]:
-        text = f"{part.label} {part.value}" if part.label else part.value
-        if part.component is not None and part.component in record.dropped:
+        dropped = part.component is not None and part.component in record.dropped
+        value = DROPPED if dropped else part.value
+        text = f"{part.label} {value}" if part.label else value
+        if dropped and part.component is not None:
             return text, True, dropped_tip(part.component, frame=frame)
 
         return text, False, part.tip
