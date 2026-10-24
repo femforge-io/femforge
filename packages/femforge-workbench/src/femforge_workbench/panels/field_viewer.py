@@ -171,6 +171,9 @@ WARP_STEPS = 100
 """Deformation slider resolution over its range."""
 
 TIMES = "×"
+EXPONENT_ABOVE = 1e6
+"""The warp scale above which a readout writes it in exponent form."""
+
 REVEALED_SECTION = "border-y border-border"
 """A section inside its reveal, where `first:` would always match; the sections' own rule drops the top border of the first one shown."""
 
@@ -284,6 +287,13 @@ class FieldVar(StrEnum):
 
     AUTHORED_GHOST = "field_authored_ghost"
     """The Authored Body Ghost switch of a 2D run."""
+
+
+SCALE_READOUT = (
+    f"{json.dumps(TIMES)} + (Math.abs({FieldVar.WARP_SCALE}[0]) > {EXPONENT_ABOVE:g} ? {FieldVar.WARP_SCALE}[0].toExponential(2)"
+    f" : {FieldVar.WARP_SCALE}[0].toLocaleString('en-US', {{maximumSignificantDigits: {PRECISION}}}))"
+)
+"""The Scale readout as the Setup tab's ghost caption reads it: three significant figures grouped in thousands, exponent form only above a million."""
 
 
 TOUR_STEPS: list[TourStep] = [
@@ -2267,7 +2277,7 @@ class FieldControlsPanel(PanelComponent):
         with html.Div(classes=str(Cls.SECTION_BODY_STACK)):
             setting(FieldVar.WARP, "Deformed shape")
             with Reveal(open_=react.Bind(str(FieldVar.WARP)), classes=STACK):
-                readouts("Scale", react.Bind(f"{json.dumps(TIMES)} + {FieldVar.WARP_SCALE}[0].toPrecision({PRECISION})"))
+                readouts("Scale", react.Bind(SCALE_READOUT))
                 self.slider(
                     FieldVar.WARP_SCALE,
                     "Deformation scale",

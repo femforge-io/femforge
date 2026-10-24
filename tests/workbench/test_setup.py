@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import shutil
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import cast, get_args
@@ -40,7 +42,7 @@ from trame.app import get_server  # noqa: E402
 
 from femforge_workbench.app import Workbench  # noqa: E402
 from femforge_workbench.dock import template_name  # noqa: E402
-from femforge_workbench.panels.field_viewer import FieldPanel, FieldVar, FieldViewerController, FieldViewerPanel, highlightable, padded, workbench  # noqa: E402
+from femforge_workbench.panels.field_viewer import SCALE_READOUT, TIMES, FieldPanel, FieldVar, FieldViewerController, FieldViewerPanel, highlightable, padded, workbench  # noqa: E402
 from femforge_workbench.panels.setup import (  # noqa: E402
     FILTER_ABOVE,
     FilterChoice,
@@ -321,7 +323,19 @@ def test_an_expression_keeps_its_place_with_its_text_as_the_tooltip() -> None:
 def test_the_ghost_caption_reads_the_warp_scale_as_a_plain_grouped_number() -> None:
     assert [scale_text(scale) for scale in (22654.0, 1234.5, 120.0)] == ["22,700", "1,230", "120"]
     assert [scale_text(scale) for scale in (1.5, 2.0, 0.00123, 0.0)] == ["1.5", "2", "0.00123", "0"], "below 10 reads its significant decimals"
-    assert [scale_text(scale) for scale in (1e6, 2.27e7)] == ["1,000,000", "2.27e+07"], "exponent form only above a million"
+    assert [scale_text(scale) for scale in (1e6, 2.27e7)] == ["1,000,000", "2.27e+7"], "exponent form only above a million"
+
+
+SCALES: tuple[float, ...] = (22654.0, 1234.5, 120.0, 1.5, 2.0, 0.00123, 0.0, 1e6, 2.27e7)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to evaluate the readout expression")
+def test_the_field_viewer_scale_readout_reads_like_the_ghost_caption() -> None:
+    state: str = str(FieldVar.WARP_SCALE)
+    script = f"console.log(JSON.stringify({json.dumps(SCALES)}.map(value => {{ const {state} = [value]; return {SCALE_READOUT}; }})))"
+    shown = cast("list[str]", json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", check=True).stdout))
+
+    assert shown == [TIMES + scale_text(scale) for scale in SCALES]
 
 
 def test_the_empty_tab_says_why_no_run_is_open() -> None:

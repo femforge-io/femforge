@@ -31,7 +31,7 @@ from femforge.run.inspect import Run
 from femforge.run.manifest import RunManifest
 from femforge.viz.glyphs import EntityKind, EntityRef, body_color
 from femforge_workbench.panels import Cls, PanelComponent, setting
-from femforge_workbench.panels.field_viewer import STACK, TIMES, FieldVar, names_of, only
+from femforge_workbench.panels.field_viewer import EXPONENT_ABOVE, STACK, TIMES, FieldVar, names_of, only
 from femforge_workbench.panels.fields import automatic_card, condition_card, fact_field
 from femforge_workbench.widgets.accordion import Accordion, AccordionContent, AccordionItem, AccordionTrigger
 from femforge_workbench.widgets.busy import Busy
@@ -60,8 +60,6 @@ NO_GLYPHS = "No glyphs in this run."
 NO_GLYPHS_AUTHORED = "Glyphs need a mesh; this run failed before meshing."
 NO_GHOST = "No authored geometry in this bundle."
 GHOST_WARPED = "Undeformed; the solved body is warped "
-EXPONENT_ABOVE = 1e6
-"""The warp scale above which the ghost caption reads it in exponent form."""
 NO_CELLS_FIELDS = "Not in the fields file: no condition landed here."
 NO_CELLS_MESH = "Not in the mesh files: re-solve to restore the mesh."
 HIDDEN_LABEL = "Hidden in the Field Viewer; press S to show it."
@@ -795,9 +793,11 @@ def empty_text(failure: str | None, *, indexed: bool) -> str:
 
 
 def scale_text(scale: float) -> str:
-    """A warp scale at three significant figures, grouped in thousands, such as ``22,700`` or ``1.5``; exponent form above a million."""
+    """A warp scale at three significant figures, grouped in thousands, such as ``22,700`` or ``1.5``; exponent form above a million, as JavaScript writes it (``2.27e+7``)."""
     if abs(scale) > EXPONENT_ABOVE:
-        return f"{scale:.2e}"
+        mantissa, exponent = f"{scale:.2e}".split("e")
+
+        return f"{mantissa}e{int(exponent):+d}"
 
     rounded = float(f"{scale:.3g}")
     if rounded == 0.0:
