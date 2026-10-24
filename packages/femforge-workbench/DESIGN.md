@@ -310,7 +310,7 @@ A click always gets an answer in the same frame, even when its result takes seco
 
 ### Render Settings
 
-- The dialog docks at the bottom right above the status bar with no scrim, so the views it changes stay in sight. Its body scrolls when the window is short. A choice applies at once; a slider applies on its release.
+- The dialog docks at the bottom right above the status bar with no scrim, so the views it changes stay in sight. It grows up to the view toolbar, and its body scrolls only when the window is shorter than that. A choice applies at once; a slider applies on its release.
 - The dialog stays open while you work in the page. Only its close buttons, or Escape pressed inside it, close it.
 - Renderer chooses Client or Server for the view the menu was opened on, on the same state as the toolbar toggle. Everything else applies to every 3D view of the user, in every workbench.
 - Antialiasing shows the choice of the view's renderer. Each renderer keeps its own choice, so MSAA on the server survives a switch to the client and back.

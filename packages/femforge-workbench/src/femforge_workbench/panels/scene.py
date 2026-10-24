@@ -86,8 +86,8 @@ DRAG_TOLERANCE = 4
 ANTIALIAS_NAMES = {Antialias.OFF: "Off", Antialias.FXAA: "FXAA", Antialias.MSAA: "MSAA", Antialias.SSAA: "SSAA"}
 """How each antialiasing reads in the settings."""
 
-SETTINGS_DIALOG = "top-auto bottom-12 right-4 left-auto max-h-[calc(100dvh-11rem)] translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-sm"
-"""The settings dialog docks at the bottom right with no scrim, so the views it changes stay in sight; its body scrolls in a short window."""
+SETTINGS_DIALOG = "top-auto bottom-12 right-4 left-auto max-h-[calc(100dvh-9.75rem)] translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-sm"
+"""The settings dialog docks at the bottom right with no scrim, so the views it changes stay in sight; it reaches up to the view toolbar before its body scrolls."""
 
 SERVER_ONLY = "Server renderer only"
 """Why a setting the mirror cannot draw is disabled in Client mode."""
@@ -95,7 +95,7 @@ SERVER_ONLY = "Server renderer only"
 SEGMENT_HOST = "grid"
 """The cell around a segment that may be disabled, which carries its tooltip."""
 
-SETTINGS_BODY = "-mx-6 flex flex-col gap-5 overflow-y-auto px-6"
+SETTINGS_BODY = "-mx-6 flex flex-col gap-5 overflow-y-auto px-6 pb-1.5"
 SETTINGS_GROUP = "flex flex-col gap-3"
 SETTINGS_HEADING = "text-label font-semibold text-foreground"
 SLIDER_STACK = "flex flex-col gap-1.5"
