@@ -3,10 +3,37 @@ import { cn } from "cn"
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 
+import { useLiveChoice } from "@/components/combobox/live"
+import { Glide } from "@/lib/glide"
+import { token } from "@/lib/motion"
+
+const STEP_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"])
+
+/** Applies the item an arrow key highlights, for a select whose value is bound: the key marks a step, and the item it focuses applies itself. */
+const SelectStep = React.createContext<
+  { apply: (value: string) => void; stepping: React.RefObject<boolean> } | undefined
+>(undefined)
+
 function Select({
+  value,
+  onValueChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  const [shown, apply, later] = useLiveChoice(value, onValueChange)
+  const stepping = React.useRef(false)
+  const bound = value !== undefined
+
+  return (
+    <SelectStep.Provider value={bound ? { apply, stepping } : undefined}>
+      <SelectPrimitive.Root
+        data-slot="select"
+        value={bound ? shown : undefined}
+        // A pick closes the list, and the scene redraws once it has closed.
+        onValueChange={bound ? (next) => later(next, token("--duration-panel")) : onValueChange}
+        {...props}
+      />
+    </SelectStep.Provider>
+  )
 }
 
 function SelectGroup({
@@ -52,8 +79,11 @@ function SelectContent({
   children,
   position = "item-aligned",
   align = "center",
+  onKeyDown,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const stepper = React.useContext(SelectStep)
+
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
@@ -66,16 +96,28 @@ function SelectContent({
         )}
         position={position}
         align={align}
+        onKeyDown={(event) => {
+          onKeyDown?.(event)
+          if (stepper) stepper.stepping.current = STEP_KEYS.has(event.key)
+        }}
         {...props}
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport
           className={cn(
-            "p-1",
+            "relative p-1",
             position === "popper" &&
               "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1"
           )}
         >
+          {/* The hover wash and the chosen marker each slide from item to item, under every item. */}
+          <Glide selector="[data-highlighted]" observe="data-highlighted" speed="micro" className="rounded-r-sm bg-wash-hover" />
+          <Glide
+            selector="[data-state=checked]"
+            observe="data-state"
+            speed="micro"
+            className="rounded-r-sm border-l-2 border-primary bg-wash-selected"
+          />
           {children}
         </SelectPrimitive.Viewport>
         <SelectScrollDownButton />
@@ -139,18 +181,27 @@ function SelectItem({
   /** Muted parts after the label, outside the text Radix copies into the trigger and matches on typeahead. */
   detail?: string[]
 }) {
+  const stepper = React.useContext(SelectStep)
   const textId = React.useId()
   const detailId = React.useId()
   const detailed = Boolean(flag) || (detail !== undefined && detail.length > 0)
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
+      data-value={props.value}
       aria-labelledby={detailed ? `${textId} ${detailId}` : textId}
       className={cn(
-        "relative flex w-full cursor-pointer items-center gap-2 rounded-r-sm border-l-2 border-transparent py-1.5 pr-2 pl-1.5 text-sm outline-hidden select-none focus:bg-wash-hover data-[state=checked]:border-primary data-[state=checked]:bg-wash-selected data-[state=checked]:focus:bg-wash-selected-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex w-full cursor-pointer items-center gap-2 rounded-r-sm border-l-2 border-transparent py-1.5 pr-2 pl-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}
+      onFocus={(event) => {
+        props.onFocus?.(event)
+        if (!stepper?.stepping.current) return
+
+        stepper.stepping.current = false
+        stepper.apply(props.value)
+      }}
     >
       {/* ItemText drops a className, since Radix copies it into the trigger, so a wrapper keeps the label on one line. */}
       <span className={detailed ? "shrink-0 whitespace-nowrap" : undefined}>

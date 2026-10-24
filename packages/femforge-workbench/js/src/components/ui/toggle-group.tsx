@@ -4,10 +4,13 @@ import { cn } from "cn"
 import { ToggleGroup as ToggleGroupPrimitive } from "radix-ui"
 
 import { toggleVariants } from "@/components/ui/toggle"
+import { Glide } from "@/lib/glide"
 
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
     spacing?: number
+    /** A single-choice group, whose one marker slides between its items. */
+    gliding?: boolean
   }
 >({
   size: "default",
@@ -26,6 +29,19 @@ function ToggleGroup({
   VariantProps<typeof toggleVariants> & {
     spacing?: number
   }) {
+  const single = props.type === "single" ? props : undefined
+  const [own, setOwn] = React.useState(single?.defaultValue)
+  const chosen = single ? (single.value ?? own) : undefined
+  const root = single
+    ? {
+        ...single,
+        onValueChange: (next: string) => {
+          setOwn(next)
+          single.onValueChange?.(next)
+        },
+      }
+    : props
+
   return (
     <ToggleGroupPrimitive.Root
       data-slot="toggle-group"
@@ -35,11 +51,19 @@ function ToggleGroup({
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(
         "group/toggle-group flex w-fit items-center gap-px rounded-md border border-input p-px",
+        single && "relative",
         className
       )}
-      {...props}
+      {...root}
     >
-      <ToggleGroupContext.Provider value={{ variant, size, spacing }}>
+      {single ? (
+        <Glide
+          chosen={chosen}
+          selector="[data-slot=toggle-group-item][data-state=on]"
+          className="rounded-[calc(var(--radius-md)-1px)] bg-wash-selected"
+        />
+      ) : null}
+      <ToggleGroupContext.Provider value={{ variant, size, spacing, gliding: single !== undefined }}>
         {children}
       </ToggleGroupContext.Provider>
     </ToggleGroupPrimitive.Root>
@@ -69,6 +93,7 @@ function ToggleGroupItem({
         }),
         "w-auto min-w-0 shrink-0 px-3 focus:z-10 focus-visible:z-10",
         "rounded-[calc(var(--radius-md)-1px)] border-0",
+        context.gliding && "relative data-[state=on]:bg-transparent data-[state=on]:hover:bg-transparent",
         className
       )}
       {...props}
