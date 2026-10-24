@@ -28,6 +28,13 @@ class _ExitedChild:
         return self.returncode
 
 
+class _RunningChild:
+    """A child that is still running."""
+
+    def poll(self) -> None:
+        return None
+
+
 def test_waiting_notes_a_child_that_exits_and_returns_on_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dev, "POLL_SECONDS", 0.01)
     supervisor = Supervisor([sys.executable, "-c", "pass"], [tmp_path])
@@ -49,6 +56,28 @@ def test_ctrl_c_stops_the_supervisor_and_its_watcher(tmp_path: Path, monkeypatch
     supervisor.serve()
 
     assert supervisor.child is None and supervisor.watcher.observer is None
+
+
+def test_ctrl_c_while_the_child_runs_stops_the_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    supervisor = Supervisor([sys.executable, "-c", "pass"], [tmp_path])
+    running = cast("subprocess.Popen[bytes]", _RunningChild())
+    stopped: list[subprocess.Popen[bytes]] = []
+
+    def spawn() -> subprocess.Popen[bytes]:
+        supervisor.child = running
+
+        return running
+
+    def interrupted(_: subprocess.Popen[bytes]) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(supervisor, "spawn", spawn)
+    monkeypatch.setattr(supervisor, "await_save", interrupted)
+    monkeypatch.setattr(supervisor, "stop_child", stopped.append)
+
+    supervisor.serve()
+
+    assert stopped == [running]
 
 
 def test_supervise_runs_the_module_and_watches_the_shell_core_only(monkeypatch: pytest.MonkeyPatch) -> None:
