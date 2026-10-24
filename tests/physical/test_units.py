@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from femforge.common.vector import Vec3
+from femforge.meshing.config import MeshConfig
 from femforge.physical.units import (
     CANONICAL_UNITS,
     DIM_FORCE,
@@ -65,6 +66,25 @@ def test_scalar_field_rejects_non_quantity_non_scalar() -> None:
 def test_a_bare_number_names_the_si_units_to_write() -> None:
     with pytest.raises(ValidationError, match='bare number 300; give it units, as in "300 K"'):
         _sample(temperature=cast(Quantity, 300))
+
+
+def test_an_unknown_unit_is_a_validation_error() -> None:
+    with pytest.raises(ValidationError, match="cannot read '2 mn' as a quantity: 'mn' is not defined"):
+        _ = MeshConfig(global_mesh_size=cast(Quantity, "2 mn"))
+    with pytest.raises(ValidationError, match=r"cannot read '2 \+' as a quantity"):
+        _sample(temperature=cast(Quantity, "2 +"))
+
+
+def test_a_vector_with_an_unknown_unit_is_a_validation_error() -> None:
+    with pytest.raises(ValidationError, match="cannot read .* as a quantity: 'nn' is not defined"):
+        _ = _ForceModel.model_validate({"force": {"x": 0.0, "y": 0.0, "z": 1.0, "units": "nn"}})
+
+
+@pytest.mark.parametrize("spelling", ["2 \u00b5m", "2 \u03bcm", "2 um"])
+def test_micro_reads_in_every_spelling_and_dumps_as_greek_mu(spelling: str) -> None:
+    # pint's symbol is GREEK SMALL LETTER MU (U+03BC), the NFKC form of the MICRO SIGN (U+00B5) a keyboard types.
+    dumped: str = cast(str, MeshConfig(global_mesh_size=cast(Quantity, spelling)).model_dump()["global_mesh_size"])
+    assert dumped == "2 \u03bcm"
 
 
 def test_json_schema_includes_unit_annotation() -> None:

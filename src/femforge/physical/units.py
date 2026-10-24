@@ -308,6 +308,15 @@ def quantity_string(q: Quantity, *, canonical: bool = False) -> str:
     return f"{_canonical_magnitude(base.magnitude)} {base.units:~}"
 
 
+def _parse_quantity(value: object, units: str | None = None) -> Quantity:
+    """``U.Quantity(value, units)``, with a spelling pint cannot read raised as a ValueError so Pydantic reports it."""
+    try:
+        return cast(Quantity, U.Quantity(value, units))  # pyright: ignore[reportCallIssue, reportArgumentType]
+    except (pint.PintError, ValueError) as error:
+        shown: object = value if units is None else f"{value} {units}"
+        raise ValueError(f"cannot read {shown!r} as a quantity: {error}") from error
+
+
 class _DimensionedQuantity:
     """
     Base for the Annotated metadata adapting a dimensionality-constrained pint Quantity to a Pydantic field.
@@ -342,7 +351,7 @@ class _ScalarQuantity(_DimensionedQuantity):
         if isinstance(v, U.Quantity):
             q = cast(Quantity, v)
         elif isinstance(v, (int, float, str)):
-            q = cast(Quantity, U.Quantity(v))
+            q = _parse_quantity(v)
         else:
             raise ValueError("expected a scalar Quantity, a number or a quantity string")
 
@@ -382,7 +391,7 @@ class _VectorQuantity(_DimensionedQuantity):
         if isinstance(v, U.Quantity):
             q = cast(Quantity, v)
         elif isinstance(v, dict):
-            q = cast(Quantity, U.Quantity(Vec3(v["x"], v["y"], v["z"]), v["units"]))  # pyright: ignore[reportCallIssue, reportArgumentType, reportUnknownArgumentType]
+            q = _parse_quantity(Vec3(v["x"], v["y"], v["z"]), v["units"])  # pyright: ignore[reportUnknownArgumentType]
         else:
             raise ValueError("expected a vector Quantity or a {x, y, z, units} dict")
         mag = q.magnitude
