@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from femforge.common.files import BundleFile, write_atomic
 from femforge.elmer.solver_log import LoopTargets, convergence_progress, normalize_solver_key
-from femforge.telemetry.hive import coerce
+from femforge.telemetry.journal import journal_lines, records_frame
 from femforge.telemetry.schemas import CONVERGENCE_SCHEMA, ConvergenceColumn, ConvergenceLoop
 
 
@@ -115,7 +115,8 @@ def scan_convergence(sim_dir: str | Path, *, with_progress: bool = True) -> pl.D
     if not path.is_file() or path.stat().st_size == 0:
         return pl.DataFrame(schema=frame_schema(with_progress=with_progress))
 
-    samples: pl.DataFrame = coerce(pl.scan_ndjson(path.as_posix(), ignore_errors=True), CONVERGENCE_SCHEMA).collect()
+    # The run monitor reads this file while the solve appends to it, so a torn last line is skipped, not fatal.
+    samples: pl.DataFrame = records_frame(journal_lines(path)[0], CONVERGENCE_SCHEMA).collect()
     if not with_progress:
         return samples
 

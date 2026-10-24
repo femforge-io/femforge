@@ -104,6 +104,13 @@ def test_a_sample_without_a_relative_change_has_no_progress(tmp_path: Path) -> N
     assert cast("list[float | None]", frame.get_column(DerivedColumn.PROGRESS).to_list())[-1] is None
 
 
+def test_a_half_written_last_line_is_skipped(tmp_path: Path) -> None:
+    """The run monitor reads the log while the solve appends to it, so a torn tail reads as the samples before it."""
+    sim_dir = _bundle(tmp_path, extra='{"wall_time": 9.0, "solver": "heat eq')
+
+    assert scan_convergence(sim_dir).height == len(SAMPLES)
+
+
 def test_a_bundle_without_targets_scores_nothing(tmp_path: Path) -> None:
     """A run solved before the targets file existed still reads; only its progress column is empty."""
     frame = scan_convergence(_bundle(tmp_path, targets=False))
