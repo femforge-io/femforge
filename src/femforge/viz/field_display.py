@@ -40,6 +40,7 @@ from femforge.viz.symmetry import Basis, Expansion, Prism, extrude, mirror, offe
 
 if TYPE_CHECKING:
     import pyvista as pv
+    from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
 
     from femforge.config import SimulationConfig
     from femforge.run.entities import Bodies, Boundaries
@@ -87,6 +88,9 @@ BAR_LABELS = 5
 BAR_FORMAT = "%.3g"
 BAR_TITLE_EXTRA = 2
 """Points the color bar's title is larger than its labels."""
+
+BAR_TITLE_WRAP = 18
+"""Characters past which an upright bar's title breaks onto two lines, so it stays about as wide as the bar and its labels."""
 
 FULL_SWEEP = 360.0
 """`[deg]`: A revolution that closes the solid."""
@@ -769,17 +773,39 @@ class BarPlacement:
     """`[-]`: The height, as a share of the view's height."""
 
 
-def bar_placement(legend: Legend, *, second: bool = False) -> BarPlacement:
-    """The color bar's place for a legend: upright at the right, or along the bottom clear of the axes corner; a second bar sits beside the first.
+class BarSlot(StrEnum):
+    """Which of the view's color bars a bar is."""
+
+    ALONE = "alone"
+    FIRST = "first"
+    SECOND = "second"
+
+
+def bar_placement(legend: Legend, slot: BarSlot = BarSlot.ALONE) -> BarPlacement:
+    """The color bar's place for a legend: upright at the right, or along the bottom clear of the axes corner; a pair stacks, the second below or above the first.
 
     Args:
         legend: The legend asked for.
-        second: Whether this bar joins one already placed.
+        slot: Which bar this is.
     """
     if legend is Legend.HORIZONTAL:
-        return BarPlacement(vertical=False, x=0.3, y=0.14 if second else 0.02, width=0.4, height=0.1)
+        return BarPlacement(vertical=False, x=0.3, y=0.14 if slot is BarSlot.SECOND else 0.02, width=0.4, height=0.1)
 
-    return BarPlacement(vertical=True, x=0.72 if second else 0.86, y=0.25, width=0.03, height=0.5)
+    if slot is BarSlot.ALONE:
+        return BarPlacement(vertical=True, x=0.86, y=0.25, width=0.03, height=0.5)
+
+    return BarPlacement(vertical=True, x=0.86, y=0.1 if slot is BarSlot.SECOND else 0.52, width=0.03, height=0.32)
+
+
+def bar_title(title: str) -> str:
+    """An upright bar's title, broken at the space nearest its middle once it runs past BAR_TITLE_WRAP characters."""
+    spaces = [index for index, char in enumerate(title) if char == " "]
+    if len(title) <= BAR_TITLE_WRAP or not spaces:
+        return title
+
+    cut = min(spaces, key=lambda index: abs(2 * index - len(title)))
+
+    return f"{title[:cut]}\n{title[cut + 1 :]}"
 
 
 def list_fields(grid: pv.DataSet, physics: Physics | None = None) -> list[FieldInfo]:  # pragma: no cover - needs pyvista (viz extra); proven by the gated integration test
@@ -1417,20 +1443,20 @@ class FieldScene:
         self._add_bar(plotter, info.title, mapper, spec.legend)
         self._field_bar = info.title
 
-    def _add_bar(self, plotter: pv.Plotter, title: str, mapper: object, legend: Legend, *, second: bool = False) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
-        """A compact color bar in the theme's font, placed by the legend beside any bar already there.
+    def _add_bar(self, plotter: pv.Plotter, title: str, mapper: object, legend: Legend, slot: BarSlot = BarSlot.ALONE) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
+        """A compact color bar in the theme's font, placed by the legend in its slot.
 
         Args:
             plotter: The plotter the bar is added to.
-            title: The bar's title, which pyvista keys it by.
+            title: The bar's title, which pyvista keys it by; an upright bar shows it wrapped.
             mapper: The mapper whose lookup table the bar shows.
             legend: Where the legend goes.
-            second: Whether the field's bar is already placed.
+            slot: Which of the view's bars this is.
         """
-        placement: BarPlacement = bar_placement(legend, second=second)
+        placement: BarPlacement = bar_placement(legend, slot)
         size: int = int(plotter.theme.font.size)
-        _ = cast(
-            "object",
+        bar = cast(
+            "vtkScalarBarActor | None",
             plotter.add_scalar_bar(  # pyright: ignore[reportCallIssue, reportUnknownMemberType]  # pyvista's _Wrapped stub loses `self`
                 title=title,
                 mapper=mapper,
@@ -1445,6 +1471,20 @@ class FieldScene:
                 height=placement.height,
             ),
         )
+        if placement.vertical and bar is not None:
+            bar.SetTitle(bar_title(title))
+
+    def _place_bar(self, plotter: pv.Plotter, title: str, slot: BarSlot) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
+        """Moves a placed bar into its slot for the current legend."""
+        bars = cast("Mapping[str, object]", plotter.scalar_bars)
+        if title not in bars:
+            return
+
+        placement: BarPlacement = bar_placement(self.spec.legend, slot)
+        placed = cast("vtkScalarBarActor", bars[title])
+        placed.SetPosition(placement.x, placement.y)
+        placed.SetWidth(placement.width)
+        placed.SetHeight(placement.height)
 
     def _update_lines_bar(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         """Gives the drawn field lines a color bar of their own where the legend asks for one and the field's bar does not already show their mapping."""
@@ -1460,7 +1500,12 @@ class FieldScene:
             return
 
         self._lines_bar = self.lines_title(self._lines[0].b_name)
-        self._add_bar(plotter, self._lines_bar, drawn.mapper, self.spec.legend, second=self._field_bar is not None)
+        if self._field_bar is None:
+            self._add_bar(plotter, self._lines_bar, drawn.mapper, self.spec.legend)
+            return
+
+        self._place_bar(plotter, self._field_bar, BarSlot.FIRST)
+        self._add_bar(plotter, self._lines_bar, drawn.mapper, self.spec.legend, BarSlot.SECOND)
 
     def lines_share(self, styled: FieldLineOptions) -> bool:
         """Whether lines drawn with ``styled`` map like the field: the same colormap, inversion, log scale, opacity map and limits."""
@@ -1596,6 +1641,8 @@ class FieldScene:
     def _remove_lines_bar(self, plotter: pv.Plotter) -> None:  # pragma: no cover - needs pyvista (viz extra) + a VTK render context
         if self._lines_bar is not None and self._lines_bar in cast("Mapping[str, object]", plotter.scalar_bars):
             plotter.remove_scalar_bar(self._lines_bar, render=False)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]  # pyvista's _Wrapped stub loses `self`
+            if self._field_bar is not None:
+                self._place_bar(plotter, self._field_bar, BarSlot.ALONE)
 
         self._lines_bar = None
 

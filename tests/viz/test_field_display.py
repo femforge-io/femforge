@@ -26,6 +26,7 @@ from femforge.run.inspect import Run
 from femforge.run.mechanical import VOIGT_COMPONENTS, derived_arrays
 from femforge.run.result import RunStatus
 from femforge.viz.field_display import (
+    BarSlot,
     SCALARS_ARRAY,
     Association,
     BodyPaint,
@@ -38,6 +39,7 @@ from femforge.viz.field_display import (
     Legend,
     SceneActor,
     bar_placement,
+    bar_title,
     camera_needs_reset,
     color_range,
     default_display,
@@ -923,16 +925,26 @@ def test_the_field_lines_bar_names_the_field_and_is_made_again_for_new_lines() -
     first = bars["Magnetic Flux Density Lines [T]"]
     scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.VERTICAL, streamlines=region))
     titles = list(cast("dict[str, object]", plotter.scalar_bars).keys())
-    columns = {bar.GetPosition()[0] for bar in cast("dict[str, object]", plotter.scalar_bars).values() if isinstance(bar, vtkScalarBarActor)}
+    rows = {title: (bar.GetPosition()[1], bar.GetHeight()) for title, bar in cast("dict[str, object]", plotter.scalar_bars).items() if isinstance(bar, vtkScalarBarActor)}
     second = cast("dict[str, object]", plotter.scalar_bars)["Magnetic Flux Density Lines [T]"]
+    assert isinstance(second, vtkScalarBarActor)
+    shown_title = second.GetTitle()
+    scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.VERTICAL, streamlines=None))
+    field_bar = cast("dict[str, object]", plotter.scalar_bars)["Joule Heating [W/m³]"]
+    assert isinstance(field_bar, vtkScalarBarActor)
+    alone = (field_bar.GetPosition()[1], field_bar.GetHeight())
     scene.update(plotter, DisplaySpec(field="joule heating", legend=Legend.HORIZONTAL, streamlines=region))
     horizontal = [bar.GetOrientation() for bar in cast("dict[str, object]", plotter.scalar_bars).values() if isinstance(bar, vtkScalarBarActor)]
     scene.update(plotter, DisplaySpec(field="joule heating", streamlines=region))
     hidden = list(cast("dict[str, object]", plotter.scalar_bars).keys())
+    lines_y, lines_height = rows["Magnetic Flux Density Lines [T]"]
 
     assert sorted(titles) == ["Joule Heating [W/m³]", "Magnetic Flux Density Lines [T]"]
     assert second is not first, "new lines get a bar over their own mapper"
-    assert len(columns) == 2, "the lines' bar stands beside the field's, never on it"
+    assert lines_y + lines_height < rows["Joule Heating [W/m³]"][0], "the lines' bar stacks below the field's, never on it"
+    assert shown_title == "Magnetic Flux\nDensity Lines [T]", "an upright bar wraps a long title"
+    placed = bar_placement(Legend.VERTICAL)
+    assert alone == pytest.approx((placed.y, placed.height)), "the field's bar takes the whole column again once the lines go"
     assert horizontal == [0, 0], "a horizontal legend lays both bars along the bottom"
     assert hidden == [], "a hidden legend draws no bar"
     plotter.close()
@@ -1194,11 +1206,20 @@ def test_a_bundle_without_a_manifest_takes_its_frame_from_the_grid(tmp_path: Pat
     assert scene.expandable and scene.frame.label == "axisymmetric about Z"
 
 
-def test_the_legend_places_the_bars_and_a_second_one_beside_the_first() -> None:
+def test_the_legend_places_the_bars_and_stacks_a_pair() -> None:
+    first = bar_placement(Legend.VERTICAL, BarSlot.FIRST)
+    second = bar_placement(Legend.VERTICAL, BarSlot.SECOND)
+
     assert bar_placement(Legend.VERTICAL).vertical and not bar_placement(Legend.HORIZONTAL).vertical
     assert bar_placement(Legend.HIDDEN) == bar_placement(Legend.VERTICAL), "a hidden legend never reaches a placement"
-    assert bar_placement(Legend.VERTICAL, second=True).x < bar_placement(Legend.VERTICAL).x
-    assert bar_placement(Legend.HORIZONTAL, second=True).y > bar_placement(Legend.HORIZONTAL).y
+    assert first.x == second.x and second.y + second.height < first.y, "an upright pair stacks, so their titles never meet"
+    assert bar_placement(Legend.HORIZONTAL, BarSlot.SECOND).y > bar_placement(Legend.HORIZONTAL).y
+
+
+def test_a_long_upright_title_breaks_at_its_middle_space() -> None:
+    assert bar_title("Voltage Potential") == "Voltage Potential"
+    assert bar_title("Magnetic Flux Density Lines [T]") == "Magnetic Flux\nDensity Lines [T]"
+    assert bar_title("Magnetoresistivities") == "Magnetoresistivities", "a single word stays whole"
 
 
 # --- pyvista-gated: the deformed shape --------------------------------------------
