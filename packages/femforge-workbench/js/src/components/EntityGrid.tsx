@@ -4,6 +4,7 @@ import { ConditionCardView, type ConditionCard } from "@/components/Fields";
 import { Icon } from "@/components/Icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { IconName } from "@/icons";
+import { Glide } from "@/lib/glide";
 import { cn } from "@/lib/utils";
 import { action, nextFocus } from "./entity-grid/keys";
 
@@ -183,11 +184,10 @@ function RowView({
       onClick={interactive ? () => onSelect?.(row.id) : undefined}
       onDoubleClick={interactive ? () => onFrame?.(row.id) : undefined}
       className={cn(
-        "group/row flex flex-col gap-1 border-l-2 pr-1 pl-1.5 outline-none",
+        "group/row relative flex flex-col gap-1 border-l-2 border-transparent pr-1 pl-1.5 outline-none",
         cards.length || row.hidden ? "pb-1.5" : "",
         "transition-[background-color] duration-(--duration-micro) ease-instrument",
         interactive && "cursor-pointer focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
-        selected && interactive ? "border-primary bg-wash-selected hover:bg-wash-selected-hover" : "border-transparent",
         interactive && !selected && "hover:bg-wash-hover",
         row.dimmed && "opacity-60",
       )}
@@ -267,6 +267,17 @@ function HeaderRow({ columns }: { columns: string[] }) {
   );
 }
 
+/** The selected row's marker, which slides between the rows of one grid and fades when the selection moves to another. */
+function Chosen({ selected }: { selected?: string }) {
+  return (
+    <Glide
+      chosen={selected}
+      selector='[role="row"][aria-selected="true"]'
+      className="border-l-2 border-primary bg-wash-selected"
+    />
+  );
+}
+
 function PlainRows({ rows, focus, selected, ...rest }: RowsProps) {
   return (
     <>
@@ -297,6 +308,7 @@ function VirtualRows({ rows, focus, selected, scroller, ...rest }: RowsProps & {
   return (
     <div ref={viewport} className="max-h-[60vh] overflow-auto">
       <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+        <Chosen selected={selected} />
         {virtualizer.getVirtualItems().map((item) => {
           const row = rows[item.index];
           if (!row) return null;
@@ -425,8 +437,9 @@ export function EntityGrid({
         onBlur={(event) => {
           if (!root.current?.contains(event.relatedTarget as Node | null)) onHover?.("");
         }}
-        className={cn("ff-entity-grid flex w-full flex-col text-label", className)}
+        className={cn("ff-entity-grid relative flex w-full flex-col text-label", className)}
       >
+        {virtual ? null : <Chosen selected={selected} />}
         {offset ? <HeaderRow columns={columns ?? []} /> : null}
         {virtual ? (
           <VirtualRows rows={rows} focus={shown} selected={selected} scroller={scroller} {...handlers} />

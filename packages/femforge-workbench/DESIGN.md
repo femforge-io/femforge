@@ -185,6 +185,7 @@ A click always gets an answer in the same frame, even when its result takes seco
 
 - Items sit in a track with a 1 px `--input` border.
 - An inactive item is `--muted-foreground`. The active item uses the selected treatment.
+- In a single-choice group the selected wash is one marker that slides from the old item to the new one over `--duration-panel`. Tabs slide their active pill the same way. A multiple-choice group, such as the colormap filters, has no marker to slide.
 - Use a toggle group to choose one of two to four modes, such as Client and Server.
 
 ### Checkbox and switch
@@ -223,7 +224,7 @@ A click always gets an answer in the same frame, even when its result takes seco
 - Kind icons: `box` for a body and `scan` for a face; in a 2D run, `pentagon` for a body and `minus` for an edge. A kind icon never looks like a control.
 - A boundary without a name shows the bodies it touches as color chips: `● Flexure ↔ ● External`. Each body name truncates by the same amount, and the tooltip shows the full pair.
 - Hover or keyboard focus washes the row and outlines the entity in the 3D view.
-- A click or Enter selects the row and the entity. Clicking a selected row keeps it selected. Escape clears the selection wherever the focus is, the 3D view included, unless a menu or dialog is open.
+- A click or Enter selects the row and the entity. The selected-row marker slides between the rows of one list, and fades out of one list and into the other when the selection moves between Bodies and Boundaries. Clicking a selected row keeps it selected. Escape clears the selection wherever the focus is, the 3D view included, unless a menu or dialog is open.
 - A double-click or `F` fits the camera to the entity.
 
 ### Section
@@ -259,8 +260,9 @@ One control per body: an 18 px swatch that opens the body's popover.
 
 ### Select and menu
 
-- An item under the pointer or the keyboard takes the hover wash.
-- The chosen item uses the selected-row treatment: `--wash-selected` with the 2 px `--primary` marker on its left edge. No checkmark.
+- An item under the pointer or the keyboard takes the hover wash, one wash that slides from item to item.
+- The chosen item uses the selected-row treatment: `--wash-selected` with the 2 px `--primary` marker on its left edge. No checkmark. The marker slides to a new choice.
+- The arrow keys apply the item they reach while the list stays open, as in a choice list. A click or Enter picks and closes, and the scene redraws once the list has closed.
 - An item's label never wraps. Detail after the label truncates with an ellipsis.
 
 ### Choice list
