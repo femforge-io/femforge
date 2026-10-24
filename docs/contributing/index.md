@@ -44,6 +44,14 @@ The build writes the bundle into `packages/femforge-workbench/src/femforge_workb
 
 Never commit the build output.
 
+Regenerate `package-lock.json` on Linux whenever the client's dependencies change. npm on Windows drops the nested `@emnapi` entries that `@tailwindcss/oxide-wasm32-wasi` bundles, and CI's `npm ci` then fails. `tests/workbench/test_package_lock.py` catches a lock file with missing entries.
+
+```console
+cd packages/femforge-workbench/js
+docker run --rm -v "$PWD:/app" -w /app node:24 npm install --package-lock-only
+npm ci
+```
+
 ## Enable the Git hooks
 
 ```console
