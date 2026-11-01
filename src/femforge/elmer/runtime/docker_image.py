@@ -9,7 +9,7 @@ from femforge.execution.docker.image import LICENSES_LABEL, SOURCE_LABEL, AptPac
 
 __all__ = ["ELMER_IMAGE", "dockerfile"]
 
-BASE_IMAGE = "ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
+BASE_IMAGE = "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852"
 """Ubuntu 24.04 pinned by its OCI index digest, so the recipe hash names the base the image is built on."""
 
 PLATFORM = "linux/amd64"
@@ -21,10 +21,10 @@ SOURCE = "https://github.com/femforge-io/femforge"
 LICENSES = "GPL-2.0-or-later AND LGPL-2.1-or-later"
 """The licenses of the Elmer the image installs: ElmerSolver and ElmerGrid, and the ElmerSolver library."""
 
-IMAGE_VERSION = "0.2.0"
+IMAGE_VERSION = "0.2.1"
 """The released version of the image; ``femforge image bump`` raises it whenever the recipe changes."""
 
-IMAGE_DIGEST = "d1c93c582ba3cff6c3f7168a3d0079b0a085ea6c0f9dcd2ef2e0e6338978fc48"
+IMAGE_DIGEST = "39f132f4524ba0ef9cbac7a8caeaf9e889d14b6f777043b8cc8463cc5ad4cad6"
 """The sha256 of the Dockerfile released as [`IMAGE_VERSION`][]."""
 
 PPA_TOOLS: tuple[AptPackage, ...] = (
