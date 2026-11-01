@@ -35,7 +35,7 @@ dependencies = [
     "trame-client>=4.1",
     "trame-rca>=2.11.8",
     "trame-server>=4.1",
-    "trame-vtklocal>=1.7.1,<1.8",
+    "trame-vtklocal>=1.7.1,<1.9",
     "vtk>=9.7.1,<9.8",
     "watchdog>=6.0",
 ]
