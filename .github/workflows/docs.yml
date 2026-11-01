@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
       - run: uv sync --locked --no-default-groups --group docs --extra workbench
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.3
       - run: uv run --no-default-groups --group docs --extra workbench python -m femforge.schemas --out docs/schema
       - run: uv run --no-default-groups --group docs --extra workbench --with mkdocs-material --with mkdocs-llmstxt mkdocs build --strict --site-dir site-fallback
 
